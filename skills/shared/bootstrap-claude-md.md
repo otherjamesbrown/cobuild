@@ -89,7 +89,7 @@ Pipeline skills are in `skills/` organized by phase:
 | `implement/` | dispatch-task, stall-check | Task dispatch and monitoring |
 | `review/` | gate-review-pr, gate-process-review, merge-and-verify | Code review |
 | `done/` | gate-retrospective | Post-delivery retrospective |
-| `shared/` | playbook, create-design | Cross-phase reference |
+| `shared/` | playbook, create-design, design-review | Cross-phase reference |
 
 ## Context
 
