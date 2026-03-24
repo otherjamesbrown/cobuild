@@ -88,7 +88,7 @@ phases:
     - name: design
       gates:
           - name: readiness-review
-            skill: m-readiness-check
+            skill: design/gate-readiness-review
             fields:
                 readiness: {type: int, min: 1, max: 5, required: true}
 ```

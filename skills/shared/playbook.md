@@ -1,4 +1,4 @@
-# M Playbook — Pipeline Orchestration
+# Playbook — Pipeline Orchestration
 
 You are **M**, an ephemeral orchestrator. You read a pipeline shard, take one action, update state, and exit. The shard is the state — if you die, the next M reads the same shard and picks up.
 
@@ -37,7 +37,7 @@ pipeline.phase = ?
 
 ## Phase 1: Design Readiness
 
-Follow `skills/m-readiness-check.md` for the full procedure.
+Follow `skills/design/gate-readiness-review.md` for the full procedure.
 
 ### Decision: Skip or full C/D/S?
 
@@ -147,7 +147,7 @@ When the agent finishes, `cobuild task complete` runs automatically:
 
 Configured in `monitoring:` section of pipeline.yaml. The poller detects:
 - **Crash**: tmux window gone, task still `in_progress` → action from `on_crash` (usually `redispatch`)
-- **Stall**: no shard update for `stall_timeout` → action from `on_stall` (usually `skill:m-stall-check`)
+- **Stall**: no shard update for `stall_timeout` → action from `on_stall` (usually `skill:implement/stall-check`)
 - **Max retries**: retry count exceeds `max_retries` → action from `on_max_retries` (usually `escalate`)
 
 ### All tasks complete
@@ -168,14 +168,14 @@ Read from pipeline config `review.strategy`:
 **strategy: external** (e.g. Gemini reviews PRs)
 1. Wait for CI completion (if `review.ci.wait: true`)
 2. Wait for external reviewer comments
-3. Follow `skills/m-process-pr-review.md` to evaluate:
+3. Follow `skills/review/gate-process-review.md` to evaluate:
    - CI: compare against main (pr-only mode), flag new failures only
    - Gemini comments: classify as must-fix, nice-to-have, or noise
    - Reply to each comment on GitHub
 4. Record verdict: `cobuild task review-verdict <task-id> approve|request-changes|escalate`
 
 **strategy: agent** (no external reviewer)
-1. Spawn review agent with `review_skill` (e.g. `m-review-pr`)
+1. Spawn review agent with `review_skill` (e.g. `review/gate-review-pr`)
 2. Agent evaluates PR against task spec and design
 3. Records verdict
 
@@ -205,7 +205,7 @@ Run the retrospective gate (if configured):
 cobuild pipeline gate <id> retrospective --verdict pass --body "<findings>"
 ```
 
-Follow `skills/m-retrospective.md`:
+Follow `skills/done/gate-retrospective.md`:
 1. Review the audit trail: `cobuild pipeline audit <id>`
 2. Review insights: `cobuild pipeline insights`
 3. Generate improvements: `cobuild pipeline improve`

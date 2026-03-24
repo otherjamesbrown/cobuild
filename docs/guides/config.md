@@ -42,7 +42,7 @@ phases:
       model: sonnet
       gates:
           - name: security-review
-            skill: m-security-check
+            skill: security/gate-security-check
             model: haiku
 ```
 
@@ -66,7 +66,7 @@ phases:
           - name: decomposition-review
             requires_label: integration-test
           - name: architecture-check        # new gate
-            skill: m-architecture-check
+            skill: decompose/gate-architecture-check
             model: haiku
 ```
 
@@ -104,7 +104,7 @@ monitoring:
     cooldown: 5m                              # wait between retries
     model: haiku                              # model for health checks
     actions:
-        on_stall: skill:m-stall-check         # or "redispatch" or "escalate"
+        on_stall: skill:implement/stall-check         # or "redispatch" or "escalate"
         on_crash: redispatch
         on_max_retries: escalate
 
@@ -115,7 +115,7 @@ review:
         wait: true                            # wait for CI before reviewing
     strategy: external                        # "external" or "agent"
     external_reviewers: [gemini]              # GitHub bot usernames
-    process_skill: m-process-pr-review
+    process_skill: review/gate-process-review
     model: haiku
 
 # Context layers — what agents see per session type
@@ -143,7 +143,7 @@ phases:
       model: haiku
       gates:
           - name: readiness-review
-            skill: m-readiness-check
+            skill: design/gate-readiness-review
             model: haiku
             fields:
                 readiness: {type: int, min: 1, max: 5, required: true}
@@ -159,7 +159,7 @@ phases:
     - name: done
       gates:
           - name: retrospective
-            skill: m-retrospective
+            skill: done/gate-retrospective
             model: haiku
 
 # Auto-deploy after PR merge
@@ -279,7 +279,7 @@ workflows:
 
 review:
     strategy: agent
-    review_skill: m-review-pr
+    review_skill: review/gate-review-pr
     ci:
         mode: ignore
 

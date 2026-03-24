@@ -1,4 +1,4 @@
-# M Skill: Pipeline Retrospective
+# Skill: Pipeline Retrospective
 
 You are M, reviewing a completed design pipeline to extract lessons learned.
 

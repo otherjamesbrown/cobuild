@@ -21,10 +21,10 @@ Skills are referenced in two places:
 
 ### Skill resolution chain
 
-When CoBuild resolves a skill name (e.g. `m-readiness-check`):
+When CoBuild resolves a skill path (e.g. `design/gate-readiness-review`):
 
-1. `<repo>/<skills_dir>/m-readiness-check.md` -- repo-level (checked first)
-2. `~/.cobuild/skills/m-readiness-check.md` -- global fallback
+1. `<repo>/<skills_dir>/design/gate-readiness-review.md` -- repo-level (checked first)
+2. `~/.cobuild/skills/design/gate-readiness-review.md` -- global fallback
 
 The `skills_dir` defaults to `skills` but is configurable in `pipeline.yaml`:
 
@@ -41,11 +41,11 @@ phases:
     - name: design
       gates:
           - name: readiness-review
-            skill: m-readiness-check       # loads skills/m-readiness-check.md
+            skill: design/gate-readiness-review
     - name: done
       gates:
           - name: retrospective
-            skill: m-retrospective         # loads skills/m-retrospective.md
+            skill: done/gate-retrospective
 ```
 
 ### Overriding a default skill
@@ -54,7 +54,7 @@ To customize the readiness check for your project:
 
 ```bash
 cobuild init-skills                        # install defaults
-# Edit skills/m-readiness-check.md with your project-specific criteria
+# Edit skills/design/gate-readiness-review.md with your project-specific criteria
 ```
 
 Your repo version takes priority. The global version is untouched.
@@ -63,18 +63,20 @@ Your repo version takes priority. The global version is untouched.
 
 ### Default skills installed by `cobuild init-skills`
 
-| File | Purpose | Used by |
-|------|---------|---------|
-| `create-design.md` | Design authoring guide | Any agent creating designs |
-| `m-playbook.md` | Orchestrator decision trees and phase rules | M (orchestrator) |
-| `m-readiness-check.md` | Phase 1 readiness + implementability evaluation | readiness-review gate |
-| `m-implementability.md` | Implementability criteria reference | M |
-| `m-dispatch-task.md` | Phase 3 task dispatch procedure | M |
-| `m-review-pr.md` | Phase 4 PR review (agent strategy) | review gate |
-| `m-process-pr-review.md` | Process external reviewer output | review gate (external) |
-| `m-merge-and-verify.md` | Merge + post-merge verification | M |
-| `m-stall-check.md` | Stall diagnosis for stuck agents | monitoring on_stall |
-| `m-retrospective.md` | Post-delivery retrospective | retrospective gate |
+Skills are organized by phase. Gate skills are prefixed with `gate-`.
+
+| File | Phase | Purpose |
+|------|-------|---------|
+| `shared/create-design.md` | — | Design authoring guide |
+| `shared/playbook.md` | — | Orchestrator decision trees and phase rules |
+| `design/gate-readiness-review.md` | design | Gate: readiness + implementability evaluation |
+| `design/implementability.md` | design | Implementability criteria reference |
+| `implement/dispatch-task.md` | implement | Task dispatch procedure |
+| `implement/stall-check.md` | implement | Stall diagnosis for stuck agents |
+| `review/gate-review-pr.md` | review | Gate: PR review (agent strategy) |
+| `review/gate-process-review.md` | review | Gate: process external reviewer output |
+| `review/merge-and-verify.md` | review | Merge + post-merge verification |
+| `done/gate-retrospective.md` | done | Gate: post-delivery retrospective |
 
 ### Flags
 
@@ -95,7 +97,7 @@ This skill tells agents how to author designs that pass the readiness review. Ke
 When creating a design shard, follow this structure. Designs that don't
 meet these criteria will be sent back by the pipeline readiness check.
 
-**Evaluated by:** `skills/m-readiness-check.md`
+**Evaluated by:** `skills/design/gate-readiness-review.md`
 
 ---
 
@@ -132,7 +134,7 @@ How does this get deployed without breaking things?
 
 Notice the structure: a clear title, a cross-reference to the evaluating skill, required sections with good/bad examples, and a self-test at the end.
 
-### Example 2: m-playbook.md (orchestrator skill)
+### Example 2: shared/playbook.md (orchestrator skill)
 
 The playbook is a decision-tree skill. It defines what M does at each phase:
 
@@ -143,7 +145,7 @@ You are **M**, an ephemeral orchestrator. You read a pipeline shard,
 take one action, update state, and exit.
 
 ## Startup
-1. Read the pipeline shard: `cobuild pipeline show <id>`
+1. Read the pipeline: `cobuild show <id>`
 2. Determine the shard type and current phase
 3. Lock the pipeline: `cobuild pipeline lock <id>`
 4. Follow the decision tree for the current phase
@@ -161,7 +163,7 @@ The pattern: identity statement, startup sequence, then branching logic per phas
 
 ### Example 3: Writing a custom skill
 
-Say you want a security review gate. Create `skills/m-security-check.md`:
+Say you want a security review gate. Create `skills/security/gate-security-check.md`:
 
 ```markdown
 # Skill: Security Review
@@ -203,6 +205,6 @@ phases:
 
 **Skill not found:** CoBuild checks `<repo>/skills/<name>.md` first, then `~/.cobuild/skills/<name>.md`. Verify the file exists at one of these paths. Check that `skills_dir` in your config matches your actual directory name.
 
-**Skill not loading during gate:** The gate config must have a `skill` field matching the filename (without `.md`). For example, `skill: m-readiness-check` loads `m-readiness-check.md`.
+**Skill not loading during gate:** The gate config must have a `skill` field matching the path (without `.md`). For example, `skill: design/gate-readiness-review` loads `skills/design/gate-readiness-review.md`.
 
 **Changes not taking effect:** Skills are read fresh each time they are referenced. There is no caching. If your changes are not visible, verify you are editing the correct file (repo vs global). The repo version takes priority.

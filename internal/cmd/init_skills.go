@@ -12,15 +12,16 @@ import (
 )
 
 var defaultSkills = []string{
-	"create-design.md",
-	"m-playbook.md",
-	"m-readiness-check.md",
-	"m-implementability.md",
-	"m-dispatch-task.md",
-	"m-review-pr.md",
-	"m-process-pr-review.md",
-	"m-merge-and-verify.md",
-	"m-stall-check.md",
+	"shared/create-design.md",
+	"shared/playbook.md",
+	"design/gate-readiness-review.md",
+	"design/implementability.md",
+	"implement/dispatch-task.md",
+	"implement/stall-check.md",
+	"review/gate-review-pr.md",
+	"review/gate-process-review.md",
+	"review/merge-and-verify.md",
+	"done/gate-retrospective.md",
 }
 
 var initSkillsCmd = &cobra.Command{

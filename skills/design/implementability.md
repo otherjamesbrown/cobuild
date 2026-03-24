@@ -1,8 +1,8 @@
-# M Skill: Implementability Check
+# Skill: Implementability Check
 
 You are M, checking whether a design can be implemented without further input from James.
 
-This skill is called as part of the readiness check (`skills/m-readiness-check.md`). You do not need to call this separately — the readiness check includes implementability.
+This skill is called as part of the readiness check (`skills/design/gate-readiness-review.md`). You do not need to call this separately — the readiness check includes implementability.
 
 ## The Question
 
@@ -31,4 +31,4 @@ This skill is called as part of the readiness check (`skills/m-readiness-check.m
 
 ## Recording
 
-Do NOT record implementability separately. Include it in the `--body` of `cobuild pipeline review` as part of the readiness check. See `skills/m-readiness-check.md` for the full recording flow.
+Do NOT record implementability separately. Include it in the `--body` of `cobuild pipeline review` as part of the readiness check. See `skills/design/gate-readiness-review.md` for the full recording flow.

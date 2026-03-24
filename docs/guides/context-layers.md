@@ -106,7 +106,7 @@ Fetches the work item via the connector. The result includes the title as a head
 
 ```yaml
 - name: review-procedure
-  source: skills:m-review-pr
+  source: skills:review/gate-review-pr
   when: gate:review
 ```
 
@@ -118,7 +118,7 @@ Resolves the skill file using the standard resolution chain (repo `skills/` then
 - name: all-skills
   source: skills-dir
   when: interactive
-  filter: [m-playbook.md, create-design.md]
+  filter: [shared/playbook.md, shared/create-design.md]
 ```
 
 Loads all `.md` files from the skills directory. The optional `filter` list restricts which files are included.

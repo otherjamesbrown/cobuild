@@ -1,4 +1,4 @@
-# M Skill: Dispatch Task to Agent
+# Skill: Dispatch Task to Agent
 
 You are M, dispatching a task to an implementing agent.
 

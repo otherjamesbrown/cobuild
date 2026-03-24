@@ -80,7 +80,7 @@ The review command:
 - If pass: advances phase to `decompose`
 - If fail: stays in `design` for iteration
 
-Gate config drives this: the `readiness-review` gate references skill `m-readiness-check`, requires a `readiness` field (int, 1-5), and runs on model `haiku`.
+Gate config drives this: the `readiness-review` gate references skill `design/gate-readiness-review`, requires a `readiness` field (int, 1-5), and runs on model `haiku`.
 
 ### Phase 2: Decomposition (`decompose` -> `implement`)
 
@@ -115,8 +115,8 @@ Dispatch checks blocker edges are satisfied, creates a worktree, generates a `CL
 
 Two strategies, configured per-repo:
 
-- **`agent`** -- a pipeline agent reviews the PR using the `review_skill` (e.g. `m-review-pr`)
-- **`external`** -- an external reviewer (e.g. Gemini) reviews, and a process skill (e.g. `m-process-pr-review`) evaluates the result
+- **`agent`** -- a pipeline agent reviews the PR using the `review_skill` (e.g. `review/gate-review-pr`)
+- **`external`** -- an external reviewer (e.g. Gemini) reviews, and a process skill (e.g. `review/gate-process-review`) evaluates the result
 
 After approval:
 ```bash
@@ -125,7 +125,7 @@ cobuild pr merge <task-id>
 
 ### Phase 5: Done
 
-All tasks merged. A `retrospective` gate (skill `m-retrospective`, model `haiku`) can run to capture lessons learned.
+All tasks merged. A `retrospective` gate (skill `done/gate-retrospective`, model `haiku`) can run to capture lessons learned.
 
 ### Cross-Design Ordering
 
@@ -267,7 +267,7 @@ monitoring:
     cooldown: 5m
     model: haiku
     actions:
-        on_stall: skill:m-stall-check
+        on_stall: skill:implement/stall-check
         on_crash: redispatch
         on_max_retries: escalate
 ```
@@ -300,7 +300,7 @@ Used when an external service (e.g. Gemini) reviews PRs. Configure:
 review:
     strategy: external
     external_reviewers: [gemini]
-    process_skill: m-process-pr-review
+    process_skill: review/gate-process-review
     ci:
         mode: pr-only       # "pr-only", "all-pass", or "ignore"
         wait: true           # wait for CI before reviewing
@@ -313,7 +313,7 @@ A pipeline agent reviews using a skill:
 ```yaml
 review:
     strategy: agent
-    review_skill: m-review-pr
+    review_skill: review/gate-review-pr
     review_agent: agent-mycroft
     ci:
         mode: ignore
@@ -404,7 +404,7 @@ Analyzes patterns from insights data and proposes specific changes to skills, co
 
 ### Retrospective
 
-The `done` phase has a `retrospective` gate (skill `m-retrospective`, model `haiku`) for capturing lessons learned after a design is fully delivered.
+The `done` phase has a `retrospective` gate (skill `done/gate-retrospective`, model `haiku`) for capturing lessons learned after a design is fully delivered.
 
 ---
 
@@ -422,16 +422,16 @@ Copies these skill files into the repo's skills directory:
 
 | Skill | Purpose |
 |-------|---------|
-| `create-design.md` | Design authoring guide (structure, implementability) |
-| `m-playbook.md` | M's decision trees, phase rules, commands |
-| `m-readiness-check.md` | Phase 1 readiness + implementability evaluation |
-| `m-implementability.md` | Implementability criteria reference |
-| `m-dispatch-task.md` | Phase 3 task dispatch procedure |
-| `m-review-pr.md` | Phase 4 PR review procedure (agent strategy) |
-| `m-process-pr-review.md` | Process external reviewer output |
-| `m-merge-and-verify.md` | Merge + post-merge verification |
-| `m-stall-check.md` | Stall diagnosis for stuck agents |
-| `m-retrospective.md` | Post-delivery retrospective |
+| `shared/create-design.md` | Design authoring guide (structure, implementability) |
+| `shared/playbook.md` | M's decision trees, phase rules, commands |
+| `design/gate-readiness-review.md` | Phase 1 readiness + implementability evaluation |
+| `design/implementability.md` | Implementability criteria reference |
+| `implement/dispatch-task.md` | Phase 3 task dispatch procedure |
+| `review/gate-review-pr.md` | Phase 4 PR review procedure (agent strategy) |
+| `review/gate-process-review.md` | Process external reviewer output |
+| `review/merge-and-verify.md` | Merge + post-merge verification |
+| `implement/stall-check.md` | Stall diagnosis for stuck agents |
+| `done/gate-retrospective.md` | Post-delivery retrospective |
 
 Source resolution: `~/.cobuild/skills/` first, then context-palace `skills/` directory.
 
@@ -560,18 +560,18 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 
 | Skill | Who uses it | Purpose |
 |-------|------------|---------|
-| `create-design.md` | Any agent creating designs | Required structure, implementability test |
-| `m-playbook.md` | M (orchestrator) | Decision trees, phase rules, commands |
-| `m-readiness-check.md` | M | Phase 1 readiness + implementability evaluation |
-| `m-implementability.md` | M | Implementability criteria reference |
-| `m-dispatch-task.md` | M | Phase 3 task dispatch procedure |
-| `m-review-pr.md` | M | Phase 4 PR review procedure (agent strategy) |
-| `m-process-pr-review.md` | M | Process external reviewer output (external strategy) |
-| `m-merge-and-verify.md` | M | Phase 4 merge + post-merge verification |
-| `m-stall-check.md` | M | Stall diagnosis for stuck agents |
-| `m-retrospective.md` | M | Post-delivery retrospective |
+| `shared/create-design.md` | Any agent creating designs | Required structure, implementability test |
+| `shared/playbook.md` | M (orchestrator) | Decision trees, phase rules, commands |
+| `design/gate-readiness-review.md` | M | Phase 1 readiness + implementability evaluation |
+| `design/implementability.md` | M | Implementability criteria reference |
+| `implement/dispatch-task.md` | M | Phase 3 task dispatch procedure |
+| `review/gate-review-pr.md` | M | Phase 4 PR review procedure (agent strategy) |
+| `review/gate-process-review.md` | M | Process external reviewer output (external strategy) |
+| `review/merge-and-verify.md` | M | Phase 4 merge + post-merge verification |
+| `implement/stall-check.md` | M | Stall diagnosis for stuck agents |
+| `done/gate-retrospective.md` | M | Post-delivery retrospective |
 
-`create-design.md` and `m-readiness-check.md` are cross-referenced -- the design skill tells authors what is required, the readiness check evaluates against the same criteria.
+`shared/create-design.md` and `design/gate-readiness-review.md` are cross-referenced -- the design skill tells authors what is required, the readiness check evaluates against the same criteria.
 
 ---
 
@@ -609,7 +609,7 @@ monitoring:
     cooldown: 5m                  # between retries
     model: haiku                  # model for health checks
     actions:
-        on_stall: skill:m-stall-check   # or "redispatch" or "escalate"
+        on_stall: skill:implement/stall-check   # or "redispatch" or "escalate"
         on_crash: redispatch            # or "skill:<name>" or "escalate"
         on_max_retries: escalate        # or "redispatch"
 
@@ -620,8 +620,8 @@ review:
         wait: true                # wait for CI before reviewing
     strategy: external            # "external" or "agent"
     external_reviewers: [gemini]  # GitHub bot usernames (external strategy)
-    process_skill: m-process-pr-review  # skill to process external reviews
-    review_skill: m-review-pr     # skill for agent-based reviews (agent strategy)
+    process_skill: review/gate-process-review  # skill to process external reviews
+    review_skill: review/gate-review-pr     # skill for agent-based reviews (agent strategy)
     review_agent: agent-mycroft   # who does agent reviews (agent strategy)
     model: haiku                  # model for review tasks
 
@@ -665,7 +665,7 @@ phases:
       model: haiku
       gates:
           - name: readiness-review
-            skill: m-readiness-check
+            skill: design/gate-readiness-review
             model: haiku
             fields:
                 readiness: {type: int, min: 1, max: 5, required: true}
@@ -673,7 +673,7 @@ phases:
       model: sonnet
       gates:
           - name: decomposition-review
-            skill: m-decomposition-review
+            skill: decompose/gate-decomposition-review
             model: haiku
             requires_label: integration-test
     - name: implement
@@ -683,7 +683,7 @@ phases:
     - name: done
       gates:
           - name: retrospective
-            skill: m-retrospective
+            skill: done/gate-retrospective
             model: haiku
 ```
 

@@ -84,7 +84,7 @@ phases:
       model: haiku
       gates:
           - name: readiness-review
-            skill: m-readiness-check
+            skill: design/gate-readiness-review
             fields:
                 readiness: {type: int, min: 1, max: 5, required: true}
     - name: decompose
@@ -99,7 +99,7 @@ phases:
     - name: done
       gates:
           - name: retrospective
-            skill: m-retrospective
+            skill: done/gate-retrospective
 
 dispatch:
     max_concurrent: 3
@@ -121,7 +121,7 @@ monitoring:
     crash_check: true
     max_retries: 3
     actions:
-        on_stall: skill:m-stall-check
+        on_stall: skill:implement/stall-check
         on_crash: redispatch
         on_max_retries: escalate
 
@@ -181,14 +181,18 @@ When no storage config is present, CoBuild uses the existing database connection
 
 Skills are markdown files that tell agents what to do. Drop them in `skills/`:
 
-| Skill | Purpose |
-|-------|---------|
-| `create-design.md` | How to author a design that passes readiness review |
-| `m-playbook.md` | M's decision trees and phase rules |
-| `m-readiness-check.md` | Phase 1 evaluation criteria |
-| `m-review-pr.md` | PR review procedure |
-| `m-stall-check.md` | Diagnose stuck agents |
-| `m-retrospective.md` | Post-delivery lessons learned |
+| Skill | Phase | Purpose |
+|-------|-------|---------|
+| `shared/create-design.md` | — | How to author a design that passes readiness review |
+| `shared/playbook.md` | — | Orchestrator decision trees and phase rules |
+| `design/gate-readiness-review.md` | design | Gate: readiness evaluation criteria |
+| `design/implementability.md` | design | Implementability reference |
+| `implement/dispatch-task.md` | implement | Task dispatch procedure |
+| `implement/stall-check.md` | implement | Diagnose stuck agents |
+| `review/gate-review-pr.md` | review | Gate: PR review (agent strategy) |
+| `review/gate-process-review.md` | review | Gate: PR review (external strategy) |
+| `review/merge-and-verify.md` | review | Post-review merge procedure |
+| `done/gate-retrospective.md` | done | Gate: post-delivery lessons learned |
 
 Initialize defaults: `cobuild init-skills`
 

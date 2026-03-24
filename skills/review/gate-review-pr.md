@@ -1,4 +1,4 @@
-# M Skill: Review PR
+# Skill: Review PR
 
 You are reviewing a pull request for a pipeline task.
 

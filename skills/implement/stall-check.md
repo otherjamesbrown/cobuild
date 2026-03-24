@@ -1,4 +1,4 @@
-# M Skill: Agent Health Check
+# Skill: Agent Health Check
 
 You are M, diagnosing a task that may be stalled, crashed, or rate-limited.
 

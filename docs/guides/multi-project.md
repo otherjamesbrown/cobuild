@@ -102,7 +102,7 @@ monitoring:
     max_retries: 3
     model: haiku
     actions:
-        on_stall: skill:m-stall-check
+        on_stall: skill:implement/stall-check
         on_crash: redispatch
         on_max_retries: escalate
 
@@ -123,7 +123,7 @@ dispatch:
 # Different review strategy for this repo
 review:
     strategy: agent
-    review_skill: m-review-pr
+    review_skill: review/gate-review-pr
 ```
 
 ### Poller flags
@@ -203,7 +203,7 @@ dispatch:
 
 review:
     strategy: agent
-    review_skill: m-review-pr
+    review_skill: review/gate-review-pr
     ci:
         mode: all-pass
         wait: true

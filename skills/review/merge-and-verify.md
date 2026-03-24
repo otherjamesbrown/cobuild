@@ -1,4 +1,4 @@
-# M Skill: Merge PR and Verify
+# Skill: Merge PR and Verify
 
 You are M, merging an approved task PR and verifying post-merge.
 

@@ -74,7 +74,7 @@ Detected patterns and their suggestions:
 
 | Pattern | Detection | Suggestion |
 |---------|-----------|------------|
-| Low readiness-review pass rate | < 70% first-pass | Strengthen `create-design.md` with common failure examples |
+| Low readiness-review pass rate | < 70% first-pass | Strengthen `shared/create-design.md` with common failure examples |
 | Missing model configuration | No per-phase models | Add haiku for judgment, sonnet for creation |
 | No monitoring configured | Empty `monitoring:` section | Add health check config with defaults |
 | Missing integration test gate | No `requires_label` on decompose gate | Add `requires_label: integration-test` |
@@ -85,7 +85,7 @@ The `--apply` flag auto-applies config and process changes. Skill changes always
 
 ### 3. Retrospective -- post-delivery lessons
 
-The `done` phase has a `retrospective` gate (skill `m-retrospective`, model `haiku`) that runs after a design is fully delivered.
+The `done` phase has a `retrospective` gate (skill `done/gate-retrospective`, model `haiku`) that runs after a design is fully delivered.
 
 The retrospective:
 
@@ -124,7 +124,7 @@ phases:
     - name: done
       gates:
           - name: retrospective
-            skill: m-retrospective
+            skill: done/gate-retrospective
             model: haiku
 ```
 
@@ -163,7 +163,7 @@ Improvement suggestions:
    (auto-applicable with --apply)
 ```
 
-Run `cobuild improve --apply` to apply the config change. Then manually edit `skills/create-design.md` to add the success criteria examples.
+Run `cobuild improve --apply` to apply the config change. Then manually edit `skills/shared/create-design.md` to add the success criteria examples.
 
 ### Example 2: Full feedback cycle
 
@@ -178,7 +178,7 @@ cobuild improve
 cobuild improve --apply
 
 # 4. Review and manually apply skill changes
-# Edit skills/create-design.md based on suggestions
+# Edit skills/shared/create-design.md based on suggestions
 
 # 5. Next design benefits from the improvements
 cobuild init <new-design-id>

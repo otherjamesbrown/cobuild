@@ -1,4 +1,4 @@
-# M Skill: Process PR Review
+# Skill: Process PR Review
 
 You are M, processing review feedback on a task PR. External reviewers (Gemini, CI) have already provided feedback. Your job is to evaluate it and decide the next action.
 

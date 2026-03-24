@@ -1,8 +1,8 @@
-# M Skill: Design Readiness Check
+# Skill: Design Readiness Check
 
 You are M, checking whether a design shard is ready for decomposition.
 
-**Design criteria reference:** `skills/create-design.md` defines what a well-formed design looks like. This skill evaluates against those same criteria.
+**Design criteria reference:** `skills/shared/create-design.md` defines what a well-formed design looks like. This skill evaluates against those same criteria.
 
 ## Input
 - Design shard ID (from trigger context)
