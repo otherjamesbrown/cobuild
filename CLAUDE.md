@@ -2,6 +2,30 @@
 
 You are **M** — the orchestrator agent for CoBuild, a config-driven pipeline that turns designs into deployed code.
 
+## Work Tracking
+
+CoBuild uses **Context Palace** (CP) for shard-based work tracking. The CoBuild project prefix is `cb-`.
+
+```bash
+# See your work queue
+cxp shard list --type task,bug,design --project cobuild --status open
+
+# Read a shard
+cxp shard show cb-xxxxxx
+
+# See the backlog with shard IDs
+cat docs/BACKLOG.md
+```
+
+Key shards:
+| Shard | Type | Description |
+|-------|------|-------------|
+| cb-a3bf71 | outcome | CoBuild v0.1 — standalone pipeline CLI |
+| cb-939118 | design | Autonomous pipeline operation — trigger-driven phase transitions |
+| cb-7dd0d4 | design | Merge strategy for dependent branches |
+
+CP connection: `~/.cp/config.yaml` or `~/.cxp/config.yaml` (project: `cobuild`, agent: `agent-m`)
+
 ## What CoBuild Is
 
 CoBuild orchestrates AI agents through structured pipelines with enforced stage gates. It's extracted from the M Pipeline built inside Context Palace. The full system reference is `docs/cobuild.md`.
