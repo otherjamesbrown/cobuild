@@ -29,6 +29,7 @@ type ClientConfig struct {
 	Connection ConnectionConfig `yaml:"connection"`
 	Agent      string           `yaml:"agent"`
 	Project    string           `yaml:"project"`
+	Prefix     string           `yaml:"prefix"`
 	Defaults   *DefaultsConfig  `yaml:"defaults,omitempty"`
 }
 
@@ -132,6 +133,7 @@ func LoadClientConfig(configOverride string) (*ClientConfig, error) {
 type projectConfig struct {
 	Project string `yaml:"project"`
 	Agent   string `yaml:"agent"`
+	Prefix  string `yaml:"prefix"`
 }
 
 func findProjectConfig() string {
@@ -187,6 +189,9 @@ func loadProjectConfig(path string, cfg *ClientConfig) error {
 	}
 	if pc.Agent != "" {
 		cfg.Agent = pc.Agent
+	}
+	if pc.Prefix != "" {
+		cfg.Prefix = pc.Prefix
 	}
 	return nil
 }

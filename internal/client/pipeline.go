@@ -268,10 +268,15 @@ func (c *Client) CreateShardWithMetadata(ctx context.Context, title, content, sh
 		creator = "cobuild"
 	}
 
-	// Generate shard ID: <project-prefix>-<6 hex chars>
-	prefix := c.Config.Project
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
+	// Generate shard ID: <prefix>-<6 hex chars>
+	// Use configured prefix (e.g., "cb" from .cobuild.yaml), fall back to first 2 chars of project
+	prefix := c.Config.Prefix
+	if prefix != "" {
+		prefix = strings.TrimSuffix(prefix, "-")
+	} else if c.Config.Project != "" && len(c.Config.Project) >= 2 {
+		prefix = c.Config.Project[:2]
+	} else {
+		prefix = "cb"
 	}
 	id := fmt.Sprintf("%s-%s", prefix, randomHex(3))
 

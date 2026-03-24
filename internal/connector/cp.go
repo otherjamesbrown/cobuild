@@ -41,12 +41,8 @@ func (c *CPConnector) List(ctx context.Context, filters ListFilters) (*ListResul
 	if filters.Status != "" {
 		args = append(args, "--status", filters.Status)
 	}
-	project := filters.Project
-	if project == "" {
-		project = c.Project
-	}
-	if project != "" {
-		args = append(args, "--project", project)
+	if filters.Project != "" {
+		args = append(args, "--project", filters.Project)
 	}
 	if filters.Limit > 0 {
 		args = append(args, "--limit", fmt.Sprintf("%d", filters.Limit))
@@ -204,7 +200,25 @@ func (c *CPConnector) CreateEdge(ctx context.Context, fromID string, toID string
 // --- Helpers ---
 
 // run executes a cxp command and returns stdout.
+// Automatically appends --project and --agent global flags if configured.
 func (c *CPConnector) run(ctx context.Context, args ...string) (json.RawMessage, error) {
+	// Add global flags if not already present in args
+	hasProject := false
+	hasAgent := false
+	for _, a := range args {
+		if a == "--project" {
+			hasProject = true
+		}
+		if a == "--agent" {
+			hasAgent = true
+		}
+	}
+	if !hasProject && c.Project != "" {
+		args = append(args, "--project", c.Project)
+	}
+	if !hasAgent && c.Agent != "" {
+		args = append(args, "--agent", c.Agent)
+	}
 	cmd := exec.CommandContext(ctx, "cxp", args...)
 	if c.Debug {
 		fmt.Printf("[connector:cp] cxp %s\n", strings.Join(args, " "))

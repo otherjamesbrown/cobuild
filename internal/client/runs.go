@@ -22,6 +22,17 @@ type PipelineRun struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// PipelineRunStatus is an enriched view of a pipeline run with task counts.
+type PipelineRunStatus struct {
+	DesignID     string    `json:"design_id"`
+	Phase        string    `json:"phase"`
+	Status       string    `json:"status"`
+	TaskTotal    int       `json:"task_total"`
+	TaskDone     int       `json:"task_done"`
+	TaskBlocked  int       `json:"task_blocked"`
+	LastProgress time.Time `json:"last_progress"`
+}
+
 // PipelineGateRecord represents a row in the pipeline_gates table.
 type PipelineGateRecord struct {
 	ID             string    `json:"id"`
@@ -349,4 +360,50 @@ func (c *Client) ListPipelineTasks(ctx context.Context, pipelineID string) ([]Pi
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+// ListPipelineRuns returns all pipeline runs with task counts for the status view.
+func (c *Client) ListPipelineRuns(ctx context.Context) ([]PipelineRunStatus, error) {
+	conn, err := c.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+
+	project := c.Config.Project
+	rows, err := conn.Query(ctx, `
+		SELECT
+			pr.design_id,
+			pr.current_phase,
+			pr.status,
+			COALESCE(tc.total, 0),
+			COALESCE(tc.done, 0),
+			COALESCE(tc.blocked, 0),
+			pr.updated_at
+		FROM pipeline_runs pr
+		LEFT JOIN (
+			SELECT pipeline_id,
+				COUNT(*) as total,
+				COUNT(*) FILTER (WHERE status = 'closed') as done,
+				COUNT(*) FILTER (WHERE status = 'blocked') as blocked
+			FROM pipeline_tasks
+			GROUP BY pipeline_id
+		) tc ON tc.pipeline_id = pr.id
+		WHERE ($1 = '' OR pr.project = $1)
+		ORDER BY pr.updated_at DESC
+	`, project)
+	if err != nil {
+		return nil, fmt.Errorf("list pipeline runs: %v", err)
+	}
+	defer rows.Close()
+
+	var runs []PipelineRunStatus
+	for rows.Next() {
+		var r PipelineRunStatus
+		if err := rows.Scan(&r.DesignID, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
 }
