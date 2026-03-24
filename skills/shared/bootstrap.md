@@ -1,171 +1,111 @@
 # Skill: Bootstrap CoBuild on a Project
 
-Set up CoBuild pipeline automation on a new or existing repository. This skill walks through the complete setup process, from prerequisites to first pipeline run.
-
-**Requires:** `~/.cobuild/bootstrap.md` for local infrastructure details.
+Set up CoBuild pipeline automation on a repository. This is an interactive process — read the local infrastructure config, auto-detect what you can, and ask the developer for decisions you can't infer.
 
 ---
 
-## Prerequisites
+## Before You Start
 
-Before starting, verify:
+1. Read `~/.cobuild/bootstrap.md` for local infrastructure details (database, agents, defaults)
+2. Confirm you're in the target repo root: `pwd` and `git remote -v`
+3. Verify `cobuild version` works
 
-1. **CoBuild CLI** is installed: `cobuild version`
-2. **Work-item connector CLI** is available:
-   - Context Palace: `cxp --version`
-   - Beads: `bd --version`
-3. **Local bootstrap config** exists: `cat ~/.cobuild/bootstrap.md`
-4. **Target repo** is a git repository with a remote
-
-If `~/.cobuild/bootstrap.md` does not exist, stop and ask the developer to create it. See the CoBuild repo's `docs/bootstrap-template.md` for a template.
+If `~/.cobuild/bootstrap.md` doesn't exist, ask the developer to create it from the template at `docs/bootstrap-template.md` in the CoBuild repo.
 
 ---
 
-## Step 1: Read Local Bootstrap
+## Phase 1: Gather Information
 
-Read `~/.cobuild/bootstrap.md` to understand the local infrastructure:
-- Which database and connector to use
-- Default agents, models, and review strategy
-- Any project-specific overrides
+### Auto-detect (don't ask, just do)
 
-This file is your source of truth for infrastructure details that vary per machine/developer.
+- **Language and build system**: look for `go.mod`, `package.json`, `Cargo.toml`, `pyproject.toml`
+- **GitHub remote**: `git remote get-url origin`
+- **Default branch**: `git symbolic-ref refs/remotes/origin/HEAD`
+- **Existing config**: check for `.cobuild/`, `.cxp/`, `.cobuild.yaml`, `.cxp.yaml`
+- **Existing skills**: check for `skills/` directory
+- **Existing CLAUDE.md**: read it for project context
+
+### Ask the developer
+
+Present what you auto-detected, then ask these questions:
+
+**1. Project identity**
+> What is the project name for this repo? This should match the name in your work-item system (Context Palace project, Beads prefix, etc.).
+>
+> Detected: `<dirname or existing config>`
+
+**2. Multi-repo designs**
+> Do designs for this project ever span multiple repos? If yes, which repos?
+>
+> This affects how tasks are decomposed — tasks need to be tagged with their target repo so CoBuild dispatches into the right worktree.
+
+**3. Agent identity**
+> Which agent identity should this project use? Available agents from your bootstrap config:
+>
+> | Agent | Domains |
+> |-------|---------|
+> (list from bootstrap.md)
+>
+> Default: `<first agent from bootstrap>`
+
+**4. Build/test commands**
+> I detected these build and test commands. Are they correct?
+>
+> Build: `<detected>`
+> Test: `<detected>`
+
+**5. Deploy**
+> Does this project have services to deploy after PR merge? If yes, list the service names, path prefixes, and deploy commands.
+
+**6. Review strategy**
+> How should PRs be reviewed?
+> - **external**: An external reviewer (e.g., Gemini) reviews, then CoBuild processes the result
+> - **agent**: A CoBuild agent reviews the PR directly
+>
+> Default from bootstrap: `<default>`
+
+**7. Tmux session**
+> What tmux session should dispatched agents run in?
+>
+> Convention from bootstrap: `<convention>`
+> Detected sessions: `tmux list-sessions`
 
 ---
 
-## Step 2: Register the Repo
+## Phase 2: Create Config
 
-```bash
-cd <repo-root>
-cobuild setup
-```
+Based on the answers, create these files:
 
-This auto-detects:
-- Language (Go, Node, Rust, Python) and build/test commands
-- GitHub remote and default branch
-- Project name (from directory or `.cobuild.yaml`)
-
-Verify the output:
-- `.cobuild/pipeline.yaml` was created
-- `~/.cobuild/repos.yaml` includes this project
-
-If the auto-detected values are wrong, edit `.cobuild/pipeline.yaml` directly.
-
----
-
-## Step 3: Configure the Connector
-
-Based on the local bootstrap config, set the work-item connector in `.cobuild/pipeline.yaml`:
+### `.cobuild.yaml` (project identity — repo root)
 
 ```yaml
-connectors:
-    work_items:
-        type: context-palace    # or "beads" — from bootstrap.md
+project: <project-name>
+agent: <agent-identity>
 ```
 
-For Context Palace, verify connectivity:
-```bash
-cxp status
-cxp shard list --project <project-name> --limit 1 -o json
-```
+### `.cobuild/pipeline.yaml` (pipeline config)
 
-For Beads, verify:
-```bash
-bd list --limit 1 --json
-```
-
----
-
-## Step 4: Configure Storage
-
-CoBuild needs to store its own pipeline data. From the bootstrap config, set:
+Build this from the answers + bootstrap defaults. Include all sections:
 
 ```yaml
-storage:
-    backend: postgres
-    # DSN is inherited from the cxp/cobuild connection config by default
-```
+build:
+    - <detected or provided build commands>
+test:
+    - <detected or provided test commands>
 
-If the bootstrap specifies a different database, set the DSN explicitly:
-```yaml
-storage:
-    backend: postgres
-    dsn: "host=<host> dbname=<db> user=<user> sslmode=verify-full"
-```
-
----
-
-## Step 5: Copy Skills
-
-```bash
-cobuild init-skills
-```
-
-This copies the default skill files into `skills/` organized by phase:
-
-```
-skills/
-    design/       gate-readiness-review, implementability
-    implement/    dispatch-task, stall-check
-    review/       gate-review-pr, gate-process-review, merge-and-verify
-    done/         gate-retrospective
-    shared/       playbook, create-design
-```
-
-Review each skill and customize for this project. Key customizations:
-
-- **`shared/create-design.md`** — add project-specific design requirements
-- **`design/gate-readiness-review.md`** — adjust readiness criteria for this codebase
-- **`shared/playbook.md`** — update agent routing rules if agents have different domains
-
----
-
-## Step 6: Configure Context Layers
-
-Context layers control what agents see. At minimum, create an architecture doc:
-
-```bash
-mkdir -p .cobuild/context
-```
-
-Create `.cobuild/context/architecture.md` describing:
-- Codebase structure (key directories, packages, modules)
-- Build and deploy process
-- Key conventions and patterns
-- External dependencies
-
-Then add context layers to `.cobuild/pipeline.yaml`:
-
-```yaml
-context:
-    layers:
-        - name: architecture
-          source: file:.cobuild/context/architecture.md
-          when: always
-        - name: task-prompt
-          source: dispatch-prompt
-          when: dispatch
-        - name: design-context
-          source: parent-design
-          when: dispatch
-```
-
----
-
-## Step 7: Configure Agents and Models
-
-From the bootstrap config, set up agents with their domain capabilities:
-
-```yaml
 agents:
-    agent-steve:
-        domains: [cli, migrations]
-    agent-mycroft:
-        domains: [backend, services, tests]
+    <agent-name>:
+        domains: [<domains>]
 
 dispatch:
-    max_concurrent: 3
-    tmux_session: <project-tmux-session>
-    default_model: sonnet
+    max_concurrent: <from bootstrap>
+    tmux_session: <from answer>
+    claude_flags: "--dangerously-skip-permissions"
+    default_model: <from bootstrap>
+
+connectors:
+    work_items:
+        type: <from bootstrap>
 
 phases:
     - name: design
@@ -190,30 +130,16 @@ phases:
           - name: retrospective
             skill: done/gate-retrospective
             model: haiku
-```
 
----
-
-## Step 8: Configure Review Strategy
-
-From the bootstrap config:
-
-```yaml
 review:
-    strategy: external              # or "agent"
-    external_reviewers: [gemini]    # for external strategy
+    strategy: <from answer>
+    external_reviewers: [gemini]        # if external
     process_skill: review/gate-process-review
     ci:
         mode: pr-only
         wait: true
     model: haiku
-```
 
----
-
-## Step 9: Configure Monitoring
-
-```yaml
 monitoring:
     stall_timeout: 30m
     crash_check: true
@@ -224,60 +150,142 @@ monitoring:
         on_stall: skill:implement/stall-check
         on_crash: redispatch
         on_max_retries: escalate
+
+# If deploy was configured:
+deploy:
+    enabled: <true if services listed>
+    services:
+        - name: <service>
+          paths: [<paths>]
+          command: <deploy command>
+
+github:
+    owner_repo: <detected from git remote>
+
+skills_dir: skills
+
+workflows:
+    design:
+        phases: [design, decompose, implement, review, done]
+    bug:
+        phases: [implement, review, done]
+    task:
+        phases: [implement, review, done]
+```
+
+### If multi-repo: document the relationship
+
+If the developer said designs span multiple repos, add a note to the pipeline config:
+
+```yaml
+# Multi-repo: designs may span these repos
+# Tasks are tagged with target repo during decomposition
+# Related repos: <list>
 ```
 
 ---
 
-## Step 10: Verify Setup
-
-Run these checks in order:
+## Phase 3: Copy Skills
 
 ```bash
-# 1. Config loads without errors
-cobuild show <any-existing-shard-id> 2>&1 || echo "OK if no shards yet"
+cobuild init-skills
+```
 
-# 2. Skills are in place
+This creates the `skills/` directory with phase subfolders. After copying, tell the developer:
+
+> Default skills have been installed. You should customize these for your project:
+>
+> - `skills/shared/create-design.md` — add project-specific design requirements
+> - `skills/design/gate-readiness-review.md` — adjust readiness criteria for this codebase
+> - `skills/shared/playbook.md` — review agent routing if your agents have specialized domains
+
+---
+
+## Phase 4: Create Context Layers
+
+### Architecture doc
+
+Read the existing CLAUDE.md (if any) and the codebase structure. Create `.cobuild/context/architecture.md` describing:
+
+- Directory structure and what each major directory contains
+- Build system and how modules/packages relate
+- Key patterns and conventions
+- External dependencies and integrations
+- How to run the project locally
+
+If there's an existing `.cxp/context/` directory with context files, migrate them to `.cobuild/context/`.
+
+### Configure layers in pipeline.yaml
+
+Add to `.cobuild/pipeline.yaml`:
+
+```yaml
+context:
+    layers:
+        - name: architecture
+          source: file:.cobuild/context/architecture.md
+          when: always
+        - name: task-prompt
+          source: dispatch-prompt
+          when: dispatch
+        - name: design-context
+          source: parent-design
+          when: dispatch
+```
+
+If there were existing context files migrated from `.cxp/context/`, add layers for those too.
+
+---
+
+## Phase 5: Register and Verify
+
+```bash
+# Register the repo (updates ~/.cobuild/repos.yaml)
+cobuild setup
+
+# Verify connector
+cxp shard list --project <project-name> --limit 1 -o json
+
+# Verify build
+<run build commands>
+
+# Verify test
+<run test commands>
+
+# Verify skills are in place
 ls skills/design/ skills/implement/ skills/review/ skills/done/ skills/shared/
 
-# 3. Build and test commands work
-# (run whatever is in .cobuild/pipeline.yaml build: and test: sections)
-
-# 4. Connector can reach the work-item system
-cxp shard list --project <project> --limit 1 -o json   # for CP
-# bd list --limit 1 --json                               # for Beads
-
-# 5. Git worktree creation works
-git worktree list
+# Verify context
+cat .cobuild/context/architecture.md
 ```
 
 ---
 
-## Step 11: First Pipeline Run (Optional)
+## Phase 6: Summary
 
-If there's already a design shard to test with:
+Print a summary of everything that was configured:
 
-```bash
-# Initialize pipeline on a design
-cobuild init <design-shard-id>
-
-# Check pipeline state
-cobuild show <design-shard-id>
-
-# Run the poller once in dry-run mode
-cobuild poller --once --dry-run
 ```
+CoBuild setup complete for <project-name>
+================================================
 
----
+Project:     <name>
+Repo:        <github url>
+Agent:       <agent>
+Connector:   <type>
+Review:      <strategy>
+Build:       <commands>
+Test:        <commands>
+Deploy:      <yes/no + services>
+Multi-repo:  <yes/no + related repos>
 
-## Checklist
+Config:      .cobuild/pipeline.yaml
+Skills:      skills/ (10 files across 6 directories)
+Context:     .cobuild/context/architecture.md
 
-- [ ] `cobuild version` works
-- [ ] `~/.cobuild/bootstrap.md` exists with local infra details
-- [ ] `.cobuild/pipeline.yaml` exists with project config
-- [ ] Project registered in `~/.cobuild/repos.yaml`
-- [ ] Skills copied and customized (`skills/` directory populated)
-- [ ] Context layers configured (at minimum: architecture doc)
-- [ ] Connector verified (can list work items)
-- [ ] Build/test commands verified
-- [ ] Review strategy configured
-- [ ] Monitoring configured
+Next steps:
+  1. Review and customize skills for this project
+  2. Create a design shard: cobuild shard create --type design --title "..."
+  3. Initialize a pipeline: cobuild init <design-id>
+  4. Run the poller: cobuild poller --once --dry-run
+```
