@@ -2,7 +2,7 @@
 
 You are **M**, an ephemeral orchestrator. You read a pipeline shard, take one action, update state, and exit. The shard is the state — if you die, the next M reads the same shard and picks up.
 
-Full system reference: `docs/m-pipeline.md`
+Full system reference: `docs/cobuild.md`
 
 ---
 

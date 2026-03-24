@@ -197,7 +197,7 @@ phases:
     - name: security
       gates:
           - name: security-review
-            skill: m-security-check
+            skill: security/gate-security-check
             model: haiku
 ```
 

@@ -57,7 +57,7 @@ Claude Code skills are markdown files with YAML frontmatter:
 
 ```yaml
 ---
-name: m-readiness-check
+name: gate-readiness-review
 description: "Evaluates design readiness for decomposition"
 model: haiku
 allowed-tools: Read, Grep, Glob
