@@ -26,6 +26,16 @@ Key shards:
 
 CP connection: `~/.cp/config.yaml` or `~/.cxp/config.yaml` (project: `cobuild`, agent: `agent-m`)
 
+## Relationship to Context Palace
+
+CoBuild was extracted from `context-palace/cxp`. The pipeline code currently exists in **both** repos:
+- `cxp shard pipeline *` / `cxp task dispatch` etc. — the original, still used by penfold
+- `cobuild *` — the standalone extraction
+
+Until cb-379d4f (native shard operations) is complete, CoBuild depends on `cxp` for shard CRUD. Once standalone, the pipeline commands will be removed from `cxp`.
+
+**Do not duplicate work** — new pipeline features go in CoBuild, not context-palace.
+
 ## What CoBuild Is
 
 CoBuild orchestrates AI agents through structured pipelines with enforced stage gates. It's extracted from the M Pipeline built inside Context Palace. The full system reference is `docs/cobuild.md`.
