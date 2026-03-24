@@ -7,13 +7,13 @@ Config-driven AI agent pipeline: design to deployed code with stage gates, audit
 CoBuild orchestrates AI agents through a structured pipeline — from design review through decomposition, implementation, code review, and deployment. Every phase transition is enforced by a configurable gate that creates an audit trail.
 
 **Key features:**
-- **Config-driven** — phases, gates, models, context layers, deploy rules — all YAML
-- **Skills as markdown** — extend the pipeline by writing a `.md` file
-- **Context layers** — control exactly what each agent sees per session type
-- **Per-phase model selection** — haiku for judgment, sonnet for creation
-- **Self-improving** — feedback loop learns from execution patterns
-- **Multi-project** — one poller manages multiple repos
-- **Audit trail** — every decision recorded with structured data
+- [**Config-driven**](docs/guides/config.md) — phases, gates, models, context layers, deploy rules — all YAML
+- [**Skills as markdown**](docs/guides/skills.md) — extend the pipeline by writing a `.md` file
+- [**Context layers**](docs/guides/context-layers.md) — control exactly what each agent sees per session type
+- [**Per-phase model selection**](docs/guides/models.md) — haiku for judgment, sonnet for creation
+- [**Self-improving**](docs/guides/feedback-loop.md) — feedback loop learns from execution patterns
+- [**Multi-project**](docs/guides/multi-project.md) — one poller manages multiple repos
+- [**Audit trail**](docs/guides/audit-trail.md) — every decision recorded with structured data
 
 ## Quick Start
 
