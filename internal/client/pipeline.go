@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -261,12 +263,22 @@ func (c *Client) CreateShardWithMetadata(ctx context.Context, title, content, sh
 	}
 	defer conn.Close(ctx)
 
-	var id string
-	err = conn.QueryRow(ctx, `
-		INSERT INTO shards (title, content, type, priority, project, agent, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id
-	`, title, content, shardType, priority, c.Config.Project, c.Config.Agent, metadata).Scan(&id)
+	creator := c.Config.Agent
+	if creator == "" {
+		creator = "cobuild"
+	}
+
+	// Generate shard ID: <project-prefix>-<6 hex chars>
+	prefix := c.Config.Project
+	if len(prefix) > 2 {
+		prefix = prefix[:2]
+	}
+	id := fmt.Sprintf("%s-%s", prefix, randomHex(3))
+
+	_, err = conn.Exec(ctx, `
+		INSERT INTO shards (id, title, content, type, priority, project, creator, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, id, title, content, shardType, priority, c.Config.Project, creator, metadata)
 	if err != nil {
 		return "", err
 	}
@@ -1145,4 +1157,10 @@ func (c *Client) FindInProgressTasks(ctx context.Context) ([]ShardSummary, error
 		results = append(results, s)
 	}
 	return results, rows.Err()
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
