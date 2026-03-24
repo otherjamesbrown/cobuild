@@ -49,6 +49,7 @@ The result is a `.cobuild/` directory in the repo with everything the pipeline n
 - `shared/bootstrap-storage-postgres.md` — Postgres storage setup
 - `shared/bootstrap-context-layers.md` — context layer configuration
 - `shared/bootstrap-skills.md` — skill copying and customization
+- `shared/bootstrap-claude-md.md` — generate CoBuild section for CLAUDE.md
 
 ---
 
@@ -227,7 +228,15 @@ This creates the architecture doc, migrates existing context files, and configur
 
 ---
 
-## Step 8: Register and Verify
+## Step 8: Update CLAUDE.md
+
+Follow `shared/bootstrap-claude-md.md`.
+
+This generates a CoBuild section for the repo's CLAUDE.md containing pipeline commands, task completion protocol, work-item commands for the configured connector, and skills reference. Agents working in this repo will read CLAUDE.md — if it doesn't mention CoBuild, they won't know they're part of a pipeline.
+
+---
+
+## Step 9: Register and Verify
 
 ```bash
 # Register the repo
@@ -249,7 +258,7 @@ ls .cobuild/context/architecture.md
 
 ---
 
-## Step 9: Summary
+## Step 10: Summary
 
 Print what was configured:
 
@@ -268,11 +277,12 @@ Test:        <commands>
 Deploy:      <yes/no + services>
 Multi-repo:  <yes/no + related repos>
 
-Files created:
+Files created/updated:
   .cobuild.yaml                      project identity
   .cobuild/pipeline.yaml             pipeline configuration
   .cobuild/context/architecture.md   codebase architecture
   skills/                            pipeline skills (N files)
+  CLAUDE.md                          updated with CoBuild instructions
 
 Next steps:
   1. Review and customize skills for this project
