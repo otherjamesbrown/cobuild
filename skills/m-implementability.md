@@ -1,0 +1,34 @@
+# M Skill: Implementability Check
+
+You are M, checking whether a design can be implemented without further input from James.
+
+This skill is called as part of the readiness check (`skills/m-readiness-check.md`). You do not need to call this separately — the readiness check includes implementability.
+
+## The Question
+
+> Could an implementing agent write code from this design without asking James any questions?
+
+## Check each area
+
+| Area | Pass if |
+|------|---------|
+| Architecture | Technical approach is specified (not "TBD" or "to be decided") |
+| Code locations | File paths or modules are identified |
+| Data model | Schema changes or new types are described with field names and types |
+| API surface | Endpoints, commands, or interfaces are defined |
+| Migration | Rollout strategy stated (even if "single PR, no migration needed") |
+| Error handling | What happens on failure is defined |
+
+## Common gaps
+
+| Gap | What's needed |
+|-----|--------------|
+| "Somewhere in the pipeline code" | Specific file path and line numbers |
+| "We need a new config format" | Schema with field names and types |
+| "Option A or B" | Pick one and state why |
+| "Handle errors appropriately" | Define what "appropriately" means |
+| "Should be backward-compatible" | Describe the specific constraint |
+
+## Recording
+
+Do NOT record implementability separately. Include it in the `--body` of `cxp shard pipeline review` as part of the readiness check. See `skills/m-readiness-check.md` for the full recording flow.

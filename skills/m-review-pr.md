@@ -1,0 +1,60 @@
+# M Skill: Review PR
+
+You are reviewing a pull request for a pipeline task.
+
+## Input
+- Task shard ID
+
+## Setup
+
+Read the task and its PR:
+```bash
+cxp task get <task-id>
+```
+Get the PR URL from task metadata, then fetch the diff:
+```bash
+gh pr diff <pr-url>
+```
+Get the parent design for context:
+```bash
+cxp shard edges <task-id> outgoing child-of
+cxp shard show <parent-design-id>
+```
+
+## Three Review Questions
+
+### 1. Does it match the task spec?
+- Compare the PR diff against the acceptance criteria in the task shard
+- Every acceptance criterion should be addressed
+- Nothing extra that wasn't asked for (no gold-plating)
+
+### 2. Does it fit the overall design?
+- Changes are consistent with the design's architecture
+- No contradictions with other tasks in the same design
+- Naming, patterns, and conventions match the codebase
+
+### 3. Will it break anything?
+- No obvious regressions
+- Tests cover the changes
+- Schema changes are backward-compatible or have migrations
+- No hardcoded values that should be configurable
+
+## Test Diagnosis
+
+If tests fail, determine fault:
+- **Implementation diverges from spec** → implementation bug → request changes
+- **Test expects wrong thing** → test bug → note in verdict
+- **Spec is ambiguous** → escalate
+
+## Write Your Verdict
+
+```bash
+# If approved:
+cxp task review-verdict <task-id> approve --body "All acceptance criteria met. Tests pass. Clean implementation."
+
+# If changes needed:
+cxp task review-verdict <task-id> request-changes --body "Issue: <description>. Fix: <suggestion>."
+
+# If design problem:
+cxp task review-verdict <task-id> escalate --body "Design ambiguity: <description>. James needs to clarify."
+```
