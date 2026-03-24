@@ -1,6 +1,47 @@
 # Skill: Bootstrap CoBuild on a Project
 
-Set up CoBuild pipeline automation on a repository. This is an interactive process — read the local infrastructure config, auto-detect what you can, and ask the developer for project-specific decisions.
+## What is CoBuild?
+
+CoBuild is a pipeline that takes a **design** (a written specification of what to build) and turns it into **deployed code** by orchestrating AI agents through structured phases with quality gates.
+
+### The Pipeline
+
+A design flows through 5 phases. Each phase transition is enforced by a **gate** — a quality check that must pass before work moves forward:
+
+```
+Design  →  Decompose  →  Implement  →  Review  →  Done
+  ↑ gate      ↑ gate                     ↑ gate    ↑ gate
+```
+
+1. **Design** — An agent evaluates the design for completeness and implementability. Can an implementing agent build this without asking questions? The **readiness-review** gate enforces this.
+2. **Decompose** — An agent breaks the design into discrete tasks with dependency ordering. Tasks are grouped into **waves** (wave 1 has no blockers, wave 2 depends on wave 1). The **decomposition-review** gate verifies tasks are complete and dependencies are acyclic.
+3. **Implement** — Agents are dispatched into isolated git worktrees, one per task. Each gets a tailored CLAUDE.md with the task spec, parent design context, and project architecture. Waves are processed in order. When done, agents commit, push, and create PRs.
+4. **Review** — PRs are reviewed by an external reviewer (e.g., Gemini) or by another agent. Approved PRs get merged.
+5. **Done** — A retrospective captures lessons learned and feeds them back into the pipeline configuration.
+
+Shorter workflows exist for **bugs** and **tasks** that skip the design and decompose phases.
+
+### Architecture
+
+CoBuild has three layers:
+
+- **Connector** — bridges to an external work-item system where designs, bugs, and tasks live (Context Palace, Beads, or future Jira/Linear). CoBuild reads and writes work items through the connector. It never owns the work items.
+- **Store** — where CoBuild keeps its own orchestration state: pipeline runs, gate audit records, task tracking. Currently Postgres, with SQLite and file-based stores planned.
+- **Skills** — markdown files organized by phase that tell agents what to do. Gate skills define evaluation criteria. Phase skills define procedures. The pipeline's intelligence lives in skills, not compiled code.
+
+### What You're Setting Up
+
+This bootstrap configures:
+1. **Project identity** — name, agent, GitHub remote
+2. **Connector** — how CoBuild reaches the work-item system
+3. **Storage** — where CoBuild stores its pipeline data
+4. **Pipeline config** — phases, gates, models, review strategy, monitoring
+5. **Skills** — copied and customized for this specific project
+6. **Context layers** — what information agents see during each session type
+
+The result is a `.cobuild/` directory in the repo with everything the pipeline needs.
+
+---
 
 **Sub-skills** (called during setup, or run independently):
 - `shared/bootstrap-connector-cp.md` — Context Palace connector setup
