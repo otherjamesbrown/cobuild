@@ -41,8 +41,8 @@ type WorkflowConfig struct {
 // ContextLayer defines a piece of context that can be injected into agent sessions.
 type ContextLayer struct {
 	Name   string   `yaml:"name"`
-	Source string   `yaml:"source"` // "file:<path>", "shard:<id>", "skills:<name>", "dispatch-prompt", "parent-design"
-	When   string   `yaml:"when"`   // "interactive", "dispatch", "always", "gate:<name>"
+	Source string   `yaml:"source"` // "file:<path>", "work-item:<id>", "skills:<name>", "dispatch-prompt", "parent-design"
+	When   string   `yaml:"when"`   // "always", "interactive", "dispatch", "phase:<name>", "gate:<name>"
 	Filter []string `yaml:"filter,omitempty"`
 }
 
@@ -207,7 +207,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Dispatch: DispatchCfg{
 			MaxConcurrent: 3,
-			TmuxSession:   "main",
+			TmuxSession:   "", // empty = auto: cobuild-<project>
 			ClaudeFlags:   "--print",
 			DefaultModel:  "sonnet",
 		},

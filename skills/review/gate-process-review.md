@@ -1,6 +1,11 @@
+---
+name: gate-process-review
+description: Process external review feedback (Gemini, CI) on a task PR and decide approve, request-changes, or escalate. Trigger when a PR has external review results.
+---
+
 # Skill: Process PR Review
 
-You are M, processing review feedback on a task PR. External reviewers (Gemini, CI) have already provided feedback. Your job is to evaluate it and decide the next action.
+You are the pipeline orchestrator, processing review feedback on a task PR. External reviewers (Gemini, CI) have already provided feedback. Your job is to evaluate it and decide the next action.
 
 ## Input
 
@@ -119,7 +124,7 @@ The implementer needs to fix and push. The poller will detect the task back in `
 
 Add the specific feedback to the task shard so the implementer knows what to fix:
 ```bash
-cobuild shard append <task-id> --body "## Review Feedback — Round N
+cobuild wi append <task-id> --body "## Review Feedback — Round N
 ### CI Failures
 <list>
 ### Gemini Issues (actionable)
@@ -127,3 +132,7 @@ cobuild shard append <task-id> --body "## Review Feedback — Round N
 ### What to fix
 <specific instructions>"
 ```
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

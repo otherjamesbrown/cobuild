@@ -118,7 +118,7 @@ Each repo's `.cobuild/pipeline.yaml` can override any global setting:
 # This repo needs more concurrent agents
 dispatch:
     max_concurrent: 5
-    tmux_session: dev-myproject
+    tmux_session: dev-myproject   # optional — overrides default cobuild-<project>
 
 # Different review strategy for this repo
 review:
@@ -160,7 +160,7 @@ agents:
         domains: [cli, migrations]
 
 dispatch:
-    tmux_session: dev-penf-cli
+    tmux_session: dev-penf-cli    # optional override; default would be cobuild-penfold
     default_model: sonnet
 
 review:
@@ -198,7 +198,6 @@ test:
     - npm run lint
 
 dispatch:
-    tmux_session: dev-dashboard
     default_model: sonnet
 
 review:
@@ -227,7 +226,6 @@ test:
     - mypy src/
 
 dispatch:
-    tmux_session: dev-ml
     default_model: sonnet
     max_concurrent: 2          # ML tasks are resource-heavy
 

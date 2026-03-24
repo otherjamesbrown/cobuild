@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // findRepoRoot returns the git repo root, falling back to cwd.
@@ -16,6 +19,23 @@ func findRepoRoot() string {
 	}
 	cwd, _ := os.Getwd()
 	return cwd
+}
+
+// readProjectFromYAML reads the project name from .cobuild.yaml in the repo root.
+func readProjectFromYAML(repoRoot string) string {
+	for _, name := range []string{".cobuild.yaml", ".cxp.yaml"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, name))
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			Project string `yaml:"project"`
+		}
+		if yaml.Unmarshal(data, &cfg) == nil && cfg.Project != "" {
+			return cfg.Project
+		}
+	}
+	return ""
 }
 
 // resolveBody resolves body content from --body or --body-file flags.

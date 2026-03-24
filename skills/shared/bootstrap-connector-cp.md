@@ -1,3 +1,8 @@
+---
+name: bootstrap-connector-cp
+description: Configure and verify the Context Palace connector for CoBuild. Trigger when setting up a project that uses Context Palace for work items.
+---
+
 # Skill: Configure Context Palace Connector
 
 Set up and verify the Context Palace connector for CoBuild. Called from the main bootstrap or run independently.
@@ -94,3 +99,7 @@ No additional config needed — the `cxp` CLI handles connection details via its
 - [ ] `cxp shard list --project <name> -o json` returns valid JSON
 - [ ] `.cobuild.yaml` exists with project and agent
 - [ ] `connectors.work_items.type: context-palace` in pipeline.yaml
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

@@ -1,6 +1,11 @@
+---
+name: gate-retrospective
+description: Review a completed pipeline to extract lessons learned and suggest improvements. Trigger when a design reaches the done phase.
+---
+
 # Skill: Pipeline Retrospective
 
-You are M, reviewing a completed design pipeline to extract lessons learned.
+You are the pipeline orchestrator, reviewing a completed design pipeline to extract lessons learned.
 
 Run this after a design reaches `done` phase.
 
@@ -57,14 +62,14 @@ cobuild pipeline improve -o text
 
 Create a knowledge shard with the retrospective:
 ```bash
-cobuild shard create --type knowledge \
+cobuild wi create --type knowledge \
   --title "Pipeline retrospective: <design-title>" \
   --body "<findings>"
 ```
 
 Link to the design:
 ```bash
-cobuild shard link <retro-id> --references <design-id>
+cobuild wi links add <retro-id> --references <design-id>
 ```
 
 ### Finding format
@@ -91,3 +96,7 @@ cobuild shard link <retro-id> --references <design-id>
 ## Data-driven improvements
 <output from cobuild pipeline improve>
 ```
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

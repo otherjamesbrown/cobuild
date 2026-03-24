@@ -1,6 +1,11 @@
+---
+name: stall-check
+description: Diagnose a task that may be stalled, crashed, or rate-limited. Trigger on health check, stall detection, or agent crash.
+---
+
 # Skill: Agent Health Check
 
-You are M, diagnosing a task that may be stalled, crashed, or rate-limited.
+You are the pipeline orchestrator, diagnosing a task that may be stalled, crashed, or rate-limited.
 
 ## Input
 
@@ -32,25 +37,25 @@ The agent session exited — could be rate limit, OOM, context overflow, or bug.
 **If retry count < max_retries:**
 ```bash
 # Reset and re-dispatch
-cobuild shard status <task-id> open
+cobuild wi status <task-id> open
 cobuild worktree remove <task-id>
 # Wait for cooldown (handled by poller)
 # Poller will re-dispatch on next cycle
 ```
 
-Append to shard:
+Append to work item:
 ```bash
-cobuild shard append <task-id> --body "## Health Check — Crash detected
+cobuild wi append <task-id> --body "## Health Check — Crash detected
 Agent session exited. Retry #<N>. Re-dispatching after cooldown."
 ```
 
 **If retry count >= max_retries:**
 ```bash
-cobuild shard append <task-id> --body "## Health Check — Max retries exceeded
-Agent crashed <N> times. Escalating to James.
+cobuild wi append <task-id> --body "## Health Check — Max retries exceeded
+Agent crashed <N> times. Escalating to the developer.
 Last status: <status>
 Last update: <updated_at>"
-cobuild shard label add <task-id> blocked
+cobuild wi label add <task-id> blocked
 ```
 
 ### Agent stalled (tmux window exists, no progress for > stall_timeout)
@@ -73,22 +78,22 @@ Look for:
 # Check if there's evidence of completion in the shard
 cobuild show <task-id> -o json
 # If evidence exists, mark it done
-cobuild shard status <task-id> needs-review
+cobuild wi status <task-id> needs-review
 ```
 
 **If stuck in error loop (> 5 iterations with no progress):**
 ```bash
-cobuild shard append <task-id> --body "## Health Check — Stall detected
+cobuild wi append <task-id> --body "## Health Check — Stall detected
 Agent stuck after <N> iterations. Possible causes:
 - <diagnosis from tmux output>
 
 Action: re-scoping or manual intervention needed."
-cobuild shard label add <task-id> blocked
+cobuild wi label add <task-id> blocked
 ```
 
 **If rate limited:**
 ```bash
-cobuild shard append <task-id> --body "## Health Check — Rate limited
+cobuild wi append <task-id> --body "## Health Check — Rate limited
 Agent hit rate limits. Will recover on next cycle."
 # No action needed — agent will resume when limits clear
 ```
@@ -96,7 +101,7 @@ Agent hit rate limits. Will recover on next cycle."
 ### Retry exhausted (max retries hit)
 
 ```bash
-cobuild shard append <task-id> --body "## Health Check — Escalation
+cobuild wi append <task-id> --body "## Health Check — Escalation
 Task failed after <max_retries> dispatch attempts.
 Design: <design-id>
 Task: <task-title>
@@ -106,17 +111,21 @@ Possible causes:
 2. Missing information in task spec
 3. Codebase issue blocking implementation
 
-Action needed: James to review and re-scope or unblock."
-cobuild shard label add <task-id> blocked
+Action needed: Developer to review and re-scope or unblock."
+cobuild wi label add <task-id> blocked
 ```
 
 ## Step 3: Record
 
-Always append health check results to the task shard. Every check should be visible in the audit trail, even if no action is taken.
+Always append health check results to the work item. Every check should be visible in the audit trail, even if no action is taken.
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->
 
 Format:
 ```bash
-cobuild shard append <task-id> --body "## Health Check — <timestamp>
+cobuild wi append <task-id> --body "## Health Check — <timestamp>
 Trigger: <stall|crash|retry-exhausted>
 Retry: <N>/<max>
 Diagnosis: <what was found>

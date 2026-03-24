@@ -1,8 +1,13 @@
-# Skill: Create a Design Shard
+---
+name: create-design
+description: Create a well-formed design work item that will pass the readiness review gate. Trigger on "create design", "write a design", "new design".
+---
 
-When creating a design shard, follow this structure. Designs that don't meet these criteria will be sent back by the pipeline readiness check.
+# Skill: Create a Design
 
-**Evaluated by:** `skills/design/gate-readiness-review.md` — M runs this check before advancing a design to decomposition. The 5 readiness criteria and implementability check map directly to the required sections below.
+When creating a design, follow this structure. Designs that don't meet these criteria will be sent back by the pipeline readiness check.
+
+**Evaluated by:** `skills/design/gate-readiness-review.md` — the readiness gate runs this check before advancing a design to decomposition. The 5 readiness criteria and implementability check map directly to the required sections below.
 
 ---
 
@@ -113,15 +118,15 @@ If the answer is no, the design isn't ready. Common gaps:
 ## Creating the Shard
 
 ```bash
-cobuild shard create --type design \
+cobuild wi create --type design \
   --title "<concise title — what changes, not why>" \
   --body-file design.md
 
 # Link to parent outcome
-cobuild shard edge create <design-id> <outcome-id> child-of
+cobuild wi links add <design-id> <outcome-id> child-of
 
 # If this depends on another design
-cobuild shard edge create <design-id> <other-design-id> blocked-by
+cobuild wi links add <design-id> <other-design-id> blocked-by
 ```
 
 ### Title Convention
@@ -136,3 +141,7 @@ Format: `<What changes> — <one-line summary>`
 - "Fix the pipeline"
 - "Improvements to notification handling"
 - "Phase 2 of the refactor"
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

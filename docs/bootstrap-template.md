@@ -37,7 +37,7 @@ Copy this file to `~/.cobuild/bootstrap.md` and fill in your details. This is re
 
 ## Tmux
 
-<How tmux sessions are named for this machine>
+CoBuild auto-creates tmux sessions named `cobuild-<project>` by default. Set `dispatch.tmux_session` in `.cobuild/pipeline.yaml` only if you need a different name.
 
 ## Project Setup Conventions
 

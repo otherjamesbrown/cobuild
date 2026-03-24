@@ -202,11 +202,19 @@ func spawnM(ctx context.Context, repoRoot string, cfg *config.Config, designID, 
 	if skillsDir == "" {
 		skillsDir = "skills"
 	}
-	playbookPath := filepath.Join(skillsDir, "m-playbook.md")
+	playbookPath := filepath.Join(skillsDir, "shared", "playbook.md")
 
 	tmuxSession := cfg.Dispatch.TmuxSession
 	if tmuxSession == "" {
-		tmuxSession = "main"
+		tmuxSession = fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
+	}
+
+	// Ensure tmux session exists
+	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", tmuxSession).Run(); err != nil {
+		if createErr := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", tmuxSession).Run(); createErr != nil {
+			fmt.Fprintf(os.Stderr, "  [spawn] failed to create tmux session %q: %v\n", tmuxSession, createErr)
+			return
+		}
 	}
 	claudeFlags := cfg.Dispatch.ClaudeFlags
 	if claudeFlags == "" {
@@ -252,7 +260,7 @@ func runHealthChecks(ctx context.Context, repoRoot string, cfg *config.Config, d
 
 	tmuxSession := cfg.Dispatch.TmuxSession
 	if tmuxSession == "" {
-		tmuxSession = "main"
+		tmuxSession = fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
 	}
 
 	tasks, err := cbClient.FindInProgressTasks(ctx)

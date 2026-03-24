@@ -132,7 +132,7 @@ All tasks merged. A `retrospective` gate (skill `done/gate-retrospective`, model
 When multiple designs touch the same codebase, use `blocked-by` edges between designs:
 
 ```bash
-cobuild shard link <later-design> --blocked-by <earlier-design>
+cobuild wi links add <later-design> --blocked-by <earlier-design>
 ```
 
 ---
@@ -144,14 +144,14 @@ When `cobuild dispatch` runs, it generates a `CLAUDE.md` for the worktree by ass
 Each layer has:
 - **`name`** -- identifier
 - **`source`** -- where content comes from
-- **`when`** -- which mode activates the layer: `always`, `interactive`, `dispatch`, or `gate:<name>`
+- **`when`** -- which mode activates the layer: `always`, `interactive`, `dispatch`, `phase:<name>`, or `gate:<name>`
 
 ### Source types
 
 | Source | Resolves to |
 |--------|-------------|
 | `file:<path>` | Read file from repo (relative to repo root) |
-| `shard:<id>` | Fetch work item content via connector |
+| `work-item:<id>` | Fetch content via connector (CP shard, Bead, etc.) |
 | `skills:<name>` | Resolve skill file (repo then global) |
 | `skills-dir` | Load all `.md` files from skills directory (optional `filter` list) |
 | `claude-md` | Read the repo's `CLAUDE.md` |
@@ -159,28 +159,43 @@ Each layer has:
 | `parent-design` | Injected parent design content (dispatch mode only) |
 | `hook:<name>` | Deferred to Claude Code hooks |
 
+### When filters
+
+| When | Active for |
+|------|-----------|
+| `always` (or empty) | Every session |
+| `interactive` | Interactive sessions (human typing) |
+| `dispatch` | All dispatched tasks |
+| `phase:<name>` | Specific pipeline phase (e.g., `phase:design`, `phase:implement`) |
+| `gate:<name>` | Specific gate evaluation |
+
 ### Example: penfold context layers
 
 ```yaml
 context:
     layers:
+        # Always — every agent sees these
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always
-        - name: agent-identity
-          source: file:.cobuild/context/agent-identity.md
-          when: interactive
-        - name: playbook
-          source: shard:pf-2b76b4
-          when: interactive
+        - name: principles
+          source: work-item:pf-eeb256
+          when: always
+
+        # Phase-specific — design agents get domain docs, implement agents get testing standards
+        - name: ingest-pipeline
+          source: work-item:pf-c66536
+          when: phase:design
+        - name: testing
+          source: work-item:pf-129647
+          when: phase:implement
+
+        # Dispatch — task prompt and parent design injected at dispatch time
         - name: task-prompt
           source: dispatch-prompt
           when: dispatch
         - name: design-context
           source: parent-design
-          when: dispatch
-        - name: dispatch-completion
-          source: file:.cobuild/context/dispatch-completion.md
           when: dispatch
 ```
 
@@ -597,7 +612,7 @@ agents:
 # Dispatch configuration
 dispatch:
     max_concurrent: 3             # max parallel agents
-    tmux_session: main            # tmux session name
+    # tmux_session: cobuild-myproject  # optional — defaults to cobuild-<project>
     claude_flags: "--dangerously-skip-permissions"
     default_model: sonnet         # fallback model
 

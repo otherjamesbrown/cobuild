@@ -204,11 +204,17 @@ Control what context each agent sees:
 context:
     layers:
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always                # loaded in all sessions
-        - name: agent-identity
-          source: file:.cobuild/context/identity.md
-          when: interactive           # only when human is typing
+        - name: principles
+          source: work-item:pf-eeb256
+          when: always                # fetch from connector (CP shard, Bead, etc.)
+        - name: ingest-docs
+          source: work-item:pf-c66536
+          when: phase:design          # only during design phase
+        - name: testing-standards
+          source: work-item:pf-129647
+          when: phase:implement       # only during implement phase
         - name: task-prompt
           source: dispatch-prompt
           when: dispatch              # only when pipeline dispatches
@@ -217,7 +223,8 @@ context:
           when: gate:security-review  # only during security gate
 ```
 
-Sources: `file:<path>`, `shard:<id>`, `skills:<name>`, `claude-md`, `dispatch-prompt`, `parent-design`
+Sources: `file:<path>`, `work-item:<id>`, `skills:<name>`, `claude-md`, `dispatch-prompt`, `parent-design`
+When: `always`, `interactive`, `dispatch`, `phase:<name>`, `gate:<name>`
 
 ## Feedback Loop
 

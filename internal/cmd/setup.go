@@ -229,7 +229,6 @@ func buildPipelineYAML(project, ownerRepo string, buildCmds, testCmds []string) 
 		},
 		Dispatch: config.DispatchCfg{
 			MaxConcurrent: 3,
-			TmuxSession:   "main",
 		},
 		GitHub: config.GitHubCfg{
 			OwnerRepo: ownerRepo,

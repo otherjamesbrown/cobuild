@@ -1,3 +1,8 @@
+---
+name: bootstrap
+description: Set up CoBuild on a new project. Interactive walkthrough of connector, storage, context layers, skills, and agent instructions. Trigger on "set up cobuild", "bootstrap", "configure pipeline".
+---
+
 # Skill: Bootstrap CoBuild on a Project
 
 ## What is CoBuild?
@@ -32,7 +37,7 @@ CoBuild has three layers:
 ### What You're Setting Up
 
 This bootstrap configures:
-1. **Project identity** — name, agent, GitHub remote
+1. **Project identity** — name, GitHub remote, work-item prefix
 2. **Connector** — how CoBuild reaches the work-item system
 3. **Storage** — where CoBuild stores its pipeline data
 4. **Pipeline config** — phases, gates, models, review strategy, monitoring
@@ -99,66 +104,63 @@ If the project has subdirectories with their own build systems (multi-module), d
 
 ## Step 2: Ask the Developer
 
-Present what you detected, then ask these questions one at a time. Use the defaults from `~/.cobuild/bootstrap.md` where applicable.
+Present what you detected, then ask the following questions. Present them with full context so the developer understands *why* each question matters. Batch related questions where it makes sense, but don't rush — the developer needs to understand what they're configuring.
 
-### Question 1: Project Name
+### Question 1: Project Name and Work-Item Prefix
 
-> What is the project name? This should match the name in your work-item system.
+> **Project name** — CoBuild groups pipeline runs, gate records, and metrics by project name. This should match the project name in your work-item system (Context Palace or Beads).
 >
 > Detected from directory/config: `<detected>`
+>
+> **Work-item prefix** — If your work-item system uses prefixed IDs (e.g., `pf-abc123`), what's the prefix? This helps CoBuild filter work items that belong to this project.
 
 ### Question 2: Multi-Repo
 
-> Do designs for this project ever span multiple repos?
+> **Does this project span multiple repos?**
 >
-> If yes: which repos are involved? Tasks will be tagged with their target repo during decomposition, so CoBuild dispatches agents into the correct worktree.
-
-### Question 3: Agent
-
-> Which agent identity should this project use?
+> Some projects split across repos (e.g., a backend server + CLI tool). If so, a single *design* can produce tasks that target different repos. During the decompose phase, each task gets tagged with its target repo so CoBuild dispatches agents into the correct codebase.
 >
-> Available from bootstrap config:
-> | Agent | Domains |
-> |-------|---------|
-> (list from ~/.cobuild/bootstrap.md)
+> If yes: which repos are involved, and what does each one contain?
 
-### Question 4: Build and Test
+### Question 3: Build and Test
 
-> I detected these commands. Correct?
+> **Build and test commands** — CoBuild agents run these after implementing a task, before marking it complete. Getting these wrong means agents will either skip verification or fail on every task.
 >
-> Build: `<detected>`
-> Test: `<detected>`
+> I detected:
+> - Build: `<detected>`
+> - Test: `<detected>`
 >
-> If this is a multi-module project, should build/test run from a subdirectory?
+> Are these correct? Are there additional checks (e.g., `go vet`, linting) that should run?
 
-### Question 5: Work-Item System
+### Question 4: Work-Item System
 
-> Which work-item system does this project use?
+> **Where do designs, tasks, and bugs live?**
 >
-> 1. **Context Palace** — shards via `cxp` CLI
+> CoBuild doesn't own work items — it reads and writes them through a connector. Which system does this project use?
+>
+> 1. **Context Palace** — shards via `cxp` CLI (designs, tasks, bugs stored as shards)
 > 2. **Beads** — issues via `bd` CLI
-
-### Question 6: Deploy
-
-> Does this project have services to auto-deploy after PR merge?
 >
-> If yes: list each service with its name, path prefix (files that trigger it), and deploy command.
+> CoBuild needs this to know how to read designs, create tasks during decomposition, and update status as work progresses.
 
-### Question 7: Review Strategy
+### Question 5: Deploy
 
-> How should PRs be reviewed?
+> **What happens after a PR is merged?**
 >
-> 1. **external** — an external reviewer (e.g., Gemini) reviews, CoBuild processes the result
-> 2. **agent** — a CoBuild agent reviews the PR directly
+> CoBuild can auto-deploy after the review phase merges a PR. This is optional — some projects just merge and deploy manually.
 >
-> Default: `<from bootstrap>`
+> If you want auto-deploy: list each service with its deploy command and which file paths trigger it (so CoBuild only deploys services affected by the change).
 
-### Question 8: Tmux Session
+### Question 6: Review Strategy
 
-> What tmux session should dispatched agents run in?
+> **How should PRs be reviewed?**
 >
-> Check: `tmux list-sessions`
-> Convention from bootstrap: `<convention>`
+> After an agent implements a task and creates a PR, CoBuild needs to get it reviewed before merging. Two options:
+>
+> 1. **External reviewer** — an external AI (e.g., Gemini via code review) reviews the PR, and CoBuild processes the verdict
+> 2. **Agent reviewer** — a CoBuild agent reviews the PR directly using the review skill
+>
+> External review gives you a second opinion from a different model. Agent review keeps everything in CoBuild.
 
 ---
 
@@ -186,8 +188,7 @@ This verifies Postgres connectivity, checks/creates CoBuild's tables, and writes
 Using all the gathered information, create `.cobuild/pipeline.yaml`. Include every section — don't leave things to implicit defaults, make the config explicit and self-documenting:
 
 - `build` and `test` commands
-- `agents` with domains
-- `dispatch` settings (concurrent, tmux, model)
+- `dispatch` settings (concurrent, model)
 - `connectors.work_items` (from step 3)
 - `storage` (from step 4)
 - `phases` with gates and skills
@@ -201,7 +202,7 @@ Using all the gathered information, create `.cobuild/pipeline.yaml`. Include eve
 Also create `.cobuild.yaml` in the repo root:
 ```yaml
 project: <project-name>
-agent: <agent-identity>
+prefix: <work-item-prefix>
 ```
 
 If multi-repo, add a comment documenting the relationship:
@@ -267,8 +268,8 @@ CoBuild setup complete for <project-name>
 ================================================
 
 Project:     <name>
+Prefix:      <work-item-prefix>
 Repo:        <github url>
-Agent:       <agent>
 Connector:   <type>
 Storage:     <backend>
 Review:      <strategy>
@@ -290,3 +291,7 @@ Next steps:
   3. Initialize pipeline: cobuild init <design-id>
   4. Dry-run the poller: cobuild poller --once --dry-run
 ```
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

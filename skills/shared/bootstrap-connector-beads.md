@@ -1,3 +1,8 @@
+---
+name: bootstrap-connector-beads
+description: Configure and verify the Beads connector for CoBuild. Trigger when setting up a project that uses Beads for work items.
+---
+
 # Skill: Configure Beads Connector
 
 Set up and verify the Beads connector for CoBuild. Called from the main bootstrap or run independently.
@@ -90,3 +95,7 @@ connectors:
 - [ ] `bd ready --json` works
 - [ ] `connectors.work_items.type: beads` in pipeline.yaml
 - [ ] Prefix configured correctly
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

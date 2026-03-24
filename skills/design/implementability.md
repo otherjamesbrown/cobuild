@@ -1,12 +1,17 @@
+---
+name: implementability
+description: Check whether a design is specific enough for an agent to implement without asking questions. Called as part of the readiness review gate.
+---
+
 # Skill: Implementability Check
 
-You are M, checking whether a design can be implemented without further input from James.
+You are the pipeline orchestrator, checking whether a design can be implemented without further input from the developer.
 
 This skill is called as part of the readiness check (`skills/design/gate-readiness-review.md`). You do not need to call this separately — the readiness check includes implementability.
 
 ## The Question
 
-> Could an implementing agent write code from this design without asking James any questions?
+> Could an implementing agent write code from this design without asking the developer any questions?
 
 ## Check each area
 
@@ -28,6 +33,10 @@ This skill is called as part of the readiness check (`skills/design/gate-readine
 | "Option A or B" | Pick one and state why |
 | "Handle errors appropriately" | Define what "appropriately" means |
 | "Should be backward-compatible" | Describe the specific constraint |
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->
 
 ## Recording
 

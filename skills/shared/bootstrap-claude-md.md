@@ -1,3 +1,8 @@
+---
+name: bootstrap-claude-md
+description: Generate .cobuild/AGENTS.md with pipeline instructions and add a CoBuild pointer to CLAUDE.md. Final bootstrap step.
+---
+
 # Skill: Generate CoBuild Agent Instructions
 
 Create `.cobuild/AGENTS.md` with full pipeline instructions for agents, and add a pointer to it in the repo's CLAUDE.md. This is the final bootstrap step — all configuration must be complete before running this.
@@ -53,21 +58,14 @@ Tasks are tagged with their target repo during decomposition. Your worktree is a
 
 ### Work Items
 
-<for context-palace>
 | Command | Purpose |
 |---------|---------|
-| `cxp shard show <id> -o json` | Read a design, task, or bug |
-| `cxp shard list --project <project> --type <type> -o json` | List work items |
-| `cxp shard edges <id> -o json` | See relationships (blocked-by, child-of) |
-</for>
-
-<for beads>
-| Command | Purpose |
-|---------|---------|
-| `bd show <id> --json` | Read a work item |
-| `bd ready --json` | List unblocked tasks ready for work |
-| `bd list --type <type> --json` | List work items |
-</for>
+| `cobuild wi show <id>` | Read a design, task, or bug |
+| `cobuild wi list --type <type>` | List work items |
+| `cobuild wi links <id>` | See relationships (child-of, blocked-by) |
+| `cobuild wi status <id> <status>` | Update work item status |
+| `cobuild wi append <id> --body "..."` | Append content to a work item |
+| `cobuild wi create --type <type> --title "..."` | Create a new work item |
 
 ## Task Completion Protocol
 
@@ -152,3 +150,7 @@ This project uses [CoBuild](https://github.com/otherjamesbrown/cobuild) for pipe
 - [ ] Task completion protocol has correct build/test commands
 - [ ] Multi-repo context included if applicable
 - [ ] Developer has reviewed both files
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

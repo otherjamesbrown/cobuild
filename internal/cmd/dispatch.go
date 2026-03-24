@@ -136,14 +136,14 @@ var dispatchCmd = &cobra.Command{
 			"dispatch-prompt": prompt,
 			"parent-design":   designContext,
 		}
-		shardFetcher := func(id string) (string, string, error) {
+		workItemFetcher := func(id string) (string, string, error) {
 			s, err := cbClient.GetShard(ctx, id)
 			if err != nil {
 				return "", "", err
 			}
 			return s.Title, s.Content, nil
 		}
-		if err := config.WriteWorktreeCLAUDEMD(pCfg, repoRoot, worktreePath, "dispatch", extras, shardFetcher); err != nil {
+		if err := config.WriteWorktreeCLAUDEMD(pCfg, repoRoot, worktreePath, "dispatch", "implement", extras, workItemFetcher); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not generate worktree CLAUDE.md: %v\n", err)
 		}
 
@@ -159,9 +159,16 @@ var dispatchCmd = &cobra.Command{
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := "main"
+		tmuxSession := fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
 		if pCfg.Dispatch.TmuxSession != "" {
 			tmuxSession = pCfg.Dispatch.TmuxSession
+		}
+
+		// Ensure tmux session exists, create if not
+		if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", tmuxSession).Run(); err != nil {
+			if createErr := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", tmuxSession).Run(); createErr != nil {
+				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
+			}
 		}
 		claudeFlags := "--print"
 		if pCfg.Dispatch.ClaudeFlags != "" {
@@ -214,9 +221,6 @@ var dispatchCmd = &cobra.Command{
 			if conn != nil {
 				_ = conn.UpdateStatus(ctx, taskID, task.Status)
 			}
-			if strings.Contains(string(tmuxOut), "no server running") || strings.Contains(string(tmuxOut), "no current client") {
-				return fmt.Errorf("no tmux session found. Start one with: tmux new-session -s main")
-			}
 			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
 		}
 
@@ -243,6 +247,7 @@ var dispatchCmd = &cobra.Command{
 			out := map[string]any{
 				"task_id":       taskID,
 				"agent":         agent,
+				"tmux_session":  tmuxSession,
 				"worktree_path": worktreePath,
 				"tmux_window":   taskID,
 				"dispatched_at": dispatchInfo["dispatched_at"],
@@ -253,6 +258,7 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Dispatched %s to %s\n", taskID, agent)
+		fmt.Printf("  Session:  %s\n", tmuxSession)
 		fmt.Printf("  Worktree: %s\n", worktreePath)
 		fmt.Printf("  Window:   %s\n", taskID)
 		return nil

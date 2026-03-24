@@ -1,95 +1,91 @@
+---
+name: bootstrap-context-layers
+description: Discover existing context files and configure phase-aware context layers in pipeline.yaml. Trigger during bootstrap or when updating context configuration.
+---
+
 # Skill: Configure Context Layers
 
 Set up context layers for a CoBuild project. Called from the main bootstrap or run independently.
 
-Context layers control what information agents see in each session type (interactive, dispatch, gate evaluation). The most important layer is the architecture doc.
+Context layers control what information agents see in each session type (interactive, dispatch, gate evaluation) and pipeline phase (design, implement, review). CoBuild assembles the right context for each situation from reusable pieces.
 
 ---
 
-## Step 1: Check for Existing Context
+## Step 1: Discover Existing Context
 
-Look for existing context files that may have been created manually or by a previous setup:
+Look for existing context files, architecture docs, and knowledge references:
 
 ```bash
+# Existing context directories
 ls .cobuild/context/ 2>/dev/null
 ls .cxp/context/ 2>/dev/null
+
+# Architecture docs
+ls ARCHITECTURE.md architecture.md docs/architecture.md 2>/dev/null
+
+# CLAUDE.md (may already have context pointers)
+head -50 CLAUDE.md 2>/dev/null
+
+# README
+head -30 README.md 2>/dev/null
 ```
 
-If `.cxp/context/` exists (old format), migrate files to `.cobuild/context/`:
+**Do not create new architecture or context docs if they already exist.** Use what's there. CoBuild should point to existing files, not duplicate them.
 
-```bash
-mkdir -p .cobuild/context
-cp .cxp/context/*.md .cobuild/context/
-```
-
-Review each migrated file and ask the developer if they're still current.
+If `.cxp/context/` exists (old format), those files can be referenced directly — no need to copy them.
 
 ---
 
-## Step 2: Create Architecture Doc
+## Step 2: Ask About Context Sources
 
-This is the most important context file. Every agent session loads it.
-
-Read the codebase to understand the structure. Check these sources:
-- `CLAUDE.md` (if it exists — often has architecture info)
-- `README.md`
-- Directory structure (`ls` the top level and key directories)
-- `go.mod`, `package.json`, `Cargo.toml` for dependencies
-- Build scripts, Makefile, CI config
-
-Create `.cobuild/context/architecture.md` covering:
-
-```markdown
-# Architecture
-
-## Structure
-<directory tree with descriptions of what each major directory contains>
-
-## Build & Test
-<how to build, test, and run the project>
-
-## Key Patterns
-<conventions, naming, error handling, logging patterns>
-
-## External Dependencies
-<databases, APIs, services this project talks to>
-
-## Deployment
-<how the project is deployed, what environments exist>
-```
-
-> I've drafted an architecture doc based on what I can see in the codebase.
-> Please review it — is anything wrong or missing?
-
----
-
-## Step 3: Identify Additional Context Files
-
-Ask the developer:
-
-> Are there specific docs or context that agents should always have access to?
+> **What context should agents have access to?**
 >
-> For example:
-> - API documentation
-> - Security policies
-> - Coding standards
-> - Deploy procedures
+> CoBuild assembles a CLAUDE.md for each agent session from context layers. Layers can pull from local files or from your work-item system (Context Palace shards, Beads, etc.).
 >
-> These can be added as context layers that load in specific modes (always, dispatch only, gate-specific).
-
-For each additional context file, create it in `.cobuild/context/` and add a layer.
+> I found these existing docs:
+> - (list discovered files)
+>
+> **For all agents (always):** Which of these should every agent see? Architecture docs, coding standards, key principles?
+>
+> **For design phase:** Are there domain knowledge docs (e.g., pipeline specs, API docs) that design-phase agents should have? These can be work-item IDs if they're in your work-item system.
+>
+> **For implement phase:** Testing standards? Coding conventions? Deploy procedures?
+>
+> **For review phase:** Any specific review criteria beyond what's in the review skill?
 
 ---
 
-## Step 4: Configure Layers in Pipeline YAML
+## Step 3: Configure Layers in Pipeline YAML
 
-Build the context layers section. At minimum:
+Build the context layers section based on what was discovered and what the developer requested.
+
+### Sources
+
+| Source | Example | What it does |
+|--------|---------|-------------|
+| `file:<path>` | `file:ARCHITECTURE.md` | Read a local file (relative to repo root) |
+| `work-item:<id>` | `work-item:pf-eeb256` | Fetch content via the connector |
+| `dispatch-prompt` | — | Task prompt (injected at dispatch) |
+| `parent-design` | — | Parent design content (injected at dispatch) |
+
+### When filters
+
+| When | Active for |
+|------|-----------|
+| `always` | Every session |
+| `dispatch` | All dispatched tasks |
+| `phase:design` | Design phase only |
+| `phase:implement` | Implement phase only |
+| `phase:review` | Review phase only |
+| `gate:<name>` | Specific gate evaluation |
+
+### Minimal config (files only)
 
 ```yaml
 context:
     layers:
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always
         - name: task-prompt
           source: dispatch-prompt
@@ -99,29 +95,42 @@ context:
           when: dispatch
 ```
 
-If there are additional context files:
+### Phase-aware config (with work items from connector)
 
 ```yaml
-        # Examples of additional layers:
-        - name: deploy
-          source: file:.cobuild/context/deploy.md
+context:
+    layers:
+        - name: architecture
+          source: file:ARCHITECTURE.md
           when: always
-        - name: coding-standards
-          source: file:.cobuild/context/standards.md
+        - name: principles
+          source: work-item:pf-eeb256
+          when: always
+        - name: ingest-pipeline
+          source: work-item:pf-c66536
+          when: phase:design
+        - name: testing
+          source: work-item:pf-129647
+          when: phase:implement
+        - name: task-prompt
+          source: dispatch-prompt
           when: dispatch
-        - name: security-policy
-          source: file:SECURITY.md
-          when: gate:security-review
+        - name: design-context
+          source: parent-design
+          when: dispatch
 ```
-
-If migrating from `.cxp/context/`, map each existing file to a layer with the appropriate `when` mode.
 
 ---
 
 ## Verification Checklist
 
-- [ ] `.cobuild/context/` directory exists
-- [ ] `architecture.md` created and reviewed by developer
+- [ ] Existing context files discovered (not duplicated)
 - [ ] Context layers added to pipeline.yaml
+- [ ] `file:` sources point to files that exist
+- [ ] `work-item:` sources use valid IDs from the project's work-item system
 - [ ] Task-prompt and design-context dispatch layers configured
-- [ ] Any migrated `.cxp/context/` files reviewed and updated
+- [ ] Phase-specific layers configured if the developer identified phase-specific context
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

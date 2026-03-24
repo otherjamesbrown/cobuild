@@ -1,3 +1,8 @@
+---
+name: bootstrap-skills
+description: Copy and customize pipeline skills for a CoBuild project. Trigger during bootstrap or when refreshing skills.
+---
+
 # Skill: Configure Pipeline Skills
 
 Copy and customize pipeline skills for a CoBuild project. Called from the main bootstrap or run independently.
@@ -52,18 +57,9 @@ This defines what "ready to implement" means. Customize:
 ### shared/playbook.md
 
 The orchestrator's decision tree. Customize:
-- Update agent routing — which agent handles which domains
 - Add project-specific phase rules if needed
 - Update command references if the project uses non-standard patterns
-
-> Which agent should handle which types of tasks in this project?
->
-> Available agents: (list from bootstrap config)
->
-> Common routing:
-> - Backend/API changes → agent-mycroft
-> - CLI/migrations → agent-steve
-> - Tests → agent-mycroft
+- Adjust dispatch settings (concurrency, model preferences per phase)
 
 ---
 
@@ -106,3 +102,7 @@ ls skills/implement/stall-check.md
 - [ ] `shared/playbook.md` agent routing updated
 - [ ] Review strategy skills reviewed
 - [ ] All skill paths referenced in pipeline.yaml resolve to existing files
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

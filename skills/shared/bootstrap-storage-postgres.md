@@ -1,3 +1,8 @@
+---
+name: bootstrap-storage-postgres
+description: Configure and verify Postgres as CoBuild's pipeline data store. Trigger when setting up storage for a new project.
+---
+
 # Skill: Configure Postgres Storage
 
 Set up and verify Postgres as CoBuild's data store. Called from the main bootstrap or run independently.
@@ -117,3 +122,7 @@ cobuild version
 - [ ] CoBuild tables exist (or migration ran successfully)
 - [ ] `storage.backend: postgres` in pipeline.yaml
 - [ ] DSN is correct (explicit or inherited)
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

@@ -92,7 +92,7 @@ agents:
 # Dispatch — how agents are spawned
 dispatch:
     max_concurrent: 3                         # max parallel agents
-    tmux_session: main                        # tmux session name
+    # tmux_session: cobuild-myproject          # optional — defaults to cobuild-<project>
     claude_flags: "--dangerously-skip-permissions"
     default_model: sonnet                     # fallback model
 
@@ -245,7 +245,7 @@ agents:
 
 dispatch:
     max_concurrent: 3
-    tmux_session: dev-penf-cli
+    tmux_session: dev-penf-cli    # optional override; default would be cobuild-penfold
     claude_flags: "--dangerously-skip-permissions"
     default_model: sonnet
 

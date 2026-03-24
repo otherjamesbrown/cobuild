@@ -9,7 +9,7 @@ Context layers control exactly what information each agent sees per session type
 context:
     layers:
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always
         - name: task-prompt
           source: dispatch-prompt
@@ -33,6 +33,7 @@ Without context layers, you face a dilemma:
 - Your repo `CLAUDE.md` has identity info, playbooks, and interactive instructions that confuse dispatched agents
 - Dispatched agents need the task spec and design context, which interactive sessions do not
 - Gate evaluations need specific review criteria that neither interactive nor dispatch sessions need
+- Design-phase agents need domain docs (architecture, pipeline specs) that implement-phase agents don't
 
 Context layers let you compose the right context for each situation from reusable pieces.
 
@@ -43,6 +44,7 @@ Context layers let you compose the right context for each situation from reusabl
 | `always` | Every session type (interactive, dispatch, gate) |
 | `interactive` | Human is typing in an interactive Claude session |
 | `dispatch` | Pipeline dispatched the agent via `cobuild dispatch` |
+| `phase:<name>` | Specific pipeline phase (e.g., `phase:design`, `phase:implement`) |
 | `gate:<name>` | Only during a specific gate evaluation (e.g. `gate:security-review`) |
 
 An empty `when` field is treated as `always`.
@@ -52,7 +54,7 @@ An empty `when` field is treated as `always`.
 | Source | Resolves to | Notes |
 |--------|-------------|-------|
 | `file:<path>` | Read file from repo | Path relative to repo root |
-| `shard:<id>` | Fetch work item via connector | Returns title + content |
+| `work-item:<id>` | Fetch content via connector | Works with any connector (CP, Beads, etc.) |
 | `skills:<name>` | Resolve skill file | Follows skill resolution chain (repo then global) |
 | `skills-dir` | Load all `.md` files from skills directory | Optional `filter` list to select specific files |
 | `claude-md` | Read the repo's `CLAUDE.md` | Useful when you want it as one layer among many |
@@ -86,21 +88,21 @@ context:
 
 ```yaml
 - name: architecture
-  source: file:.cobuild/context/architecture.md
+  source: file:ARCHITECTURE.md
   when: always
 ```
 
 Paths are relative to the repo root. Absolute paths also work.
 
-### Source: shard
+### Source: work-item
 
 ```yaml
-- name: playbook
-  source: shard:pf-2b76b4
-  when: interactive
+- name: principles
+  source: work-item:pf-eeb256
+  when: always
 ```
 
-Fetches the work item via the connector. The result includes the title as a heading followed by the content.
+Fetches the work item via the connector (Context Palace, Beads, etc.). The result includes the title as a heading followed by the content. This is connector-agnostic — the same syntax works regardless of which work-item system backs the project.
 
 ### Source: skills
 
@@ -125,70 +127,67 @@ Loads all `.md` files from the skills directory. The optional `filter` list rest
 
 ## Examples
 
-### Example 1: penfold context layers (production config)
+### Example 1: Basic project (files only)
 
-This is the real context configuration from the penfold project:
+For a simple project that just needs CLAUDE.md and an architecture doc:
 
 ```yaml
 context:
     layers:
-        # === Always loaded (both interactive and dispatch) ===
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always
-        - name: deploy
-          source: file:.cobuild/context/deploy.md
-          when: always
-
-        # === Interactive sessions (human typing) ===
-        - name: agent-identity
-          source: file:.cobuild/context/agent-identity.md
-          when: interactive
-        - name: completion-protocol
-          source: file:.cobuild/context/completion-protocol.md
-          when: interactive
-        - name: playbook
-          source: shard:pf-2b76b4
-          when: interactive
-        - name: menu-instructions
-          source: file:.cobuild/context/interactive-menu.md
-          when: interactive
-
-        # === Pipeline-dispatched agents ===
         - name: task-prompt
           source: dispatch-prompt
           when: dispatch
         - name: design-context
           source: parent-design
           when: dispatch
-        - name: dispatch-completion
-          source: file:.cobuild/context/dispatch-completion.md
+```
+
+### Example 2: Phase-aware context (work items from connector)
+
+For a complex project where different phases need different domain context:
+
+```yaml
+context:
+    layers:
+        # Always — every agent sees these
+        - name: architecture
+          source: file:ARCHITECTURE.md
+          when: always
+        - name: principles
+          source: work-item:pf-eeb256
+          when: always
+
+        # Design phase — domain knowledge for evaluating designs
+        - name: ingest-pipeline
+          source: work-item:pf-c66536
+          when: phase:design
+        - name: infra
+          source: work-item:pf-30eb23
+          when: phase:design
+
+        # Implement phase — coding standards and testing
+        - name: testing
+          source: work-item:pf-129647
+          when: phase:implement
+
+        # Dispatch — task prompt and parent design
+        - name: task-prompt
+          source: dispatch-prompt
+          when: dispatch
+        - name: design-context
+          source: parent-design
           when: dispatch
 ```
 
 What this achieves:
 
-- **Architecture and deploy docs** are always visible -- every session knows the codebase structure
-- **Interactive sessions** get identity, playbook, and menu instructions -- the agent knows who it is and what commands are available
-- **Dispatched agents** get their task spec, the parent design for context, and completion instructions -- focused on the work, no identity clutter
-
-### Example 2: Minimal dispatch-only config
-
-For a project that only uses dispatched agents (no interactive sessions):
-
-```yaml
-context:
-    layers:
-        - name: task-prompt
-          source: dispatch-prompt
-          when: dispatch
-        - name: design-context
-          source: parent-design
-          when: dispatch
-        - name: coding-standards
-          source: file:.cobuild/context/standards.md
-          when: always
-```
+- **Architecture and principles** are always visible -- every agent knows the codebase structure and hard constraints
+- **Design-phase agents** get domain knowledge docs (ingest pipeline, infrastructure) to evaluate designs in context
+- **Implement-phase agents** get testing standards so they write proper tests
+- **Dispatched agents** get their task spec and parent design for focused implementation
 
 ### Example 3: Gate-specific context
 
@@ -198,7 +197,7 @@ Load security policies only during the security review gate:
 context:
     layers:
         - name: architecture
-          source: file:.cobuild/context/architecture.md
+          source: file:ARCHITECTURE.md
           when: always
         - name: security-policy
           source: file:SECURITY.md
@@ -210,8 +209,8 @@ context:
 
 ## Troubleshooting
 
-**Layer not appearing in generated CLAUDE.md:** Check the `when` field matches the session mode. Dispatch mode only loads layers with `when: dispatch` or `when: always`. Look for HTML comments (`<!-- context: name -->`) in the generated file to see which layers were included.
+**Layer not appearing in generated CLAUDE.md:** Check the `when` field matches the session mode and phase. Dispatch mode only loads layers with `when: dispatch`, `when: always`, or matching `when: phase:<name>`. Look for HTML comments (`<!-- context: name -->`) in the generated file to see which layers were included.
 
 **File layer returning empty:** The `source: file:<path>` is relative to the repo root, not the worktree. If the file does not exist, the layer is silently skipped (a comment is inserted). Check the path exists from the repo root.
 
-**Shard layer failing:** Ensure the shard ID is valid and accessible. Failed shard fetches produce an HTML comment with the error message in the generated CLAUDE.md rather than failing the entire assembly.
+**Work-item layer failing:** Ensure the work-item ID is valid and accessible via the configured connector. Failed fetches produce an HTML comment with the error message in the generated CLAUDE.md rather than failing the entire assembly.

@@ -4,14 +4,17 @@ You are **M** — the orchestrator agent for CoBuild, a config-driven pipeline t
 
 ## Work Tracking
 
-CoBuild uses **Context Palace** (CP) for shard-based work tracking. The CoBuild project prefix is `cb-`.
+CoBuild's own work items live in **Context Palace** under the `cb-` prefix. Use `cxp` directly — this is our project, not a project CoBuild is orchestrating.
 
 ```bash
-# See your work queue
-cobuild shard list --type task,bug,design --project cobuild --status open
+# See work queue
+cxp shard list --project cobuild --type task,bug,design --status open -o json
 
 # Read a shard
-cobuild shard show cb-xxxxxx
+cxp shard show cb-xxxxxx
+
+# Create a task
+cxp shard create --type task --project cobuild --title "..." --body "..."
 
 # See the backlog with shard IDs
 cat docs/BACKLOG.md
@@ -24,7 +27,16 @@ Key shards:
 | cb-939118 | design | Autonomous pipeline operation — trigger-driven phase transitions |
 | cb-7dd0d4 | design | Merge strategy for dependent branches |
 
-Connection: `~/.cobuild/config.yaml` (project: `cobuild`, agent: `agent-m`). Legacy `~/.cxp/` and `~/.cp/` paths also supported.
+Connection: `~/.cobuild/config.yaml` (project: `cobuild`, agent: `agent-m`).
+
+### When to use `cxp` vs `cobuild wi`
+
+| Context | Command | Why |
+|---------|---------|-----|
+| Working on CoBuild itself | `cxp shard ...` | We're the developer, talking to our own Context Palace tenant (`cb-` prefix) |
+| CoBuild orchestrating a project | `cobuild wi ...` | CoBuild is acting on behalf of a project, going through the connector. Works with any backend (CP, Beads, Jira). |
+
+Skills use `cobuild wi` because they run on behalf of projects. This CLAUDE.md uses `cxp` because we're developing CoBuild itself.
 
 ## Relationship to Context Palace
 
@@ -163,7 +175,7 @@ connectors:
     work_items:
         type: context-palace    # or "beads", "jira"
 ```
-Implementations: `CPConnector` (direct SQL), `BeadsConnector` (CLI + JSON), future `JiraConnector` (REST API).
+Implementations: `CPConnector` (`cxp` CLI + JSON), `BeadsConnector` (`bd` CLI + JSON), future `JiraConnector` (REST API).
 
 ## Principles
 

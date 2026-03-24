@@ -1,6 +1,11 @@
+---
+name: playbook
+description: Pipeline orchestration decision tree. Trigger when a pipeline event occurs — phase transition, gate result, task completion, or health check.
+---
+
 # Playbook — Pipeline Orchestration
 
-You are **M**, an ephemeral orchestrator. You read a pipeline shard, take one action, update state, and exit. The shard is the state — if you die, the next M reads the same shard and picks up.
+You are the **pipeline orchestrator**. You read a pipeline work item, take one action, update state, and exit. The work item is the state — if you die, the next orchestrator reads the same item and picks up.
 
 Full system reference: `docs/cobuild.md`
 
@@ -55,7 +60,7 @@ Does the design:
    ```bash
    cobuild pipeline review <id> --verdict pass|fail --readiness <N> --body "<findings>"
    ```
-3. If fail: `cobuild shard label add <id> blocked`. Unlock. Exit.
+3. If fail: `cobuild wi label add <id> blocked`. Unlock. Exit.
 4. If pass: phase auto-advances to `decompose`. Unlock. Exit.
 
 **Use the review command — it creates the audit trail, sub-shard, and advances the phase.**
@@ -66,13 +71,7 @@ Does the design:
 
 ### Decision: Which domain agent?
 
-Read the pipeline config for the agent roster:
-```
-Design mentions:
-  CP/cxp, CLI, migrations    → agent-steve
-  Go backend, services        → agent-mycroft
-  Multiple domains            → agent-mycroft (primary), flag James
-```
+Read the pipeline config for the agent roster. Route tasks to agents based on domain. If the project has multiple agents configured, assign by matching task domain to agent domains. If unclear, flag the developer.
 
 ### Steps
 
@@ -80,13 +79,13 @@ Design mentions:
 2. **Detail review**: Verify each task is single-session sized, has testable criteria, code locations
 3. **Create tasks** with edges:
    ```bash
-   cobuild shard create --type task --title "<title>" --parent <design-id> --body "<spec>"
-   cobuild shard link <dependent-id> --blocked-by <blocker-id>
+   cobuild wi create --type task --title "<title>" --parent <design-id> --body "<spec>"
+   cobuild wi links add <dependent-id> --blocked-by <blocker-id>
    ```
 4. **Create integration test task** (required — gate rejects without it):
    ```bash
-   cobuild shard create --type task --title "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
-   cobuild shard link <test-id> --blocked-by <all-other-task-ids>
+   cobuild wi create --type task --title "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
+   cobuild wi links add <test-id> --blocked-by <all-other-task-ids>
    ```
 5. **Register tasks**: `cobuild pipeline update <id> --add-task <task-id>` for each
 6. **Record verdict**:
@@ -184,7 +183,7 @@ Read from pipeline config `review.strategy`:
 ```bash
 gh pr merge <pr-number> --squash
 cobuild worktree remove <task-id>
-cobuild shard status <task-id> closed
+cobuild wi status <task-id> closed
 ```
 
 This squash-merges the PR, then cleans up the worktree and closes the task. Deploys affected services from `deploy:` config.
@@ -210,13 +209,13 @@ Follow `skills/done/gate-retrospective.md`:
 2. Review insights: `cobuild pipeline insights`
 3. Generate improvements: `cobuild pipeline improve`
 4. Record findings as a knowledge shard
-5. Close the design: `cobuild shard status <id> closed`
+5. Close the design: `cobuild wi status <id> closed`
 
 ---
 
 ## Escalation Criteria
 
-Escalate to James (label shard `blocked`) when:
+Escalate to the developer (label work item `blocked`) when:
 
 - Design fails implementability and you can't identify what's missing
 - Task stalled > 10 iterations
@@ -228,11 +227,11 @@ Escalate to James (label shard `blocked`) when:
 
 Format:
 ```bash
-cobuild shard append <id> --body "## Escalation
+cobuild wi append <id> --body "## Escalation
 **Issue:** <one sentence>
 **Context:** <what you tried>
-**Decision needed:** <specific question for James>"
-cobuild shard label add <id> blocked
+**Decision needed:** <specific question for the developer>"
+cobuild wi label add <id> blocked
 ```
 
 ---
@@ -267,6 +266,10 @@ cobuild shard label add <id> blocked
 | Dashboard | `cobuild dashboard` |
 | Pipeline insights | `cobuild pipeline insights` |
 | Suggest improvements | `cobuild pipeline improve` |
-| Set status | `cobuild shard status <id> <status>` |
-| Add label | `cobuild shard label add <id> <label>` |
-| Append to shard | `cobuild shard append <id> --body "..."` |
+| Set status | `cobuild wi status <id> <status>` |
+| Add label | `cobuild wi label add <id> <label>` |
+| Append to work item | `cobuild wi append <id> --body "..."` |
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

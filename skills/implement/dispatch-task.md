@@ -1,6 +1,11 @@
+---
+name: dispatch-task
+description: Dispatch a task to an implementing agent in an isolated worktree. Trigger when tasks are ready for implementation.
+---
+
 # Skill: Dispatch Task to Agent
 
-You are M, dispatching a task to an implementing agent.
+You are the pipeline orchestrator, dispatching a task to an implementing agent.
 
 ## Input
 - Task shard ID
@@ -44,6 +49,10 @@ The agent will:
 2. Run tests
 3. Append evidence to the task shard
 4. Create a PR: `gh pr create`
-5. Mark needs-review: `cobuild shard status <task-id> needs-review`
+5. Mark needs-review: `cobuild wi status <task-id> needs-review`
 
-The poller detects needs-review and spawns M for Phase 4.
+The poller detects needs-review and spawns the orchestrator for Phase 4.
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

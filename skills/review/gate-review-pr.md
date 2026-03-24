@@ -1,3 +1,8 @@
+---
+name: gate-review-pr
+description: Review a pull request against its task spec and parent design. Trigger when an agent-based review is needed for a task PR.
+---
+
 # Skill: Review PR
 
 You are reviewing a pull request for a pipeline task.
@@ -17,7 +22,7 @@ gh pr diff <pr-url>
 ```
 Get the parent design for context:
 ```bash
-cobuild shard edges <task-id> outgoing child-of
+cobuild wi links <task-id> outgoing child-of
 cobuild show <parent-design-id>
 ```
 
@@ -56,5 +61,9 @@ cobuild task review-verdict <task-id> approve --body "All acceptance criteria me
 cobuild task review-verdict <task-id> request-changes --body "Issue: <description>. Fix: <suggestion>."
 
 # If design problem:
-cobuild task review-verdict <task-id> escalate --body "Design ambiguity: <description>. James needs to clarify."
+cobuild task review-verdict <task-id> escalate --body "Design ambiguity: <description>. The developer needs to clarify."
 ```
+
+## Gotchas
+
+<!-- Add failure patterns here as they're discovered -->

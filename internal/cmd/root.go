@@ -49,6 +49,16 @@ COMMANDS:
   dispatch <task-id>             Dispatch task to agent via tmux
   complete <task-id>             Post-agent completion bookkeeping
 
+  work-item (wi)                 Work item operations via connector
+    show <id>                    Show a work item
+    list                         List work items
+    links <id>                   Show relationships
+    status <id> <status>         Update status
+    append <id> --body "..."     Append content
+    create --type <t> --title    Create a work item
+    label add <id> <label>       Add a label
+    links add <from> <to> <type> Create a relationship
+
 CONFIGURATION:
   Uses ~/.cobuild/config.yaml and .cobuild.yaml for project/agent.
   Legacy ~/.cxp/ and .cxp.yaml paths are also supported.`,
@@ -59,9 +69,23 @@ CONFIGURATION:
 			return nil
 		}
 
+		// Legacy client — may fail if agent/user not configured.
+		// New commands use the connector directly and don't need this.
 		cfg, err := client.LoadClientConfig(configFlag)
 		if err != nil {
-			return err
+			// Still try to initialize connector from pipeline config
+			repoRoot := findRepoRoot()
+			pCfg, _ := config.LoadConfig(repoRoot)
+
+			// Read project from .cobuild.yaml or flags
+			project := projectFlag
+			if project == "" {
+				project = readProjectFromYAML(repoRoot)
+			}
+
+			conn, _ = connector.New(pCfg, project, "", debugFlag)
+			cbStore, _ = store.New(cmd.Context(), pCfg, "")
+			return nil
 		}
 
 		if projectFlag != "" {
