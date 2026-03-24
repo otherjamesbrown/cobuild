@@ -174,6 +174,17 @@ deploy:
 github:
     owner_repo: otherjamesbrown/penfold
 
+# Storage — where CoBuild stores its own orchestration data
+storage:
+    backend: postgres                     # "postgres" (default), future: "sqlite", "file"
+    dsn: "host=localhost dbname=cobuild user=cobuild sslmode=disable"
+    # SQLite (future):
+    # backend: sqlite
+    # path: .cobuild/cobuild.db
+    # File-based (future):
+    # backend: file
+    # path: .cobuild/data/
+
 # Connectors — external work-item systems
 connectors:
     work_items:

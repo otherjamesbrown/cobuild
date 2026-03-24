@@ -51,6 +51,13 @@ type ContextConfig struct {
 	Layers []ContextLayer `yaml:"layers,omitempty"`
 }
 
+// StoreCfg configures where CoBuild stores its own orchestration data.
+type StoreCfg struct {
+	Backend string `yaml:"backend,omitempty"` // "postgres", "sqlite" (future), "file" (future)
+	DSN     string `yaml:"dsn,omitempty"`     // connection string for postgres/sqlite
+	Path    string `yaml:"path,omitempty"`    // directory for file-based store
+}
+
 // ConnectorsCfg holds connector configuration for external systems.
 type ConnectorsCfg struct {
 	WorkItems WorkItemsConnectorCfg `yaml:"work_items,omitempty"`
@@ -75,6 +82,7 @@ type Config struct {
 	Workflows       map[string]WorkflowConfig   `yaml:"workflows,omitempty"`
 	Deploy          DeployCfg                   `yaml:"deploy,omitempty"`
 	GitHub          GitHubCfg                   `yaml:"github,omitempty"`
+	Storage         StoreCfg                    `yaml:"storage,omitempty"`
 	Connectors      ConnectorsCfg               `yaml:"connectors,omitempty"`
 	SkillsDir       string                      `yaml:"skills_dir,omitempty"`
 	Phases          []PhaseConfig               `yaml:"phases,omitempty"`

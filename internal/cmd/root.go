@@ -7,6 +7,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +19,7 @@ var (
 	configFlag   string
 	cbClient     *client.Client
 	conn         connector.Connector // work-item connector
+	cbStore      store.Store         // CoBuild's own data store
 )
 
 var Version = "0.1.0"
@@ -75,10 +77,14 @@ CONFIGURATION:
 
 		cbClient = client.NewClient(cfg)
 
-		// Initialize work-item connector
+		// Initialize work-item connector and store
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
 		conn, _ = connector.New(pCfg, cfg.Project, cfg.Agent, debugFlag)
+
+		// Initialize CoBuild's own data store
+		dsn := cbClient.ConnectionString()
+		cbStore, _ = store.New(cmd.Context(), pCfg, dsn)
 
 		return nil
 	},

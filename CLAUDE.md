@@ -88,16 +88,22 @@ go vet ./...
 ```
 cmd/cobuild/main.go          # entry point
 internal/cmd/                 # cobra commands (one file per command)
-internal/cmd/root.go          # root command, global flags, client init
-internal/client/              # database layer (connects to CP postgres)
-internal/client/pipeline.go   # pipeline state CRUD + native shard ops
-internal/client/runs.go       # pipeline_runs/gates/tasks tables
+internal/cmd/root.go          # root command, global flags, client/connector/store init
+internal/connector/           # work-item connectors (CP, Beads)
+internal/connector/connector.go  # Connector interface + WorkItem types
+internal/connector/cp.go      # CPConnector (shells out to cxp CLI)
+internal/connector/beads.go   # BeadsConnector (shells out to bd CLI)
+internal/store/               # CoBuild's own data persistence
+internal/store/store.go       # Store interface
+internal/store/postgres.go    # PostgresStore implementation
+internal/client/              # legacy database layer (being migrated to connector + store)
 internal/config/              # config types + context assembly
 internal/config/config.go     # Config struct, merge, resolve
 internal/config/context.go    # context layer assembly for CLAUDE.md
 skills/                       # default skill files (copied to repos via init-skills)
 migrations/                   # database migrations
-docs/                         # full reference documentation
+research/                     # design docs and research
+docs/                         # reference documentation + guides
 ```
 
 ## Config

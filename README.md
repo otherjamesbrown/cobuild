@@ -10,6 +10,7 @@ CoBuild orchestrates AI agents through a structured pipeline — from design rev
 - [**Config-driven**](docs/guides/config.md) — phases, gates, models, context layers, deploy rules — all YAML
 - [**Skills as markdown**](docs/guides/skills.md) — extend the pipeline by writing a `.md` file
 - [**Connectors**](#connectors) — pluggable work-item backends (Context Palace, Beads, future Jira)
+- [**Storage**](#storage) — pluggable data store for pipeline state (Postgres, future SQLite/files)
 - [**Context layers**](docs/guides/context-layers.md) — control exactly what each agent sees per session type
 - [**Per-phase model selection**](docs/guides/models.md) — haiku for judgment, sonnet for creation
 - [**Self-improving**](docs/guides/feedback-loop.md) — feedback loop learns from execution patterns
@@ -156,6 +157,25 @@ connectors:
 | `beads` | Beads (Dolt) | `bd` CLI with `--json` |
 
 The connector interface follows Claude Code/CoWork patterns. See `research/claude-patterns.md` for the design rationale.
+
+## Storage
+
+CoBuild stores its own orchestration data (pipeline runs, gate audit records, task tracking) separately from work items. The storage backend is pluggable:
+
+```yaml
+# .cobuild/pipeline.yaml
+storage:
+    backend: postgres           # default
+    dsn: "host=localhost dbname=cobuild user=cobuild sslmode=disable"
+```
+
+| Backend | Status | Use case |
+|---------|--------|----------|
+| `postgres` | Implemented | Teams, shared infrastructure |
+| `sqlite` | [Designed](research/design-sqlite-store.md) | Single-user, local dev |
+| `file` | [Designed](research/design-file-store.md) | Zero-dependency, git-trackable (YAML + JSONL) |
+
+When no storage config is present, CoBuild uses the existing database connection settings (backward compatible).
 
 ## Skills
 
