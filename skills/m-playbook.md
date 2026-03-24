@@ -8,12 +8,12 @@ Full system reference: `docs/m-pipeline.md`
 
 ## Startup
 
-1. Read the pipeline shard: `cxp shard pipeline show <id>`
-2. Read the shard itself: `cxp shard show <id>`
+1. Read the pipeline shard: `cobuild pipeline show <id>`
+2. Read the shard itself: `cobuild show <id>`
 3. Determine the shard type (design, bug, task) and current phase
-4. Lock the pipeline: `cxp shard pipeline lock <id>` — if locked, exit
+4. Lock the pipeline: `cobuild pipeline lock <id>` — if locked, exit
 5. Follow the decision tree for the current phase below
-6. Unlock when done: `cxp shard pipeline unlock <id>`
+6. Unlock when done: `cobuild pipeline unlock <id>`
 
 ---
 
@@ -53,9 +53,9 @@ Does the design:
 1. Read the design and evaluate 5 readiness criteria + implementability check
 2. Record the verdict:
    ```bash
-   cxp shard pipeline review <id> --verdict pass|fail --readiness <N> --body "<findings>"
+   cobuild pipeline review <id> --verdict pass|fail --readiness <N> --body "<findings>"
    ```
-3. If fail: `cxp shard label add <id> blocked`. Unlock. Exit.
+3. If fail: `cobuild shard label add <id> blocked`. Unlock. Exit.
 4. If pass: phase auto-advances to `decompose`. Unlock. Exit.
 
 **Use the review command — it creates the audit trail, sub-shard, and advances the phase.**
@@ -80,18 +80,18 @@ Design mentions:
 2. **Detail review**: Verify each task is single-session sized, has testable criteria, code locations
 3. **Create tasks** with edges:
    ```bash
-   cxp task create "<title>" --parent <design-id> --body "<spec>"
-   cxp shard link <dependent-id> --blocked-by <blocker-id>
+   cobuild shard create --type task --title "<title>" --parent <design-id> --body "<spec>"
+   cobuild shard link <dependent-id> --blocked-by <blocker-id>
    ```
 4. **Create integration test task** (required — gate rejects without it):
    ```bash
-   cxp task create "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
-   cxp shard link <test-id> --blocked-by <all-other-task-ids>
+   cobuild shard create --type task --title "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
+   cobuild shard link <test-id> --blocked-by <all-other-task-ids>
    ```
-5. **Register tasks**: `cxp shard pipeline update <id> --add-task <task-id>` for each
+5. **Register tasks**: `cobuild pipeline update <id> --add-task <task-id>` for each
 6. **Record verdict**:
    ```bash
-   cxp shard pipeline decompose <id> --verdict pass --body "<rationale>"
+   cobuild pipeline decompose <id> --verdict pass --body "<rationale>"
    ```
 7. Unlock. Exit. Poller picks up Phase 3.
 
@@ -104,7 +104,7 @@ Design mentions:
 ### Decision: What to do?
 
 ```bash
-cxp task deps <design-id>
+cobuild deps <design-id>
 ```
 
 ```
@@ -120,22 +120,22 @@ Any tasks in "dispatchable" list?
 ### Dispatch
 
 ```bash
-cxp task dispatch <task-id>
+cobuild task dispatch <task-id>
 ```
 
 This:
 - Creates a worktree from the registered repo
 - Generates a CLAUDE.md from context layers (dispatch mode)
-- Spawns an agent in tmux with `CXP_DISPATCH=true`
+- Spawns an agent in tmux with `COBUILD_DISPATCH=true`
 - Sets task to `in_progress`
 - Captures output via `tmux pipe-pane`
-- Appends `cxp task complete <id>` to the tmux command
+- Appends `cobuild task complete <id>` to the tmux command
 
 The agent's prompt includes: task spec, design context, and completion instructions. The model comes from the `implement` phase config (default: sonnet).
 
 ### Post-agent completion
 
-When the agent finishes, `cxp task complete` runs automatically:
+When the agent finishes, `cobuild task complete` runs automatically:
 1. Restores original CLAUDE.md (undoes dispatch injection)
 2. Commits remaining changes
 3. Pushes branch
@@ -154,7 +154,7 @@ Configured in `monitoring:` section of pipeline.yaml. The poller detects:
 
 When all tasks are closed:
 ```bash
-cxp shard pipeline update <id> --phase review
+cobuild pipeline update <id> --phase review
 ```
 
 ---
@@ -172,7 +172,7 @@ Read from pipeline config `review.strategy`:
    - CI: compare against main (pr-only mode), flag new failures only
    - Gemini comments: classify as must-fix, nice-to-have, or noise
    - Reply to each comment on GitHub
-4. Record verdict: `cxp task review-verdict <task-id> approve|request-changes|escalate`
+4. Record verdict: `cobuild task review-verdict <task-id> approve|request-changes|escalate`
 
 **strategy: agent** (no external reviewer)
 1. Spawn review agent with `review_skill` (e.g. `m-review-pr`)
@@ -182,17 +182,19 @@ Read from pipeline config `review.strategy`:
 ### Merge
 
 ```bash
-cxp task pr merge <task-id>
+gh pr merge <pr-number> --squash
+cobuild worktree remove <task-id>
+cobuild shard status <task-id> closed
 ```
 
-This auto-rebases if squash merge conflicts, deploys affected services (from `deploy:` config), cleans up worktree, and closes the task.
+This squash-merges the PR, then cleans up the worktree and closes the task. Deploys affected services from `deploy:` config.
 
 ### Design-level verification
 
 When all tasks merged:
 1. Check design success criteria against what was built
 2. Gaps → file new tasks, back to Phase 3
-3. Complete → `cxp shard pipeline update <id> --phase done`
+3. Complete → `cobuild pipeline update <id> --phase done`
 
 ---
 
@@ -200,15 +202,15 @@ When all tasks merged:
 
 Run the retrospective gate (if configured):
 ```bash
-cxp shard pipeline gate <id> retrospective --verdict pass --body "<findings>"
+cobuild pipeline gate <id> retrospective --verdict pass --body "<findings>"
 ```
 
 Follow `skills/m-retrospective.md`:
-1. Review the audit trail: `cxp shard pipeline audit <id>`
-2. Review insights: `cxp pipeline insights`
-3. Generate improvements: `cxp pipeline improve`
+1. Review the audit trail: `cobuild pipeline audit <id>`
+2. Review insights: `cobuild pipeline insights`
+3. Generate improvements: `cobuild pipeline improve`
 4. Record findings as a knowledge shard
-5. Close the design: `cxp shard status <id> closed`
+5. Close the design: `cobuild shard status <id> closed`
 
 ---
 
@@ -226,11 +228,11 @@ Escalate to James (label shard `blocked`) when:
 
 Format:
 ```bash
-cxp shard append <id> --body "## Escalation
+cobuild shard append <id> --body "## Escalation
 **Issue:** <one sentence>
 **Context:** <what you tried>
 **Decision needed:** <specific question for James>"
-cxp shard label add <id> blocked
+cobuild shard label add <id> blocked
 ```
 
 ---
@@ -251,20 +253,20 @@ cxp shard label add <id> blocked
 
 | Action | Command |
 |--------|---------|
-| Read pipeline state | `cxp shard pipeline show <id>` |
-| Record Phase 1 review | `cxp shard pipeline review <id> --verdict pass\|fail --readiness N --body "..."` |
-| Record Phase 2 decompose | `cxp shard pipeline decompose <id> --verdict pass\|fail --body "..."` |
-| Record any gate | `cxp shard pipeline gate <id> <gate-name> --verdict pass\|fail --body "..."` |
-| View audit trail | `cxp shard pipeline audit <id>` |
-| Lock / unlock | `cxp shard pipeline lock <id>` / `unlock <id>` |
-| View task deps | `cxp task deps <design-id>` |
-| Dispatch task | `cxp task dispatch <task-id>` |
-| Complete task | `cxp task complete <task-id>` |
-| Review verdict | `cxp task review-verdict <task-id> approve\|request-changes\|escalate` |
-| Merge PR | `cxp task pr merge <task-id>` |
-| Dashboard | `cxp dashboard` |
-| Pipeline insights | `cxp pipeline insights` |
-| Suggest improvements | `cxp pipeline improve` |
-| Set status | `cxp shard status <id> <status>` |
-| Add label | `cxp shard label add <id> <label>` |
-| Append to shard | `cxp shard append <id> --body "..."` |
+| Read pipeline state | `cobuild pipeline show <id>` |
+| Record Phase 1 review | `cobuild pipeline review <id> --verdict pass\|fail --readiness N --body "..."` |
+| Record Phase 2 decompose | `cobuild pipeline decompose <id> --verdict pass\|fail --body "..."` |
+| Record any gate | `cobuild pipeline gate <id> <gate-name> --verdict pass\|fail --body "..."` |
+| View audit trail | `cobuild pipeline audit <id>` |
+| Lock / unlock | `cobuild pipeline lock <id>` / `unlock <id>` |
+| View task deps | `cobuild deps <design-id>` |
+| Dispatch task | `cobuild task dispatch <task-id>` |
+| Complete task | `cobuild task complete <task-id>` |
+| Review verdict | `cobuild task review-verdict <task-id> approve\|request-changes\|escalate` |
+| Merge PR | `gh pr merge <pr-number> --squash` |
+| Dashboard | `cobuild dashboard` |
+| Pipeline insights | `cobuild pipeline insights` |
+| Suggest improvements | `cobuild pipeline improve` |
+| Set status | `cobuild shard status <id> <status>` |
+| Add label | `cobuild shard label add <id> <label>` |
+| Append to shard | `cobuild shard append <id> --body "..."` |

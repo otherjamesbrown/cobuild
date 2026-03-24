@@ -11,7 +11,7 @@ You are M, diagnosing a task that may be stalled, crashed, or rate-limited.
 ## Step 1: Determine status
 
 ```bash
-cxp shard show <task-id> -o json
+cobuild show <task-id> -o json
 ```
 
 Check:
@@ -32,25 +32,25 @@ The agent session exited — could be rate limit, OOM, context overflow, or bug.
 **If retry count < max_retries:**
 ```bash
 # Reset and re-dispatch
-cxp shard status <task-id> open
-cxp task worktree remove <task-id>
+cobuild shard status <task-id> open
+cobuild worktree remove <task-id>
 # Wait for cooldown (handled by poller)
 # Poller will re-dispatch on next cycle
 ```
 
 Append to shard:
 ```bash
-cxp shard append <task-id> --body "## Health Check — Crash detected
+cobuild shard append <task-id> --body "## Health Check — Crash detected
 Agent session exited. Retry #<N>. Re-dispatching after cooldown."
 ```
 
 **If retry count >= max_retries:**
 ```bash
-cxp shard append <task-id> --body "## Health Check — Max retries exceeded
+cobuild shard append <task-id> --body "## Health Check — Max retries exceeded
 Agent crashed <N> times. Escalating to James.
 Last status: <status>
 Last update: <updated_at>"
-cxp shard label add <task-id> blocked
+cobuild shard label add <task-id> blocked
 ```
 
 ### Agent stalled (tmux window exists, no progress for > stall_timeout)
@@ -71,24 +71,24 @@ Look for:
 **If idle prompt (agent finished but forgot to update status):**
 ```bash
 # Check if there's evidence of completion in the shard
-cxp shard show <task-id> -o json
+cobuild show <task-id> -o json
 # If evidence exists, mark it done
-cxp shard status <task-id> needs-review
+cobuild shard status <task-id> needs-review
 ```
 
 **If stuck in error loop (> 5 iterations with no progress):**
 ```bash
-cxp shard append <task-id> --body "## Health Check — Stall detected
+cobuild shard append <task-id> --body "## Health Check — Stall detected
 Agent stuck after <N> iterations. Possible causes:
 - <diagnosis from tmux output>
 
 Action: re-scoping or manual intervention needed."
-cxp shard label add <task-id> blocked
+cobuild shard label add <task-id> blocked
 ```
 
 **If rate limited:**
 ```bash
-cxp shard append <task-id> --body "## Health Check — Rate limited
+cobuild shard append <task-id> --body "## Health Check — Rate limited
 Agent hit rate limits. Will recover on next cycle."
 # No action needed — agent will resume when limits clear
 ```
@@ -96,7 +96,7 @@ Agent hit rate limits. Will recover on next cycle."
 ### Retry exhausted (max retries hit)
 
 ```bash
-cxp shard append <task-id> --body "## Health Check — Escalation
+cobuild shard append <task-id> --body "## Health Check — Escalation
 Task failed after <max_retries> dispatch attempts.
 Design: <design-id>
 Task: <task-title>
@@ -107,7 +107,7 @@ Possible causes:
 3. Codebase issue blocking implementation
 
 Action needed: James to review and re-scope or unblock."
-cxp shard label add <task-id> blocked
+cobuild shard label add <task-id> blocked
 ```
 
 ## Step 3: Record
@@ -116,7 +116,7 @@ Always append health check results to the task shard. Every check should be visi
 
 Format:
 ```bash
-cxp shard append <task-id> --body "## Health Check — <timestamp>
+cobuild shard append <task-id> --body "## Health Check — <timestamp>
 Trigger: <stall|crash|retry-exhausted>
 Retry: <N>/<max>
 Diagnosis: <what was found>

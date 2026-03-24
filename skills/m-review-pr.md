@@ -9,7 +9,7 @@ You are reviewing a pull request for a pipeline task.
 
 Read the task and its PR:
 ```bash
-cxp task get <task-id>
+cobuild task get <task-id>
 ```
 Get the PR URL from task metadata, then fetch the diff:
 ```bash
@@ -17,8 +17,8 @@ gh pr diff <pr-url>
 ```
 Get the parent design for context:
 ```bash
-cxp shard edges <task-id> outgoing child-of
-cxp shard show <parent-design-id>
+cobuild shard edges <task-id> outgoing child-of
+cobuild show <parent-design-id>
 ```
 
 ## Three Review Questions
@@ -50,11 +50,11 @@ If tests fail, determine fault:
 
 ```bash
 # If approved:
-cxp task review-verdict <task-id> approve --body "All acceptance criteria met. Tests pass. Clean implementation."
+cobuild task review-verdict <task-id> approve --body "All acceptance criteria met. Tests pass. Clean implementation."
 
 # If changes needed:
-cxp task review-verdict <task-id> request-changes --body "Issue: <description>. Fix: <suggestion>."
+cobuild task review-verdict <task-id> request-changes --body "Issue: <description>. Fix: <suggestion>."
 
 # If design problem:
-cxp task review-verdict <task-id> escalate --body "Design ambiguity: <description>. James needs to clarify."
+cobuild task review-verdict <task-id> escalate --body "Design ambiguity: <description>. James needs to clarify."
 ```

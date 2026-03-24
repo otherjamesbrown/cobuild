@@ -8,8 +8,8 @@ Outcome: `cb-a3bf71` — CoBuild v0.1 standalone pipeline CLI
 
 | ID | Type | Title |
 |----|------|-------|
-| cb-379d4f | task | Remove cxp CLI dependency — native shard operations |
-| cb-70f1b4 | task | Rename .cxp/ to .cobuild/ everywhere |
+| ~~cb-379d4f~~ | ~~task~~ | ~~Remove cxp CLI dependency — native shard operations~~ **DONE** |
+| ~~cb-70f1b4~~ | ~~task~~ | ~~Rename .cxp/ to .cobuild/ everywhere~~ **DONE** |
 | cb-98bc92 | task | SQLite backend for single-user mode |
 
 ## Priority 2: Production reliability

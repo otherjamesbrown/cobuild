@@ -11,7 +11,7 @@ cd ~/github/otherjamesbrown/penfold
 cobuild setup
 ```
 
-Auto-detects language (Go, Node, Rust, Python), build/test commands, GitHub remote, and default branch. Creates `.cxp/pipeline.yaml` and registers the repo in `~/.cxp/repos.yaml`.
+Auto-detects language (Go, Node, Rust, Python), build/test commands, GitHub remote, and default branch. Creates `.cobuild/pipeline.yaml` and registers the repo in `~/.cobuild/repos.yaml`.
 
 Flags: `--project <name>`, `--force` (overwrite existing), `--dry-run`.
 
@@ -21,7 +21,7 @@ Flags: `--project <name>`, `--force` (overwrite existing), `--dry-run`.
 cobuild init-skills
 ```
 
-Copies default skill files from `~/.cxp/skills/` or the context-palace repo into the repo's `skills/` directory. Existing files are not overwritten unless `--force` is specified.
+Copies default skill files from `~/.cobuild/skills/` or the context-palace repo into the repo's `skills/` directory. Existing files are not overwritten unless `--force` is specified.
 
 ### 3. Initialize a pipeline on a design
 
@@ -34,10 +34,10 @@ Sets `metadata.pipeline` on the design shard with phase=`design`, timestamps, an
 ### 4. Check status
 
 ```bash
-cxp dashboard                          # high-level overview
+cobuild dashboard                          # high-level overview
 cobuild show <design-id>    # pipeline state + lock + iterations
 cobuild audit <design-id>   # full gate timeline
-cxp task deps <design-id>              # dependency graph with dispatch plan
+cobuild deps <design-id>              # dependency graph with dispatch plan
 ```
 
 ### 5. Run the poller
@@ -87,7 +87,7 @@ Gate config drives this: the `readiness-review` gate references skill `m-readine
 A domain agent breaks the design into tasks:
 
 1. Produce task tree with titles, scope, deps
-2. Create tasks with `cxp task create --parent <design-id>`
+2. Create tasks with `cobuild task create --parent <design-id>`
 3. Create an integration test task labeled `integration-test`, blocked by all other tasks
 4. Record verdict:
 
@@ -120,7 +120,7 @@ Two strategies, configured per-repo:
 
 After approval:
 ```bash
-cxp task pr merge <task-id>
+cobuild pr merge <task-id>
 ```
 
 ### Phase 5: Done
@@ -132,7 +132,7 @@ All tasks merged. A `retrospective` gate (skill `m-retrospective`, model `haiku`
 When multiple designs touch the same codebase, use `blocked-by` edges between designs:
 
 ```bash
-cxp shard link <later-design> --blocked-by <earlier-design>
+cobuild shard link <later-design> --blocked-by <earlier-design>
 ```
 
 ---
@@ -165,10 +165,10 @@ Each layer has:
 context:
     layers:
         - name: architecture
-          source: file:.cxp/context/architecture.md
+          source: file:.cobuild/context/architecture.md
           when: always
         - name: agent-identity
-          source: file:.cxp/context/agent-identity.md
+          source: file:.cobuild/context/agent-identity.md
           when: interactive
         - name: playbook
           source: shard:pf-2b76b4
@@ -180,7 +180,7 @@ context:
           source: parent-design
           when: dispatch
         - name: dispatch-completion
-          source: file:.cxp/context/dispatch-completion.md
+          source: file:.cobuild/context/dispatch-completion.md
           when: dispatch
 ```
 
@@ -397,7 +397,7 @@ Analyzes patterns from insights data and proposes specific changes to skills, co
 - Missing model configuration -> add per-phase models
 - No monitoring configured -> add health check config
 - Missing integration test gate requirement -> add `requires_label`
-- Missing `CXP_DISPATCH` check in session hook -> add dispatch guard
+- Missing `COBUILD_DISPATCH` check in session hook -> add dispatch guard
 - Skills not initialized -> suggest `cobuild init-skills`
 
 `--apply` auto-applies config/process changes (skill changes require human review).
@@ -433,13 +433,13 @@ Copies these skill files into the repo's skills directory:
 | `m-stall-check.md` | Stall diagnosis for stuck agents |
 | `m-retrospective.md` | Post-delivery retrospective |
 
-Source resolution: `~/.cxp/skills/` first, then context-palace `skills/` directory.
+Source resolution: `~/.cobuild/skills/` first, then context-palace `skills/` directory.
 
 ### Config hierarchy
 
 ```
-~/.cxp/pipeline.yaml          # global defaults
-<repo>/.cxp/pipeline.yaml     # repo overrides (wins on conflict)
+~/.cobuild/pipeline.yaml          # global defaults
+<repo>/.cobuild/pipeline.yaml     # repo overrides (wins on conflict)
 ```
 
 Merge rules:
@@ -451,7 +451,7 @@ Merge rules:
 
 When a skill is referenced (e.g. in a gate config), it resolves:
 1. `<repo>/<skills_dir>/<skill-name>` (repo-level)
-2. `~/.cxp/skills/<skill-name>` (global fallback)
+2. `~/.cobuild/skills/<skill-name>` (global fallback)
 
 ---
 
@@ -459,7 +459,7 @@ When a skill is referenced (e.g. in a gate config), it resolves:
 
 ### Repo registry
 
-`~/.cxp/repos.yaml` maps project names to local paths:
+`~/.cobuild/repos.yaml` maps project names to local paths:
 
 ```yaml
 repos:
@@ -479,7 +479,7 @@ Created/updated by `cobuild setup`.
 cobuild poller --all-projects
 ```
 
-Loads all entries from `~/.cxp/repos.yaml` and polls each project's pipeline config per cycle. Each project gets its own trigger and health checks.
+Loads all entries from `~/.cobuild/repos.yaml` and polls each project's pipeline config per cycle. Each project gets its own trigger and health checks.
 
 ---
 
@@ -520,7 +520,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 
 | Command | Purpose |
 |---------|---------|
-| `cobuild setup` | Register repo, create `.cxp/pipeline.yaml`, update `~/.cxp/repos.yaml` |
+| `cobuild setup` | Register repo, create `.cobuild/pipeline.yaml`, update `~/.cobuild/repos.yaml` |
 | `cobuild poller` | Poll for triggers and health issues, spawn M sessions |
 | `cobuild init-skills` | Copy default skill files into repo |
 | `cobuild insights` | Analyze execution data, produce report |
@@ -547,12 +547,12 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 |---------|---------|
 | `cobuild dispatch <task-id>` | Spawn agent in tmux with full context |
 | `cobuild complete <task-id>` | Post-agent: commit, push, PR, evidence, needs-review |
-| `cxp task deps <design-id>` | Dependency graph with dispatch plan |
-| `cxp task worktree create/show/remove` | Isolated git worktrees |
-| `cxp task evidence` | Structured evidence append |
-| `cxp task pr create / merge` | PR lifecycle via gh CLI |
-| `cxp task review / review-verdict` | Review dispatch and verdicts |
-| `cxp dashboard` | Outcomes, pipelines, blockers, agents |
+| `cobuild deps <design-id>` | Dependency graph with dispatch plan |
+| `cobuild worktree create/show/remove` | Isolated git worktrees |
+| `cobuild evidence` | Structured evidence append |
+| `gh pr create / merge` | PR lifecycle via gh CLI |
+| `cobuild task review / review-verdict` | Review dispatch and verdicts |
+| `cobuild dashboard` | Outcomes, pipelines, blockers, agents |
 
 ---
 
@@ -629,7 +629,7 @@ review:
 context:
     layers:
         - name: architecture
-          source: file:.cxp/context/architecture.md
+          source: file:.cobuild/context/architecture.md
           when: always            # "always", "interactive", "dispatch", "gate:<name>"
         - name: task-prompt
           source: dispatch-prompt

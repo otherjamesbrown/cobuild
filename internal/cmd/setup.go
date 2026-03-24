@@ -19,13 +19,13 @@ var setupCmd = &cobra.Command{
 	Long: `Run in a git repo to register it for pipeline automation.
 
 Auto-detects language, build commands, GitHub remote, and project name.
-Creates local .cxp/pipeline.yaml and updates ~/.cxp/repos.yaml registry.`,
+Creates local .cobuild/pipeline.yaml and updates ~/.cobuild/repos.yaml registry.`,
 	RunE: runSetup,
 }
 
 func init() {
 	setupCmd.Flags().String("project", "", "Override project name detection")
-	setupCmd.Flags().Bool("force", false, "Overwrite existing .cxp/pipeline.yaml")
+	setupCmd.Flags().Bool("force", false, "Overwrite existing .cobuild/pipeline.yaml")
 	setupCmd.Flags().Bool("dry-run", false, "Show what would be written without writing files")
 
 	rootCmd.AddCommand(setupCmd)
@@ -51,7 +51,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	buildCmds, testCmds := detectBuildSystem(repoRoot)
 	defaultBranch := detectDefaultBranch()
 
-	pipelineDir := filepath.Join(repoRoot, ".cxp")
+	pipelineDir := filepath.Join(repoRoot, ".cobuild")
 	pipelinePath := filepath.Join(pipelineDir, "pipeline.yaml")
 	if _, err := os.Stat(pipelinePath); err == nil && !force {
 		return fmt.Errorf("already configured. Use --force to overwrite")
@@ -66,7 +66,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("could not determine home directory: %v", err)
 	}
-	reposPath := filepath.Join(homeDir, ".cxp", "repos.yaml")
+	reposPath := filepath.Join(homeDir, ".cobuild", "repos.yaml")
 
 	reg, err := config.LoadRepoRegistry()
 	if err != nil {
@@ -117,7 +117,7 @@ func detectSetupProject(flagValue, repoRoot string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	for _, name := range []string{".cxp.yaml", ".cp.yaml"} {
+	for _, name := range []string{".cobuild.yaml", ".cxp.yaml", ".cp.yaml"} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
 			continue

@@ -9,13 +9,13 @@ You are M, checking whether a design shard is ready for decomposition.
 
 ## Steps
 
-1. Read the design: `cxp shard show <design-id>`
+1. Read the design: `cobuild show <design-id>`
 
 2. Check each readiness criterion:
 
 | # | Criterion | How to check |
 |---|-----------|-------------|
-| 1 | Links to outcome | `cxp shard edges <design-id> outgoing child-of` — must have a parent outcome |
+| 1 | Links to outcome | `cobuild shard edges <design-id> outgoing child-of` — must have a parent outcome |
 | 2 | Problem stated | Design has a "Problem" section with concrete description, file paths, specific behavior |
 | 3 | User identified | Design has a "Primary User", "User", or "Consumer" section |
 | 4 | Success criteria | Design has measurable acceptance/success criteria (testable by an agent) |
@@ -36,7 +36,7 @@ You are M, checking whether a design shard is ready for decomposition.
 5. **Record the review using the pipeline review command:**
 
    ```bash
-   cxp shard pipeline review <design-id> \
+   cobuild pipeline review <design-id> \
      --verdict pass|fail \
      --readiness <N> \
      --body "### Readiness (N/5)
@@ -61,16 +61,16 @@ You are M, checking whether a design shard is ready for decomposition.
 
 6. If fail: add blocked label:
    ```bash
-   cxp shard label add <design-id> blocked
+   cobuild shard label add <design-id> blocked
    ```
 
 7. Unlock pipeline and exit:
    ```bash
-   cxp shard pipeline unlock <design-id>
+   cobuild pipeline unlock <design-id>
    ```
 
 ## Important
 
-- **Always use `cxp shard pipeline review`** — do NOT manually append findings or update the phase. The command handles all bookkeeping.
+- **Always use `cobuild pipeline review`** — do NOT manually append findings or update the phase. The command handles all bookkeeping.
 - The review is recorded even on pass — this is the audit trail.
 - Do not skip any criteria. Every criterion gets a PASS/FAIL with a detail note.

@@ -8,10 +8,10 @@ CoBuild uses **Context Palace** (CP) for shard-based work tracking. The CoBuild 
 
 ```bash
 # See your work queue
-cxp shard list --type task,bug,design --project cobuild --status open
+cobuild shard list --type task,bug,design --project cobuild --status open
 
 # Read a shard
-cxp shard show cb-xxxxxx
+cobuild shard show cb-xxxxxx
 
 # See the backlog with shard IDs
 cat docs/BACKLOG.md
@@ -24,7 +24,7 @@ Key shards:
 | cb-939118 | design | Autonomous pipeline operation — trigger-driven phase transitions |
 | cb-7dd0d4 | design | Merge strategy for dependent branches |
 
-CP connection: `~/.cp/config.yaml` or `~/.cxp/config.yaml` (project: `cobuild`, agent: `agent-m`)
+Connection: `~/.cobuild/config.yaml` (project: `cobuild`, agent: `agent-m`). Legacy `~/.cxp/` and `~/.cp/` paths also supported.
 
 ## Relationship to Context Palace
 
@@ -32,7 +32,7 @@ CoBuild was extracted from `context-palace/cxp`. The pipeline code currently exi
 - `cxp shard pipeline *` / `cxp task dispatch` etc. — the original, still used by penfold
 - `cobuild *` — the standalone extraction
 
-Until cb-379d4f (native shard operations) is complete, CoBuild depends on `cxp` for shard CRUD. Once standalone, the pipeline commands will be removed from `cxp`.
+CoBuild now has native shard operations (status, labels, worktrees, content append). The `cxp` CLI is no longer required. Pipeline commands will be removed from `cxp` once penfold migrates.
 
 **Do not duplicate work** — new pipeline features go in CoBuild, not context-palace.
 
@@ -52,18 +52,18 @@ Key concepts:
 CoBuild is newly extracted and needs work. Focus areas in priority order:
 
 ### 1. Make it standalone
-CoBuild still depends on Context Palace's database and `cxp` CLI for shard operations. It should work independently:
+CoBuild still depends on Context Palace's database for storage. It should work independently:
 - Own database (SQLite for single-user, Postgres for teams) OR pluggable backend
 - Own shard model (or thin adapter over CP)
-- Remove all `cxp` shell-outs — use native Go calls
+- ~~Remove all `cxp` shell-outs — use native Go calls~~ **DONE** — all shard operations are now native
 
-### 2. Rename `.cxp/` to `.cobuild/`
-Config directory, registry file (`~/.cobuild/repos.yaml`), and all references need updating. This is a global find/replace but must be done carefully.
+### 2. ~~Rename `.cxp/` to `.cobuild/`~~ **DONE**
+Config directory, registry file, env vars, and all references updated. Legacy `.cxp/` paths are still supported as fallback.
 
 ### 3. Fix known bugs
-- Squash merge + dependent branches causes conflicts on every merge — need auto-rebase or regular merges
-- `CXP_DISPATCH=true` env var is a hack — context layers should handle this fully
-- Agent sometimes doesn't exit (interactive mode) — `cxp task complete` appended to tmux but doesn't run
+- Squash merge + dependent branches causes conflicts on every merge — need auto-rebase or regular merges (see cb-7dd0d4)
+- `COBUILD_DISPATCH=true` env var is a hack — context layers should handle this fully
+- Agent sometimes doesn't exit (interactive mode) — `cobuild complete` appended to tmux but doesn't run
 
 ### 4. Build the deploy agent
 Deploy is currently a shell command. Should be a sub-agent with:
@@ -90,7 +90,7 @@ cmd/cobuild/main.go          # entry point
 internal/cmd/                 # cobra commands (one file per command)
 internal/cmd/root.go          # root command, global flags, client init
 internal/client/              # database layer (connects to CP postgres)
-internal/client/pipeline.go   # pipeline state CRUD
+internal/client/pipeline.go   # pipeline state CRUD + native shard ops
 internal/client/runs.go       # pipeline_runs/gates/tasks tables
 internal/config/              # config types + context assembly
 internal/config/config.go     # Config struct, merge, resolve
@@ -103,19 +103,61 @@ docs/                         # full reference documentation
 ## Config
 
 CoBuild reads config from (in order):
-1. `~/.cxp/pipeline.yaml` — global defaults (will become `~/.cobuild/`)
-2. `<repo>/.cxp/pipeline.yaml` — repo overrides (will become `.cobuild/`)
-3. `~/.cxp/repos.yaml` — repo registry (will become `~/.cobuild/`)
+1. `~/.cobuild/pipeline.yaml` — global defaults
+2. `<repo>/.cobuild/pipeline.yaml` — repo overrides
+3. `~/.cobuild/repos.yaml` — repo registry
+
+Legacy `~/.cxp/` paths are still supported as fallback.
 
 The config hierarchy follows the Claude Code pattern: repo overrides global.
 
 ## Database
 
-Currently connects to Context Palace postgres via `~/.cxp/config.yaml` (or `~/.cp/config.yaml`). Uses these tables:
+Currently connects to Context Palace postgres via `~/.cobuild/config.yaml` (legacy: `~/.cxp/config.yaml` or `~/.cp/config.yaml`). Uses these tables:
 - `shards` — design, bug, task, review shards (CP's table)
 - `pipeline_runs` — one row per pipeline (CoBuild's table)
 - `pipeline_gates` — gate audit records (CoBuild's table)
 - `pipeline_tasks` — task tracking within pipelines (CoBuild's table)
+
+## Design Direction: Connectors + Separated Storage
+
+CoBuild follows **Claude Code / CoWork patterns** for extensibility. See `research/claude-patterns.md` for full analysis.
+
+### Ontology
+
+CoBuild has 7 core objects. See `research/cobuild-ontology.md` for the full Design Ontology Spec.
+
+| Object | What it is | Where it lives |
+|--------|-----------|---------------|
+| **WorkItem** | A unit of work (design, bug, task) | Connector (external) |
+| **Pipeline** | Orchestration of a WorkItem through phases | CoBuild's database |
+| **Phase** | A named stage (design, decompose, implement, review, done) | Config |
+| **Gate** | Quality check at phase boundaries | Config + CoBuild's database |
+| **Skill** | Markdown instructions for an agent | Filesystem |
+| **Agent** | Ephemeral AI worker | Config |
+| **Connector** | Bridge to external work-item system | Config |
+
+The critical boundary: **WorkItem** lives in the Connector. **Pipeline** lives in CoBuild. Don't mix them.
+
+### Key terms (aligned with Claude ecosystem)
+- **Connector** — bridges CoBuild to an external work-item system (CP, Beads, Jira, Linear)
+- **Skill** — markdown file with YAML frontmatter + instructions (same as Claude Code skills)
+- **Hook** — event handler on lifecycle points (phase transitions, dispatch, completion)
+- **Scope** — config hierarchy: global (`~/.cobuild/`) > repo (`.cobuild/`) > local (`.cobuild/*.local.yaml`)
+
+### Architecture split
+- **Connector** handles external work items: designs, bugs, tasks, relationships, labels, content
+- **CoBuild's own tables** handle orchestration: pipeline runs, gates, dispatch state, audit trail
+- Pipeline metadata (phase, locks, review history) lives in `pipeline_runs`, NOT in work-item metadata
+
+### Connector interface
+The `Connector` interface (`internal/connector/`) abstracts work-item systems. Config selects which:
+```yaml
+connectors:
+    work_items:
+        type: context-palace    # or "beads", "jira"
+```
+Implementations: `CPConnector` (direct SQL), `BeadsConnector` (CLI + JSON), future `JiraConnector` (REST API).
 
 ## Principles
 
@@ -124,10 +166,11 @@ Currently connects to Context Palace postgres via `~/.cxp/config.yaml` (or `~/.c
 3. **Audit everything** — every gate, every dispatch, every completion recorded
 4. **Fail visible** — no silent failures. If something goes wrong, it's in the shard and the audit trail
 5. **Self-improving** — `cobuild insights` + `cobuild improve` detect patterns and suggest fixes
+6. **Claude-native patterns** — use Claude Code/CoWork terminology and patterns (connectors, skills, hooks, scopes)
 
 ## Don't
 
 - Don't hardcode phase names or gate logic — read from config
 - Don't add features that only work for one repo — everything must be configurable
 - Don't skip the audit trail — every action must be recorded
-- Don't shell out to `cxp` for things CoBuild should do natively
+- Don't invent new terms when Claude already has one — use "connector" not "adapter", "skill" not "command"

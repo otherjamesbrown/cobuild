@@ -135,11 +135,15 @@ Steps:
 
 		evidence := fmt.Sprintf("## Auto-completion evidence\n\nCommit: %s\nPR: %s\n\n### Files changed\n```\n%s\n```",
 			commit, prURL, filesChanged)
-		exec.Command("cxp", "shard", "append", taskID, "--body", evidence).Run()
+		if err := cbClient.AppendShardContent(ctx, taskID, evidence); err != nil {
+			fmt.Printf("Warning: failed to append evidence: %v\n", err)
+		}
 
 		// Mark needs-review
 		fmt.Println("Marking needs-review...")
-		exec.Command("cxp", "shard", "status", taskID, "needs-review").Run()
+		if err := cbClient.UpdateShardStatus(ctx, taskID, "needs-review"); err != nil {
+			fmt.Printf("Warning: failed to set status: %v\n", err)
+		}
 
 		fmt.Printf("Task %s complete -> needs-review\n", taskID)
 		return nil

@@ -115,7 +115,7 @@ func generateImprovements(stats *client.InsightsStats, cfg *config.Config, repoR
 		for _, phase := range cfg.Phases {
 			if phase.Name == "review" && phase.Model == "" {
 				actions = append(actions, ImprovementAction{
-					File:        filepath.Join(".cxp", "pipeline.yaml"),
+					File:        filepath.Join(".cobuild", "pipeline.yaml"),
 					Type:        "config",
 					Description: "Set review phase model to haiku",
 					Reason:      "Review is a judgment task -- haiku is sufficient and cheaper",
@@ -124,7 +124,7 @@ func generateImprovements(stats *client.InsightsStats, cfg *config.Config, repoR
 		}
 		if cfg.Dispatch.DefaultModel == "" {
 			actions = append(actions, ImprovementAction{
-				File:        filepath.Join(".cxp", "pipeline.yaml"),
+				File:        filepath.Join(".cobuild", "pipeline.yaml"),
 				Type:        "config",
 				Description: "Set default model to sonnet",
 				Reason:      "No default model configured -- agents may use opus unnecessarily",
@@ -134,7 +134,7 @@ func generateImprovements(stats *client.InsightsStats, cfg *config.Config, repoR
 
 	if cfg != nil && cfg.Monitoring.StallTimeout == "" {
 		actions = append(actions, ImprovementAction{
-			File:        filepath.Join(".cxp", "pipeline.yaml"),
+			File:        filepath.Join(".cobuild", "pipeline.yaml"),
 			Type:        "config",
 			Description: "Enable health monitoring for dispatched agents",
 			Reason:      "No monitoring configured -- stalled/crashed agents won't be detected",

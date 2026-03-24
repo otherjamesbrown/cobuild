@@ -31,4 +31,4 @@ This skill is called as part of the readiness check (`skills/m-readiness-check.m
 
 ## Recording
 
-Do NOT record implementability separately. Include it in the `--body` of `cxp shard pipeline review` as part of the readiness check. See `skills/m-readiness-check.md` for the full recording flow.
+Do NOT record implementability separately. Include it in the `--body` of `cobuild pipeline review` as part of the readiness check. See `skills/m-readiness-check.md` for the full recording flow.

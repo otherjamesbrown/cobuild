@@ -66,14 +66,14 @@ func (c *Client) ConnectionString() string {
 }
 
 const (
-	projectConfigName     = ".cxp.yaml"
-	legacyProjectConfig   = ".cp.yaml"
-	globalConfigDirName   = ".cxp"
-	legacyGlobalConfigDir = ".cp"
+	projectConfigName     = ".cobuild.yaml"
+	legacyProjectConfig   = ".cxp.yaml"
+	globalConfigDirName   = ".cobuild"
+	legacyGlobalConfigDir = ".cxp"
 )
 
 // LoadClientConfig loads configuration with precedence:
-// env vars > .cxp.yaml (project) > ~/.cxp/config.yaml (global) > defaults
+// env vars > .cobuild.yaml (project) > ~/.cobuild/config.yaml (global) > defaults
 func LoadClientConfig(configOverride string) (*ClientConfig, error) {
 	cfg := &ClientConfig{
 		Connection: ConnectionConfig{
@@ -106,27 +106,27 @@ func LoadClientConfig(configOverride string) (*ClientConfig, error) {
 		}
 	}
 
-	if v := firstEnv("CXP_HOST", "CP_HOST"); v != "" {
+	if v := firstEnv("COBUILD_HOST", "CXP_HOST", "CP_HOST"); v != "" {
 		cfg.Connection.Host = v
 	}
-	if v := firstEnv("CXP_DATABASE", "CP_DATABASE"); v != "" {
+	if v := firstEnv("COBUILD_DATABASE", "CXP_DATABASE", "CP_DATABASE"); v != "" {
 		cfg.Connection.Database = v
 	}
-	if v := firstEnv("CXP_USER", "CP_USER"); v != "" {
+	if v := firstEnv("COBUILD_USER", "CXP_USER", "CP_USER"); v != "" {
 		cfg.Connection.User = v
 	}
-	if v := firstEnv("CXP_PROJECT", "CP_PROJECT"); v != "" {
+	if v := firstEnv("COBUILD_PROJECT", "CXP_PROJECT", "CP_PROJECT"); v != "" {
 		cfg.Project = v
 	}
-	if v := firstEnv("CXP_AGENT", "CP_AGENT"); v != "" {
+	if v := firstEnv("COBUILD_AGENT", "CXP_AGENT", "CP_AGENT"); v != "" {
 		cfg.Agent = v
 	}
 
 	if cfg.Connection.User == "" {
-		return nil, fmt.Errorf("database user is required (set via CXP_USER, .cxp.yaml, or ~/.cxp/config.yaml)")
+		return nil, fmt.Errorf("database user is required (set via COBUILD_USER, .cobuild.yaml, or ~/.cobuild/config.yaml)")
 	}
 	if cfg.Agent == "" {
-		return nil, fmt.Errorf("agent identity is required (set via CXP_AGENT, .cxp.yaml, or ~/.cxp/config.yaml)")
+		return nil, fmt.Errorf("agent identity is required (set via COBUILD_AGENT, .cobuild.yaml, or ~/.cobuild/config.yaml)")
 	}
 
 	return cfg, nil

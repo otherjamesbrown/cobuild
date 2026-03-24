@@ -54,7 +54,7 @@ unless --force is specified.`,
 
 		home, _ := os.UserHomeDir()
 		sourceDirs := []string{
-			filepath.Join(home, ".cxp", "skills"),
+			filepath.Join(home, ".cobuild", "skills"),
 		}
 		cpRoot, _ := config.RepoForProject("context-palace")
 		if cpRoot != "" {

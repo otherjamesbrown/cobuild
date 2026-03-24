@@ -29,7 +29,7 @@ gh pr diff <pr-number> --repo <owner/repo>
 
 ## Step 2: Evaluate CI
 
-Read the CI mode from `.cxp/pipeline.yaml` → `review.ci.mode`:
+Read the CI mode from `.cobuild/pipeline.yaml` → `review.ci.mode`:
 
 ### mode: ignore
 Skip CI evaluation entirely. Proceed to review.
@@ -104,13 +104,13 @@ CI fails (pre-existing only) + no real issues?
 
 ```bash
 # Approve
-cxp task review-verdict <task-id> approve --body "CI: pass. Gemini: N comments, none blocking. Approved."
+cobuild task review-verdict <task-id> approve --body "CI: pass. Gemini: N comments, none blocking. Approved."
 
 # Request changes
-cxp task review-verdict <task-id> request-changes --body "CI: <failures>. Gemini: <real issues>. Fix needed: <list>"
+cobuild task review-verdict <task-id> request-changes --body "CI: <failures>. Gemini: <real issues>. Fix needed: <list>"
 
 # Escalate (design-level problem found)
-cxp task review-verdict <task-id> escalate --body "Review found design-level issue: <description>"
+cobuild task review-verdict <task-id> escalate --body "Review found design-level issue: <description>"
 ```
 
 ## Step 6: If request-changes
@@ -119,7 +119,7 @@ The implementer needs to fix and push. The poller will detect the task back in `
 
 Add the specific feedback to the task shard so the implementer knows what to fix:
 ```bash
-cxp shard append <task-id> --body "## Review Feedback — Round N
+cobuild shard append <task-id> --body "## Review Feedback — Round N
 ### CI Failures
 <list>
 ### Gemini Issues (actionable)

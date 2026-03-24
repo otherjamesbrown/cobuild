@@ -212,7 +212,7 @@ func DefaultConfig() *Config {
 }
 
 // LoadConfig loads pipeline configuration by merging the global config
-// (~/.cxp/pipeline.yaml) with a repo-level override (<repoRoot>/.cxp/pipeline.yaml).
+// (~/.cobuild/pipeline.yaml) with a repo-level override (<repoRoot>/.cobuild/pipeline.yaml).
 func LoadConfig(repoRoot string) (*Config, error) {
 	base := DefaultConfig()
 
@@ -221,7 +221,7 @@ func LoadConfig(repoRoot string) (*Config, error) {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
 
-	globalPath := filepath.Join(home, ".cxp", "pipeline.yaml")
+	globalPath := filepath.Join(home, ".cobuild", "pipeline.yaml")
 	globalCfg, err := loadConfigFile(globalPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading global pipeline config: %w", err)
@@ -231,7 +231,7 @@ func LoadConfig(repoRoot string) (*Config, error) {
 	}
 
 	if repoRoot != "" {
-		repoPath := filepath.Join(repoRoot, ".cxp", "pipeline.yaml")
+		repoPath := filepath.Join(repoRoot, ".cobuild", "pipeline.yaml")
 		repoCfg, err := loadConfigFile(repoPath)
 		if err != nil {
 			return nil, fmt.Errorf("loading repo pipeline config: %w", err)
@@ -365,14 +365,14 @@ func MergeConfig(base, override *Config) *Config {
 	return out
 }
 
-// LoadRepoRegistry loads the repo registry from ~/.cxp/repos.yaml.
+// LoadRepoRegistry loads the repo registry from ~/.cobuild/repos.yaml.
 func LoadRepoRegistry() (*RepoRegistry, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
 
-	path := filepath.Join(home, ".cxp", "repos.yaml")
+	path := filepath.Join(home, ".cobuild", "repos.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -391,14 +391,14 @@ func LoadRepoRegistry() (*RepoRegistry, error) {
 	return &reg, nil
 }
 
-// SaveRepoRegistry writes the repo registry to ~/.cxp/repos.yaml.
+// SaveRepoRegistry writes the repo registry to ~/.cobuild/repos.yaml.
 func SaveRepoRegistry(reg *RepoRegistry) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
 	}
 
-	dir := filepath.Join(home, ".cxp")
+	dir := filepath.Join(home, ".cobuild")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
@@ -452,12 +452,12 @@ func ResolveSkill(repoRoot, skillName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting home directory: %w", err)
 	}
-	globalSkill := filepath.Join(home, ".cxp", "skills", skillName)
+	globalSkill := filepath.Join(home, ".cobuild", "skills", skillName)
 	if _, err := os.Stat(globalSkill); err == nil {
 		return globalSkill, nil
 	}
 
-	return "", fmt.Errorf("skill %q not found in repo (%s) or global (~/.cxp/skills/)", skillName, filepath.Join(repoRoot, skillsDir))
+	return "", fmt.Errorf("skill %q not found in repo (%s) or global (~/.cobuild/skills/)", skillName, filepath.Join(repoRoot, skillsDir))
 }
 
 // PhaseNames returns the phase names from config, falling back to ValidPipelinePhases.

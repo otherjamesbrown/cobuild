@@ -113,15 +113,15 @@ If the answer is no, the design isn't ready. Common gaps:
 ## Creating the Shard
 
 ```bash
-cxp shard create --type design \
+cobuild shard create --type design \
   --title "<concise title — what changes, not why>" \
   --body-file design.md
 
 # Link to parent outcome
-cxp shard edge create <design-id> <outcome-id> child-of
+cobuild shard edge create <design-id> <outcome-id> child-of
 
 # If this depends on another design
-cxp shard edge create <design-id> <other-design-id> blocked-by
+cobuild shard edge create <design-id> <other-design-id> blocked-by
 ```
 
 ### Title Convention

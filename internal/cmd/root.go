@@ -45,7 +45,8 @@ COMMANDS:
   complete <task-id>             Post-agent completion bookkeeping
 
 CONFIGURATION:
-  Same as cxp — uses ~/.cxp/config.yaml and .cxp.yaml for project/agent.`,
+  Uses ~/.cobuild/config.yaml and .cobuild.yaml for project/agent.
+  Legacy ~/.cxp/ and .cxp.yaml paths are also supported.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

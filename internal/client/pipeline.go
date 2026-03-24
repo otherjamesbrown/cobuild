@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -878,6 +881,90 @@ func (c *Client) PipelineAudit(ctx context.Context, designID string) ([]Pipeline
 		}
 	}
 	return entries, nil
+}
+
+// UpdateShardStatus sets the status of a shard.
+func (c *Client) UpdateShardStatus(ctx context.Context, id, status string) error {
+	conn, err := c.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	result, err := conn.Exec(ctx, `UPDATE shards SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
+	if err != nil {
+		return fmt.Errorf("failed to update shard status: %v", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("shard not found: %s", id)
+	}
+	return nil
+}
+
+// AddShardLabel adds a label to a shard.
+func (c *Client) AddShardLabel(ctx context.Context, id, label string) error {
+	conn, err := c.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	_, err = conn.Exec(ctx, `INSERT INTO shard_labels (shard_id, label) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, label)
+	if err != nil {
+		return fmt.Errorf("failed to add label: %v", err)
+	}
+	return nil
+}
+
+// CreateWorktree creates a git worktree for a task and records the path in metadata.
+func (c *Client) CreateWorktree(ctx context.Context, taskID, repoRoot, project string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %v", err)
+	}
+
+	worktreeBase := filepath.Join(home, "worktrees", project)
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		return "", fmt.Errorf("failed to create worktree base dir: %v", err)
+	}
+
+	worktreePath := filepath.Join(worktreeBase, taskID)
+	branch := taskID
+
+	// Create the branch from main
+	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "branch", branch, "main").CombinedOutput(); err != nil {
+		// Branch may already exist, that's OK
+		if !strings.Contains(string(out), "already exists") {
+			return "", fmt.Errorf("failed to create branch %s: %s\n%s", branch, err, string(out))
+		}
+	}
+
+	// Create the worktree
+	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "add", worktreePath, branch).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to create worktree: %s\n%s", err, string(out))
+	}
+
+	// Record worktree_path in metadata
+	pathJSON, _ := json.Marshal(worktreePath)
+	if _, err := c.SetMetadataPath(ctx, taskID, []string{"worktree_path"}, pathJSON); err != nil {
+		return worktreePath, fmt.Errorf("worktree created at %s but failed to update metadata: %v", worktreePath, err)
+	}
+
+	return worktreePath, nil
+}
+
+// RemoveWorktree removes a git worktree for a task.
+func (c *Client) RemoveWorktree(ctx context.Context, taskID string) error {
+	worktreePath, err := c.GetMetadataField(ctx, taskID, []string{"worktree_path"})
+	if err != nil || worktreePath == "" {
+		return fmt.Errorf("no worktree_path in metadata for %s", taskID)
+	}
+
+	if out, err := exec.Command("git", "worktree", "remove", "--force", worktreePath).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to remove worktree %s: %s\n%s", worktreePath, err, string(out))
+	}
+
+	return nil
 }
 
 // --- Poller queries ---

@@ -65,16 +65,17 @@ var dispatchCmd = &cobra.Command{
 		worktreePath, _ := cbClient.GetMetadataField(ctx, taskID, []string{"worktree_path"})
 		if worktreePath == "" {
 			if dryRun {
-				fmt.Println("[dry-run] Would create worktree via: cxp task worktree create " + taskID)
+				fmt.Println("[dry-run] Would create worktree for " + taskID)
 				worktreePath = fmt.Sprintf("~/worktrees/<project>/%s", taskID)
 			} else {
-				out, err := exec.CommandContext(ctx, "cxp", "task", "worktree", "create", taskID).CombinedOutput()
-				if err != nil {
-					return fmt.Errorf("failed to create worktree: %s\n%s", err, string(out))
+				repoRootForWT, _ := config.RepoForProject(cbClient.Config.Project)
+				if repoRootForWT == "" {
+					return fmt.Errorf("no repo registered for project %q — run cobuild setup first", cbClient.Config.Project)
 				}
-				worktreePath, err = cbClient.GetMetadataField(ctx, taskID, []string{"worktree_path"})
-				if err != nil || worktreePath == "" {
-					return fmt.Errorf("worktree created but could not read worktree_path from metadata")
+				var wtErr error
+				worktreePath, wtErr = cbClient.CreateWorktree(ctx, taskID, repoRootForWT, cbClient.Config.Project)
+				if wtErr != nil {
+					return fmt.Errorf("failed to create worktree: %v", wtErr)
 				}
 			}
 		}
@@ -173,7 +174,7 @@ var dispatchCmd = &cobra.Command{
 
 		completeCmd := fmt.Sprintf("cobuild complete '%s'", strings.ReplaceAll(taskID, "'", "'\\''"))
 
-		shellCmd := fmt.Sprintf("cd '%s' && CXP_DISPATCH=true claude %s \"$(cat '%s')\" ; rm -f '%s' ; %s",
+		shellCmd := fmt.Sprintf("cd '%s' && COBUILD_DISPATCH=true claude %s \"$(cat '%s')\" ; rm -f '%s' ; %s",
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
 			claudeFlags,
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
@@ -201,15 +202,14 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		// Set task status
-		statusOut, err := exec.CommandContext(ctx, "cxp", "shard", "status", taskID, "in_progress").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to set status to in_progress: %s\n%s", err, string(statusOut))
+		if err := cbClient.UpdateShardStatus(ctx, taskID, "in_progress"); err != nil {
+			return fmt.Errorf("failed to set status to in_progress: %v", err)
 		}
 
 		// Spawn tmux
 		tmuxOut, err := exec.CommandContext(ctx, "tmux", tmuxArgs...).CombinedOutput()
 		if err != nil {
-			_ = exec.CommandContext(ctx, "cxp", "shard", "status", taskID, task.Status).Run()
+			_ = cbClient.UpdateShardStatus(ctx, taskID, task.Status)
 			if strings.Contains(string(tmuxOut), "no server running") || strings.Contains(string(tmuxOut), "no current client") {
 				return fmt.Errorf("no tmux session found. Start one with: tmux new-session -s main")
 			}
@@ -217,7 +217,7 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		// Capture output
-		logDir := filepath.Join(worktreePath, ".cxp")
+		logDir := filepath.Join(worktreePath, ".cobuild")
 		os.MkdirAll(logDir, 0755)
 		logFile := filepath.Join(logDir, "session.log")
 		exec.CommandContext(ctx, "tmux", "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),

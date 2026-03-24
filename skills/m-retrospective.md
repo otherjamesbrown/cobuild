@@ -14,13 +14,13 @@ Run this after a design reaches `done` phase.
 
 ```bash
 # Audit trail
-cxp shard pipeline audit <design-id>
+cobuild pipeline audit <design-id>
 
 # Task graph
-cxp task deps <design-id>
+cobuild deps <design-id>
 
 # Pipeline insights
-cxp pipeline insights
+cobuild pipeline insights
 ```
 
 ### 2. Review each gate
@@ -34,7 +34,7 @@ For each gate event in the audit trail:
 
 For each task:
 - Did the agent complete without intervention?
-- Was `cxp task complete` needed to create the PR?
+- Was `cobuild task complete` needed to create the PR?
 - Were there merge conflicts?
 - How long did it take?
 
@@ -50,21 +50,21 @@ Look for:
 
 Run the improve command to see data-driven suggestions:
 ```bash
-cxp pipeline improve -o text
+cobuild pipeline improve -o text
 ```
 
 ### 6. Record findings
 
 Create a knowledge shard with the retrospective:
 ```bash
-cxp shard create --type knowledge \
+cobuild shard create --type knowledge \
   --title "Pipeline retrospective: <design-title>" \
   --body "<findings>"
 ```
 
 Link to the design:
 ```bash
-cxp shard link <retro-id> --references <design-id>
+cobuild shard link <retro-id> --references <design-id>
 ```
 
 ### Finding format
@@ -89,5 +89,5 @@ cxp shard link <retro-id> --references <design-id>
 - [process] <change to workflow> — because <data>
 
 ## Data-driven improvements
-<output from cxp pipeline improve>
+<output from cobuild pipeline improve>
 ```

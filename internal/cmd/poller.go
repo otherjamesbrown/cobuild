@@ -300,7 +300,7 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 		action := mon.Actions.OnMaxRetries
 		if action == "escalate" || action == "" {
 			_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash\nMax retries (%d) exceeded. Escalating.", mon.MaxRetries))
-			_ = exec.Command("cxp", "shard", "label", "add", task.ID, "blocked").Run()
+			_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
 		}
 		return
 	}
@@ -317,8 +317,8 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 	case action == "redispatch" || action == "":
 		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Re-dispatching.", retryCount+1, mon.MaxRetries))
 		setRetryCount(ctx, task.ID, retryCount+1)
-		_ = exec.Command("cxp", "shard", "status", task.ID, "open").Run()
-		_ = exec.Command("cxp", "task", "worktree", "remove", task.ID).Run()
+		_ = cbClient.UpdateShardStatus(ctx, task.ID, "open")
+		_ = cbClient.RemoveWorktree(ctx, task.ID)
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	case strings.HasPrefix(action, "skill:"):
 		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Spawning skill %s.", retryCount+1, mon.MaxRetries, action))
@@ -326,7 +326,7 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 		spawnM(ctx, repoRoot, cfg, task.ID, "health-crash")
 	case action == "escalate":
 		_ = cbClient.AppendShardContent(ctx, task.ID, "\n\n## Health Check -- Crash detected\nEscalating.")
-		_ = exec.Command("cxp", "shard", "label", "add", task.ID, "blocked").Run()
+		_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
 	}
 }
 
@@ -345,13 +345,13 @@ func handleStall(ctx context.Context, task client.ShardSummary, mon config.Monit
 		spawnM(ctx, repoRoot, cfg, task.ID, "health-stall")
 	case action == "escalate":
 		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Escalating.", mon.StallTimeout))
-		_ = exec.Command("cxp", "shard", "label", "add", task.ID, "blocked").Run()
+		_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
 	case action == "redispatch":
 		retryCount := getRetryCount(ctx, task.ID)
 		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Re-dispatching (retry %d/%d).", mon.StallTimeout, retryCount+1, mon.MaxRetries))
 		setRetryCount(ctx, task.ID, retryCount+1)
-		_ = exec.Command("cxp", "shard", "status", task.ID, "open").Run()
-		_ = exec.Command("cxp", "task", "worktree", "remove", task.ID).Run()
+		_ = cbClient.UpdateShardStatus(ctx, task.ID, "open")
+		_ = cbClient.RemoveWorktree(ctx, task.ID)
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	}
 }
@@ -381,7 +381,7 @@ func init() {
 	pollerCmd.Flags().Int("interval", 30, "Polling interval in seconds")
 	pollerCmd.Flags().Bool("once", false, "Run one check cycle and exit")
 	pollerCmd.Flags().Bool("dry-run", false, "Print what would be spawned without executing")
-	pollerCmd.Flags().Bool("all-projects", false, "Poll all registered projects from ~/.cxp/repos.yaml")
+	pollerCmd.Flags().Bool("all-projects", false, "Poll all registered projects from ~/.cobuild/repos.yaml")
 
 	rootCmd.AddCommand(pollerCmd)
 }
