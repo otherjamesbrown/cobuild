@@ -265,8 +265,121 @@ var dispatchCmd = &cobra.Command{
 	},
 }
 
+var dispatchWaveCmd = &cobra.Command{
+	Use:   "dispatch-wave <design-id>",
+	Short: "Dispatch the next wave of ready tasks for a design",
+	Long: `Finds all tasks for a design whose blockers are satisfied and dispatches them.
+Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		if cbClient == nil {
+			return fmt.Errorf("no client configured")
+		}
+		if conn == nil {
+			return fmt.Errorf("no connector configured")
+		}
+
+		designID := args[0]
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		// Get all child tasks
+		edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+		if err != nil {
+			return fmt.Errorf("get child tasks: %w", err)
+		}
+
+		var ready []string
+		var inProgress []string
+		var blocked []string
+
+		for _, e := range edges {
+			if e.Status == "closed" || e.Status == "needs-review" {
+				continue // already done or in review
+			}
+			if e.Status == "in_progress" {
+				inProgress = append(inProgress, e.ItemID)
+				continue
+			}
+
+			// Check if blockers are satisfied
+			blockerEdges, err := conn.GetEdges(ctx, e.ItemID, "outgoing", []string{"blocked-by"})
+			if err != nil {
+				continue
+			}
+			allSatisfied := true
+			for _, b := range blockerEdges {
+				if b.Status != "closed" {
+					allSatisfied = false
+					break
+				}
+			}
+			if allSatisfied {
+				ready = append(ready, e.ItemID)
+			} else {
+				blocked = append(blocked, e.ItemID)
+			}
+		}
+
+		if len(ready) == 0 {
+			if len(inProgress) > 0 {
+				fmt.Printf("No new tasks to dispatch. %d still in progress.\n", len(inProgress))
+			} else if len(blocked) > 0 {
+				fmt.Printf("No tasks ready. %d blocked.\n", len(blocked))
+			} else {
+				fmt.Println("All tasks complete.")
+			}
+			return nil
+		}
+
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
+		maxConcurrent := 3
+		if pCfg != nil && pCfg.Dispatch.MaxConcurrent > 0 {
+			maxConcurrent = pCfg.Dispatch.MaxConcurrent
+		}
+
+		// Limit by max_concurrent minus currently running
+		available := maxConcurrent - len(inProgress)
+		if available <= 0 {
+			fmt.Printf("At capacity: %d tasks in progress (max %d).\n", len(inProgress), maxConcurrent)
+			return nil
+		}
+		if len(ready) > available {
+			ready = ready[:available]
+		}
+
+		fmt.Printf("Dispatching %d tasks (wave) for %s:\n", len(ready), designID)
+		for _, taskID := range ready {
+			if dryRun {
+				fmt.Printf("  [dry-run] %s\n", taskID)
+				continue
+			}
+			// Run dispatch for each task via the existing dispatch command logic
+			fmt.Printf("  %s ", taskID)
+			dispatchArgs := []string{"dispatch", taskID}
+			subCmd, _, err := rootCmd.Find(dispatchArgs)
+			if err != nil || subCmd == nil {
+				fmt.Printf("— failed to find dispatch command\n")
+				continue
+			}
+			subCmd.SetArgs([]string{taskID})
+			if err := subCmd.RunE(subCmd, []string{taskID}); err != nil {
+				fmt.Printf("— error: %v\n", err)
+			}
+		}
+
+		if len(blocked) > 0 {
+			fmt.Printf("\n%d tasks still blocked.\n", len(blocked))
+		}
+		return nil
+	},
+}
+
 func init() {
 	dispatchCmd.Flags().String("agent", "", "Override agent (default: from config)")
 	dispatchCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
+	dispatchWaveCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
 	rootCmd.AddCommand(dispatchCmd)
+	rootCmd.AddCommand(dispatchWaveCmd)
 }
