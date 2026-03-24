@@ -69,22 +69,17 @@ CONFIGURATION:
 			return nil
 		}
 
-		// Legacy client — may fail if agent/user not configured.
-		// New commands use the connector directly and don't need this.
 		cfg, err := client.LoadClientConfig(configFlag)
 		if err != nil {
-			// Still try to initialize connector from pipeline config
+			// Client needs at minimum a database user. If that's missing,
+			// still try to initialize the connector for wi commands.
 			repoRoot := findRepoRoot()
 			pCfg, _ := config.LoadConfig(repoRoot)
-
-			// Read project from .cobuild.yaml or flags
 			project := projectFlag
 			if project == "" {
 				project = readProjectFromYAML(repoRoot)
 			}
-
 			conn, _ = connector.New(pCfg, project, "", debugFlag)
-			cbStore, _ = store.New(cmd.Context(), pCfg, "")
 			return nil
 		}
 

@@ -125,9 +125,6 @@ func LoadClientConfig(configOverride string) (*ClientConfig, error) {
 	if cfg.Connection.User == "" {
 		return nil, fmt.Errorf("database user is required (set via COBUILD_USER, .cobuild.yaml, or ~/.cobuild/config.yaml)")
 	}
-	if cfg.Agent == "" {
-		return nil, fmt.Errorf("agent identity is required (set via COBUILD_AGENT, .cobuild.yaml, or ~/.cobuild/config.yaml)")
-	}
 
 	return cfg, nil
 }
