@@ -202,14 +202,18 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		// Set task status
-		if err := cbClient.UpdateShardStatus(ctx, taskID, "in_progress"); err != nil {
-			return fmt.Errorf("failed to set status to in_progress: %v", err)
+		if conn != nil {
+			if err := conn.UpdateStatus(ctx, taskID, "in_progress"); err != nil {
+				return fmt.Errorf("failed to set status to in_progress: %v", err)
+			}
 		}
 
 		// Spawn tmux
 		tmuxOut, err := exec.CommandContext(ctx, "tmux", tmuxArgs...).CombinedOutput()
 		if err != nil {
-			_ = cbClient.UpdateShardStatus(ctx, taskID, task.Status)
+			if conn != nil {
+				_ = conn.UpdateStatus(ctx, taskID, task.Status)
+			}
 			if strings.Contains(string(tmuxOut), "no server running") || strings.Contains(string(tmuxOut), "no current client") {
 				return fmt.Errorf("no tmux session found. Start one with: tmux new-session -s main")
 			}

@@ -9,6 +9,7 @@ CoBuild orchestrates AI agents through a structured pipeline — from design rev
 **Key features:**
 - [**Config-driven**](docs/guides/config.md) — phases, gates, models, context layers, deploy rules — all YAML
 - [**Skills as markdown**](docs/guides/skills.md) — extend the pipeline by writing a `.md` file
+- [**Connectors**](#connectors) — pluggable work-item backends (Context Palace, Beads, future Jira)
 - [**Context layers**](docs/guides/context-layers.md) — control exactly what each agent sees per session type
 - [**Per-phase model selection**](docs/guides/models.md) — haiku for judgment, sonnet for creation
 - [**Self-improving**](docs/guides/feedback-loop.md) — feedback loop learns from execution patterns
@@ -137,6 +138,24 @@ deploy:
           paths: [services/api/]
           command: ./scripts/deploy.sh api
 ```
+
+## Connectors
+
+CoBuild reads and writes work items (designs, bugs, tasks) through **connectors** — pluggable backends for external systems. CoBuild's own orchestration data (pipeline runs, gates, audit trail) is stored separately.
+
+```yaml
+# .cobuild/pipeline.yaml
+connectors:
+    work_items:
+        type: context-palace    # default — uses cxp CLI
+```
+
+| Connector | Backend | Access via |
+|-----------|---------|-----------|
+| `context-palace` | Context Palace (Postgres) | `cxp` CLI with `-o json` |
+| `beads` | Beads (Dolt) | `bd` CLI with `--json` |
+
+The connector interface follows Claude Code/CoWork patterns. See `research/claude-patterns.md` for the design rationale.
 
 ## Skills
 

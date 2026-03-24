@@ -174,6 +174,16 @@ deploy:
 github:
     owner_repo: otherjamesbrown/penfold
 
+# Connectors — external work-item systems
+connectors:
+    work_items:
+        type: context-palace              # "context-palace" or "beads"
+        # Beads example:
+        # type: beads
+        # config:
+        #     prefix: cb
+        #     repo: .
+
 # Skills directory (relative to repo root)
 skills_dir: skills
 ```

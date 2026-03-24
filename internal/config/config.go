@@ -51,8 +51,18 @@ type ContextConfig struct {
 	Layers []ContextLayer `yaml:"layers,omitempty"`
 }
 
+// ConnectorsCfg holds connector configuration for external systems.
+type ConnectorsCfg struct {
+	WorkItems WorkItemsConnectorCfg `yaml:"work_items,omitempty"`
+}
+
+// WorkItemsConnectorCfg configures the work-item connector.
+type WorkItemsConnectorCfg struct {
+	Type   string            `yaml:"type,omitempty"`   // "context-palace", "beads"
+	Config map[string]string `yaml:"config,omitempty"` // connector-specific settings
+}
+
 // Config holds pipeline configuration loaded from YAML files.
-// This was PipelineConfig in the cxp codebase.
 type Config struct {
 	Build           []string                    `yaml:"build,omitempty"`
 	Test            []string                    `yaml:"test,omitempty"`
@@ -65,6 +75,7 @@ type Config struct {
 	Workflows       map[string]WorkflowConfig   `yaml:"workflows,omitempty"`
 	Deploy          DeployCfg                   `yaml:"deploy,omitempty"`
 	GitHub          GitHubCfg                   `yaml:"github,omitempty"`
+	Connectors      ConnectorsCfg               `yaml:"connectors,omitempty"`
 	SkillsDir       string                      `yaml:"skills_dir,omitempty"`
 	Phases          []PhaseConfig               `yaml:"phases,omitempty"`
 }

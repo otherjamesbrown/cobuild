@@ -52,7 +52,7 @@ An empty `when` field is treated as `always`.
 | Source | Resolves to | Notes |
 |--------|-------------|-------|
 | `file:<path>` | Read file from repo | Path relative to repo root |
-| `shard:<id>` | Fetch shard from Context Palace | Returns title + content |
+| `shard:<id>` | Fetch work item via connector | Returns title + content |
 | `skills:<name>` | Resolve skill file | Follows skill resolution chain (repo then global) |
 | `skills-dir` | Load all `.md` files from skills directory | Optional `filter` list to select specific files |
 | `claude-md` | Read the repo's `CLAUDE.md` | Useful when you want it as one layer among many |
@@ -100,7 +100,7 @@ Paths are relative to the repo root. Absolute paths also work.
   when: interactive
 ```
 
-Fetches the shard from Context Palace. The result includes the shard title as a heading followed by the shard content.
+Fetches the work item via the connector. The result includes the title as a heading followed by the content.
 
 ### Source: skills
 
@@ -134,24 +134,24 @@ context:
     layers:
         # === Always loaded (both interactive and dispatch) ===
         - name: architecture
-          source: file:.cxp/context/architecture.md
+          source: file:.cobuild/context/architecture.md
           when: always
         - name: deploy
-          source: file:.cxp/context/deploy.md
+          source: file:.cobuild/context/deploy.md
           when: always
 
         # === Interactive sessions (human typing) ===
         - name: agent-identity
-          source: file:.cxp/context/agent-identity.md
+          source: file:.cobuild/context/agent-identity.md
           when: interactive
         - name: completion-protocol
-          source: file:.cxp/context/completion-protocol.md
+          source: file:.cobuild/context/completion-protocol.md
           when: interactive
         - name: playbook
           source: shard:pf-2b76b4
           when: interactive
         - name: menu-instructions
-          source: file:.cxp/context/interactive-menu.md
+          source: file:.cobuild/context/interactive-menu.md
           when: interactive
 
         # === Pipeline-dispatched agents ===
@@ -162,7 +162,7 @@ context:
           source: parent-design
           when: dispatch
         - name: dispatch-completion
-          source: file:.cxp/context/dispatch-completion.md
+          source: file:.cobuild/context/dispatch-completion.md
           when: dispatch
 ```
 

@@ -299,8 +299,10 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 		fmt.Printf("  [health:crash] %s -- max retries (%d) exceeded, escalating\n", task.ID, mon.MaxRetries)
 		action := mon.Actions.OnMaxRetries
 		if action == "escalate" || action == "" {
-			_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash\nMax retries (%d) exceeded. Escalating.", mon.MaxRetries))
-			_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
+			if conn != nil {
+				_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash\nMax retries (%d) exceeded. Escalating.", mon.MaxRetries))
+				_ = conn.AddLabel(ctx, task.ID, "blocked")
+			}
 		}
 		return
 	}
@@ -315,18 +317,26 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 
 	switch {
 	case action == "redispatch" || action == "":
-		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Re-dispatching.", retryCount+1, mon.MaxRetries))
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Re-dispatching.", retryCount+1, mon.MaxRetries))
+		}
 		setRetryCount(ctx, task.ID, retryCount+1)
-		_ = cbClient.UpdateShardStatus(ctx, task.ID, "open")
+		if conn != nil {
+			_ = conn.UpdateStatus(ctx, task.ID, "open")
+		}
 		_ = cbClient.RemoveWorktree(ctx, task.ID)
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	case strings.HasPrefix(action, "skill:"):
-		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Spawning skill %s.", retryCount+1, mon.MaxRetries, action))
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Spawning skill %s.", retryCount+1, mon.MaxRetries, action))
+		}
 		setRetryCount(ctx, task.ID, retryCount+1)
 		spawnM(ctx, repoRoot, cfg, task.ID, "health-crash")
 	case action == "escalate":
-		_ = cbClient.AppendShardContent(ctx, task.ID, "\n\n## Health Check -- Crash detected\nEscalating.")
-		_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, "\n\n## Health Check -- Crash detected\nEscalating.")
+			_ = conn.AddLabel(ctx, task.ID, "blocked")
+		}
 	}
 }
 
@@ -341,16 +351,24 @@ func handleStall(ctx context.Context, task client.ShardSummary, mon config.Monit
 
 	switch {
 	case strings.HasPrefix(action, "skill:"):
-		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Spawning skill %s.", mon.StallTimeout, action))
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Spawning skill %s.", mon.StallTimeout, action))
+		}
 		spawnM(ctx, repoRoot, cfg, task.ID, "health-stall")
 	case action == "escalate":
-		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Escalating.", mon.StallTimeout))
-		_ = cbClient.AddShardLabel(ctx, task.ID, "blocked")
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Escalating.", mon.StallTimeout))
+			_ = conn.AddLabel(ctx, task.ID, "blocked")
+		}
 	case action == "redispatch":
 		retryCount := getRetryCount(ctx, task.ID)
-		_ = cbClient.AppendShardContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Re-dispatching (retry %d/%d).", mon.StallTimeout, retryCount+1, mon.MaxRetries))
+		if conn != nil {
+			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Re-dispatching (retry %d/%d).", mon.StallTimeout, retryCount+1, mon.MaxRetries))
+		}
 		setRetryCount(ctx, task.ID, retryCount+1)
-		_ = cbClient.UpdateShardStatus(ctx, task.ID, "open")
+		if conn != nil {
+			_ = conn.UpdateStatus(ctx, task.ID, "open")
+		}
 		_ = cbClient.RemoveWorktree(ctx, task.ID)
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	}

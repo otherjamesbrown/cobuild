@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +17,7 @@ var (
 	debugFlag    bool
 	configFlag   string
 	cbClient     *client.Client
+	conn         connector.Connector // work-item connector
 )
 
 var Version = "0.1.0"
@@ -71,6 +74,12 @@ CONFIGURATION:
 		}
 
 		cbClient = client.NewClient(cfg)
+
+		// Initialize work-item connector
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
+		conn, _ = connector.New(pCfg, cfg.Project, cfg.Agent, debugFlag)
+
 		return nil
 	},
 }

@@ -151,7 +151,7 @@ Each layer has:
 | Source | Resolves to |
 |--------|-------------|
 | `file:<path>` | Read file from repo (relative to repo root) |
-| `shard:<id>` | Fetch shard content from Context Palace |
+| `shard:<id>` | Fetch work item content via connector |
 | `skills:<name>` | Resolve skill file (repo then global) |
 | `skills-dir` | Load all `.md` files from skills directory (optional `filter` list) |
 | `claude-md` | Read the repo's `CLAUDE.md` |

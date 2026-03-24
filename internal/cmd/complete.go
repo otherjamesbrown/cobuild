@@ -135,14 +135,18 @@ Steps:
 
 		evidence := fmt.Sprintf("## Auto-completion evidence\n\nCommit: %s\nPR: %s\n\n### Files changed\n```\n%s\n```",
 			commit, prURL, filesChanged)
-		if err := cbClient.AppendShardContent(ctx, taskID, evidence); err != nil {
-			fmt.Printf("Warning: failed to append evidence: %v\n", err)
+		if conn != nil {
+			if err := conn.AppendContent(ctx, taskID, evidence); err != nil {
+				fmt.Printf("Warning: failed to append evidence: %v\n", err)
+			}
 		}
 
 		// Mark needs-review
 		fmt.Println("Marking needs-review...")
-		if err := cbClient.UpdateShardStatus(ctx, taskID, "needs-review"); err != nil {
-			fmt.Printf("Warning: failed to set status: %v\n", err)
+		if conn != nil {
+			if err := conn.UpdateStatus(ctx, taskID, "needs-review"); err != nil {
+				fmt.Printf("Warning: failed to set status: %v\n", err)
+			}
 		}
 
 		fmt.Printf("Task %s complete -> needs-review\n", taskID)

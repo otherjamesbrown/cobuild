@@ -33,7 +33,7 @@ Additionally, the pipeline metadata on the design shard tracks:
 
 ### The pipeline_gates table
 
-Gate records are stored in Context Palace as review sub-shards. Each record includes:
+Gate records are stored as review sub-shards via the connector. Each record includes:
 
 | Field | Description |
 |-------|-------------|
@@ -64,7 +64,7 @@ Each sub-shard contains the full review body, making it possible to read the rev
 To understand why a design is in its current state:
 
 1. **See the timeline:** `cobuild audit <design-id>` shows all gate records chronologically
-2. **Read a specific review:** The audit output includes the review shard ID -- fetch it with `cxp shard show <review-id>`
+2. **Read a specific review:** The audit output includes the review shard ID -- fetch it with `cobuild show <review-id>`
 3. **Check pipeline state:** `cobuild show <design-id>` shows current phase, task list, and metadata
 4. **View task evidence:** Each completed task has evidence in its metadata (commit hash, files changed, PR URL)
 
@@ -151,7 +151,7 @@ This shows:
 From the audit output above, dig into the failed readiness review:
 
 ```bash
-$ cxp shard show pf-rev001
+$ cobuild show pf-rev001
 
 Type: review
 Parent: pf-abc123
@@ -214,6 +214,6 @@ This evidence links the task back to the exact code changes, PR, and commit. Com
 
 **Audit shows no records:** Gate records are only created by `cobuild review`, `cobuild decompose`, and `cobuild gate` commands. If the pipeline was advanced manually (e.g. `cobuild update --phase implement`), no gate record exists. Always use gate commands for phase transitions.
 
-**Review shard not found:** The review shard ID in the audit output should be fetchable with `cxp shard show <id>`. If it returns not found, the shard may have been deleted. Gate records in pipeline metadata persist even if the review shard is removed.
+**Review shard not found:** The review shard ID in the audit output should be fetchable with `cobuild show <id>`. If it returns not found, the shard may have been deleted. Gate records in pipeline metadata persist even if the review shard is removed.
 
 **Missing evidence on completed tasks:** Evidence is appended by `cobuild complete <task-id>`. If the agent exited abnormally (crash, timeout), the complete command may not have run. Check `cobuild show <task-id>` for dispatch metadata and retry if needed with `cobuild complete <task-id>`.
