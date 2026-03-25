@@ -22,9 +22,26 @@ var initCmd = &cobra.Command{
 		ctx := context.Background()
 		id := args[0]
 
+		// Determine start phase from work item type + workflow config
+		startPhase := "design"
+		if conn != nil {
+			item, err := conn.Get(ctx, id)
+			if err == nil {
+				repoRoot := findRepoRoot()
+				pCfg, _ := config.LoadConfig(repoRoot)
+				if pCfg != nil {
+					sp := pCfg.StartPhaseForType(item.Type)
+					if sp != "" {
+						startPhase = sp
+					}
+				}
+				fmt.Printf("Work item type: %s → start phase: %s\n", item.Type, startPhase)
+			}
+		}
+
 		// Use store if available, fall back to legacy client
 		if cbStore != nil {
-			run, err := cbStore.CreateRun(ctx, id, projectName, "design")
+			run, err := cbStore.CreateRun(ctx, id, projectName, startPhase)
 			if err != nil {
 				return fmt.Errorf("init pipeline: %w", err)
 			}
