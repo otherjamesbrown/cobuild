@@ -198,7 +198,9 @@ var dispatchCmd = &cobra.Command{
 				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
 			}
 		}
-		claudeFlags := "-p --dangerously-skip-permissions --no-session-persistence --max-turns 50"
+		// Interactive mode (not -p) — agent needs multiple turns to implement
+		// -p mode is single-turn and can't iterate on edits/tests
+		claudeFlags := "--dangerously-skip-permissions"
 		if pCfg.Dispatch.ClaudeFlags != "" {
 			claudeFlags = pCfg.Dispatch.ClaudeFlags
 		}
@@ -213,7 +215,6 @@ var dispatchCmd = &cobra.Command{
 		// The prompt must be a positional argument, not piped via stdin
 		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
 		scriptContent := fmt.Sprintf(`#!/bin/bash
-set -e
 cd '%s'
 export COBUILD_DISPATCH=true
 LOGFILE=".cobuild/dispatch.log"
@@ -229,18 +230,19 @@ fi
 
 # Save a copy for debugging
 cp "$PROMPT_FILE" .cobuild/last-prompt.md
+PROMPT=$(cat "$PROMPT_FILE")
+echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
+rm -f "$PROMPT_FILE"
 
-echo "[$(date)] Prompt loaded ($(wc -c < "$PROMPT_FILE") bytes)" >> "$LOGFILE"
+# Run claude in interactive mode — agent needs multiple turns to implement
+# Interactive mode allows: read files, edit, run tests, fix errors, iterate
+claude %s "$PROMPT"
+echo "[$(date)] Claude session ended" >> "$LOGFILE"
 
-# Run claude with prompt as positional argument
-claude %s "$(cat "$PROMPT_FILE")" < /dev/null >> "$LOGFILE" 2>&1
-CLAUDE_EXIT=$?
-echo "[$(date)] Claude exited with $CLAUDE_EXIT" >> "$LOGFILE"
+# Cleanup script
+rm -f '%s'
 
-# Cleanup
-rm -f "$PROMPT_FILE" '%s'
-
-# Run completion
+# Run completion (commit, push, create PR, mark needs-review)
 %s
 `,
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),

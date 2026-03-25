@@ -207,8 +207,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		Dispatch: DispatchCfg{
 			MaxConcurrent: 3,
-			TmuxSession:   "", // empty = auto: cobuild-<project>
-			ClaudeFlags:   "--print",
+			TmuxSession:   "",  // empty = auto: cobuild-<project>
+			ClaudeFlags:   "",  // empty = use dispatch.go defaults (interactive + skip permissions)
 			DefaultModel:  "sonnet",
 		},
 		Monitoring: MonitoringCfg{
