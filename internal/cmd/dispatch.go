@@ -29,7 +29,7 @@ var dispatchCmd = &cobra.Command{
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		agentOverride, _ := cmd.Flags().GetString("agent")
 
-		agent := cbClient.Config.Agent
+		agent := agentFlag
 		if agentOverride != "" {
 			agent = agentOverride
 		}
@@ -68,12 +68,12 @@ var dispatchCmd = &cobra.Command{
 				fmt.Println("[dry-run] Would create worktree for " + taskID)
 				worktreePath = fmt.Sprintf("~/worktrees/<project>/%s", taskID)
 			} else {
-				repoRootForWT, _ := config.RepoForProject(cbClient.Config.Project)
+				repoRootForWT, _ := config.RepoForProject(projectName)
 				if repoRootForWT == "" {
-					return fmt.Errorf("no repo registered for project %q — run cobuild setup first", cbClient.Config.Project)
+					return fmt.Errorf("no repo registered for project %q — run cobuild setup first", projectName)
 				}
 				var wtErr error
-				worktreePath, wtErr = cbClient.CreateWorktree(ctx, taskID, repoRootForWT, cbClient.Config.Project)
+				worktreePath, wtErr = cbClient.CreateWorktree(ctx, taskID, repoRootForWT, projectName)
 				if wtErr != nil {
 					return fmt.Errorf("failed to create worktree: %v", wtErr)
 				}
@@ -105,7 +105,7 @@ var dispatchCmd = &cobra.Command{
 			promptBuilder.WriteString("\n\n")
 		}
 
-		repoRoot, _ := config.RepoForProject(cbClient.Config.Project)
+		repoRoot, _ := config.RepoForProject(projectName)
 		pCfg, _ := config.LoadConfig(repoRoot)
 		if pCfg == nil {
 			pCfg, _ = config.LoadConfig(worktreePath)
@@ -159,7 +159,7 @@ var dispatchCmd = &cobra.Command{
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
+		tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
 		if pCfg.Dispatch.TmuxSession != "" {
 			tmuxSession = pCfg.Dispatch.TmuxSession
 		}

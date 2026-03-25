@@ -48,7 +48,7 @@ Steps:
 			return fmt.Errorf("no worktree_path in task metadata")
 		}
 
-		repoRoot, _ := config.RepoForProject(cbClient.Config.Project)
+		repoRoot, _ := config.RepoForProject(projectName)
 		pCfg, _ := config.LoadConfig(repoRoot)
 
 		// Restore original CLAUDE.md

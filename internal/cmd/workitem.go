@@ -70,8 +70,8 @@ var wiListCmd = &cobra.Command{
 		wiProject, _ := cmd.Flags().GetString("project")
 		wiLimit, _ := cmd.Flags().GetInt("limit")
 
-		if wiProject == "" && cbClient != nil {
-			wiProject = cbClient.Config.Project
+		if wiProject == "" {
+			wiProject = projectName
 		}
 
 		result, err := conn.List(ctx, connector.ListFilters{

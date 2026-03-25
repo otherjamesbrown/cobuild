@@ -35,7 +35,7 @@ Run with --apply to auto-apply the changes.`,
 		ctx := context.Background()
 		apply, _ := cmd.Flags().GetBool("apply")
 
-		project := cbClient.Config.Project
+		project := projectName
 		repoRoot, _ := config.RepoForProject(project)
 		if repoRoot == "" {
 			cwd, _ := os.Getwd()

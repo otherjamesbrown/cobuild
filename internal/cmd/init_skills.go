@@ -36,7 +36,7 @@ unless --force is specified.`,
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-		repoRoot, err := config.RepoForProject(cbClient.Config.Project)
+		repoRoot, err := config.RepoForProject(projectName)
 		if err != nil {
 			cwd, _ := os.Getwd()
 			repoRoot, err = client.GitRepoRoot(cwd)

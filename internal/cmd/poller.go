@@ -70,16 +70,16 @@ For each trigger, spawns an M session in a tmux window (unless --dry-run).`,
 			}
 			fmt.Println()
 		} else {
-			repoRoot, err := config.RepoForProject(cbClient.Config.Project)
+			repoRoot, err := config.RepoForProject(projectName)
 			if err != nil {
 				repoRoot = findRepoRoot()
-				fmt.Fprintf(os.Stderr, "[poller] No repo registered for project %q, using %s\n", cbClient.Config.Project, repoRoot)
+				fmt.Fprintf(os.Stderr, "[poller] No repo registered for project %q, using %s\n", projectName, repoRoot)
 			}
 			cfg, cfgErr := config.LoadConfig(repoRoot)
 			if cfgErr != nil {
 				cfg = config.DefaultConfig()
 			}
-			projects = append(projects, projectEntry{name: cbClient.Config.Project, root: repoRoot, config: cfg})
+			projects = append(projects, projectEntry{name: projectName, root: repoRoot, config: cfg})
 		}
 
 		for {
@@ -206,7 +206,7 @@ func spawnM(ctx context.Context, repoRoot string, cfg *config.Config, designID, 
 
 	tmuxSession := cfg.Dispatch.TmuxSession
 	if tmuxSession == "" {
-		tmuxSession = fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
+		tmuxSession = fmt.Sprintf("cobuild-%s", projectName)
 	}
 
 	// Ensure tmux session exists
@@ -260,7 +260,7 @@ func runHealthChecks(ctx context.Context, repoRoot string, cfg *config.Config, d
 
 	tmuxSession := cfg.Dispatch.TmuxSession
 	if tmuxSession == "" {
-		tmuxSession = fmt.Sprintf("cobuild-%s", cbClient.Config.Project)
+		tmuxSession = fmt.Sprintf("cobuild-%s", projectName)
 	}
 
 	tasks, err := cbClient.FindInProgressTasks(ctx)

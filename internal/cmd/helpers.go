@@ -21,8 +21,15 @@ func findRepoRoot() string {
 	return cwd
 }
 
-// readProjectFromYAML reads the project name from .cobuild.yaml in the repo root.
-func readProjectFromYAML(repoRoot string) string {
+// projectYAML holds values from .cobuild.yaml.
+type projectYAML struct {
+	Project string
+	Prefix  string
+}
+
+// readProjectConfigFromYAML reads project config from .cobuild.yaml in the repo root.
+func readProjectConfigFromYAML(repoRoot string) projectYAML {
+	var result projectYAML
 	for _, name := range []string{".cobuild.yaml", ".cxp.yaml"} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
@@ -30,12 +37,19 @@ func readProjectFromYAML(repoRoot string) string {
 		}
 		var cfg struct {
 			Project string `yaml:"project"`
+			Prefix  string `yaml:"prefix"`
 		}
-		if yaml.Unmarshal(data, &cfg) == nil && cfg.Project != "" {
-			return cfg.Project
+		if yaml.Unmarshal(data, &cfg) == nil {
+			if cfg.Project != "" {
+				result.Project = cfg.Project
+			}
+			if cfg.Prefix != "" {
+				result.Prefix = cfg.Prefix
+			}
+			return result
 		}
 	}
-	return ""
+	return result
 }
 
 // resolveBody resolves body content from --body or --body-file flags.

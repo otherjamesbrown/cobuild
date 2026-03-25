@@ -20,7 +20,7 @@ task statuses, and agent performance to produce an insights report.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
-		project := cbClient.Config.Project
+		project := projectName
 		if p, _ := cmd.Flags().GetString("project"); p != "" {
 			project = p
 		}

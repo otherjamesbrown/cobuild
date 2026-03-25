@@ -129,8 +129,8 @@ func detectSetupProject(flagValue, repoRoot string) string {
 			return parsed.Project
 		}
 	}
-	if cbClient != nil && cbClient.Config.Project != "" {
-		return cbClient.Config.Project
+	if projectName != "" {
+		return projectName
 	}
 	return filepath.Base(repoRoot)
 }

@@ -17,9 +17,15 @@ var (
 	agentFlag    string
 	debugFlag    bool
 	configFlag   string
-	cbClient     *client.Client
-	conn         connector.Connector // work-item connector
-	cbStore      store.Store         // CoBuild's own data store
+
+	// Core globals — initialized in PersistentPreRunE
+	projectName   string              // from .cobuild.yaml or flags
+	projectPrefix string              // from .cobuild.yaml (e.g., "cb-")
+	conn          connector.Connector // work-item connector
+	cbStore       store.Store         // CoBuild's own data store
+
+	// Legacy client — being migrated away (cb-3f5be6). Still needed for some pipeline commands.
+	cbClient *client.Client
 )
 
 var Version = "0.1.0"
@@ -69,41 +75,40 @@ CONFIGURATION:
 			return nil
 		}
 
-		cfg, err := client.LoadClientConfig(configFlag)
-		if err != nil {
-			// Client needs at minimum a database user. If that's missing,
-			// still try to initialize the connector for wi commands.
-			repoRoot := findRepoRoot()
-			pCfg, _ := config.LoadConfig(repoRoot)
-			project := projectFlag
-			if project == "" {
-				project = readProjectFromYAML(repoRoot)
-			}
-			conn, _ = connector.New(pCfg, project, "", debugFlag)
-			return nil
-		}
-
-		if projectFlag != "" {
-			cfg.Project = projectFlag
-		}
-		if agentFlag != "" {
-			cfg.Agent = agentFlag
-		}
-
-		if cfg.Defaults != nil && cfg.Defaults.Output != "" && !cmd.Flags().Changed("output") {
-			outputFormat = cfg.Defaults.Output
-		}
-
-		cbClient = client.NewClient(cfg)
-
-		// Initialize work-item connector and store
+		// Load project identity from .cobuild.yaml
 		repoRoot := findRepoRoot()
-		pCfg, _ := config.LoadConfig(repoRoot)
-		conn, _ = connector.New(pCfg, cfg.Project, cfg.Agent, debugFlag)
+		projYAML := readProjectConfigFromYAML(repoRoot)
+		projectName = projYAML.Project
+		projectPrefix = projYAML.Prefix
+		if projectFlag != "" {
+			projectName = projectFlag
+		}
 
-		// Initialize CoBuild's own data store
-		dsn := cbClient.ConnectionString()
-		cbStore, _ = store.New(cmd.Context(), pCfg, dsn)
+		// Load pipeline config
+		pCfg, _ := config.LoadConfig(repoRoot)
+
+		// Initialize connector (always — needed for wi commands)
+		agent := agentFlag
+		conn, _ = connector.New(pCfg, projectName, agent, debugFlag)
+
+		// Try to initialize legacy client + store (needs database)
+		cfg, err := client.LoadClientConfig(configFlag)
+		if err == nil {
+			if projectFlag != "" {
+				cfg.Project = projectFlag
+			}
+			if agentFlag != "" {
+				cfg.Agent = agentFlag
+			}
+			if cfg.Defaults != nil && cfg.Defaults.Output != "" && !cmd.Flags().Changed("output") {
+				outputFormat = cfg.Defaults.Output
+			}
+
+			cbClient = client.NewClient(cfg)
+
+			dsn := cbClient.ConnectionString()
+			cbStore, _ = store.New(cmd.Context(), pCfg, dsn)
+		}
 
 		return nil
 	},

@@ -340,7 +340,7 @@ var lockCmd = &cobra.Command{
 
 		sessionID, _ := cmd.Flags().GetString("session")
 		if sessionID == "" {
-			sessionID = fmt.Sprintf("%s-%d", cbClient.Config.Agent, time.Now().Unix())
+			sessionID = fmt.Sprintf("%s-%d", agentFlag, time.Now().Unix())
 		}
 
 		state, err := cbClient.PipelineLock(ctx, id, sessionID)
