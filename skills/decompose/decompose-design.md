@@ -130,4 +130,6 @@ cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of
 - Every task must have verifiable acceptance criteria — "works correctly" is not verifiable
 - If the design is too vague to decompose, fail the gate and report what's missing
 - Prefer more smaller tasks over fewer larger ones — agent context is the constraint
+- **Migration number collisions:** Parallel tasks in the same wave all branch from the same main. If multiple tasks create database migrations, assign non-colliding migration numbers explicitly in the task spec. Don't let agents pick their own numbers — they'll collide.
+- **Hardcoded values:** If the project has a "config in DB" principle, task specs should explicitly state "read from config table" for any thresholds, limits, or timeouts. Agents default to hardcoding if the spec doesn't say otherwise.
 <!-- Add failure patterns here as they're discovered -->
