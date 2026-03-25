@@ -80,24 +80,26 @@ Steps:
 			fmt.Printf("Push warning: %s\n", strings.TrimSpace(string(pushOut)))
 		}
 
-		// Create PR
+		// Create PR — detect repo from the worktree's git remote (not pipeline config,
+		// which may point to a different repo in multi-repo projects)
 		prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
 		if prURL == "" {
 			fmt.Println("Creating PR...")
 			repo := ""
-			if pCfg != nil && pCfg.GitHub.OwnerRepo != "" {
-				repo = pCfg.GitHub.OwnerRepo
-			} else {
-				repoOut, err := exec.Command("git", "-C", worktreePath, "remote", "get-url", "origin").Output()
-				if err == nil {
-					url := strings.TrimSpace(string(repoOut))
-					for _, prefix := range []string{"git@github.com:", "https://github.com/"} {
-						if strings.HasPrefix(url, prefix) {
-							repo = strings.TrimSuffix(strings.TrimPrefix(url, prefix), ".git")
-							break
-						}
+			// Primary: detect from worktree's git remote
+			repoOut, err := exec.Command("git", "-C", worktreePath, "remote", "get-url", "origin").Output()
+			if err == nil {
+				url := strings.TrimSpace(string(repoOut))
+				for _, prefix := range []string{"git@github.com:", "https://github.com/"} {
+					if strings.HasPrefix(url, prefix) {
+						repo = strings.TrimSuffix(strings.TrimPrefix(url, prefix), ".git")
+						break
 					}
 				}
+			}
+			// Fallback: pipeline config
+			if repo == "" && pCfg != nil && pCfg.GitHub.OwnerRepo != "" {
+				repo = pCfg.GitHub.OwnerRepo
 			}
 
 			if repo != "" {

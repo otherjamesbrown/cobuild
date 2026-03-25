@@ -61,21 +61,30 @@ var dispatchCmd = &cobra.Command{
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
 		}
 
+		// Determine target repo — multi-repo tasks may specify which repo they target
+		targetRepo, _ := conn.GetMetadata(ctx, taskID, "repo")
+		repoRootForWT := ""
+		if targetRepo != "" {
+			repoRootForWT, _ = config.RepoForProject(targetRepo)
+		}
+		if repoRootForWT == "" {
+			repoRootForWT, _ = config.RepoForProject(projectName)
+		}
+		if repoRootForWT == "" {
+			repoRootForWT = findRepoRoot()
+		}
+		fmt.Printf("Target repo: %s\n", repoRootForWT)
+
 		// Get or create worktree
 		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 		if worktreePath == "" {
 			if dryRun {
-				fmt.Println("[dry-run] Would create worktree for " + taskID)
-				worktreePath = fmt.Sprintf("~/worktrees/<project>/%s", taskID)
+				fmt.Println("[dry-run] Would create worktree for " + taskID + " in " + repoRootForWT)
+				worktreePath = fmt.Sprintf("~/worktrees/%s/%s", projectName, taskID)
 			} else {
-				repoRootForWT, _ := config.RepoForProject(projectName)
-				if repoRootForWT == "" {
-					return fmt.Errorf("no repo registered for project %q — run cobuild setup first", projectName)
-				}
 				var wtErr error
 				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, projectName)
 				if wtErr == nil {
-					// Record path in work item metadata
 					conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath)
 				}
 				if wtErr != nil {
