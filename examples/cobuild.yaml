@@ -1,0 +1,8 @@
+# .cobuild.yaml — project identity file
+# Place at the repo root. This tells cobuild which project this repo belongs to.
+
+project: my-project          # must match the project name in your work-item system
+prefix: mp-                  # work-item ID prefix (e.g., mp-abc123)
+
+# For multi-repo projects, each repo has its own .cobuild.yaml with the same
+# project name. Tasks specify their target repo in metadata during decomposition.

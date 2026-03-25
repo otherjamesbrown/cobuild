@@ -1,0 +1,30 @@
+# Minimal CoBuild pipeline config — just the essentials.
+# Everything not specified uses sensible defaults.
+
+github:
+    owner_repo: your-org/your-repo
+
+build:
+    - go build ./...
+
+test:
+    - go test ./...
+
+connectors:
+    work_items:
+        type: context-palace
+
+storage:
+    backend: postgres
+
+context:
+    layers:
+        - name: architecture
+          source: file:ARCHITECTURE.md
+          when: always
+        - name: task-prompt
+          source: dispatch-prompt
+          when: dispatch
+        - name: design-context
+          source: parent-design
+          when: dispatch

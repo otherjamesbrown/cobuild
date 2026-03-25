@@ -1,0 +1,136 @@
+# Example CoBuild pipeline configuration
+#
+# This file goes in .cobuild/pipeline.yaml in your repo.
+# Global defaults go in ~/.cobuild/pipeline.yaml — repo config overrides global.
+#
+# Minimal config: just build, test, and github. Everything else has sensible defaults.
+# Full config: every section shown below with comments explaining each field.
+
+# --- Project identity ---
+# Usually set in .cobuild.yaml at the repo root, not here.
+# project: my-project
+# shard_prefix: mp-
+
+# --- GitHub ---
+github:
+    owner_repo: your-org/your-repo       # used for PR creation
+
+# --- Build and test ---
+# Commands agents run after implementing a task, before marking complete.
+build:
+    - go build ./...                      # or: npm run build, cargo build, make build
+test:
+    - go test ./...                       # or: npm test, cargo test, pytest
+    - go vet ./...                        # additional checks (lint, typecheck, etc.)
+
+# --- Connector ---
+# How CoBuild reads/writes work items (designs, tasks, bugs).
+# CoBuild never owns work items — they live in the external system.
+connectors:
+    work_items:
+        type: context-palace              # or: beads
+        # config:                         # connector-specific settings
+        #     prefix: mp-
+
+# --- Storage ---
+# Where CoBuild stores its own pipeline data (runs, gates, tasks).
+# Separate from the work-item connector.
+storage:
+    backend: postgres                     # or: sqlite (planned), file (planned)
+    # dsn: "host=localhost dbname=cobuild user=cobuild sslmode=disable"
+    # If omitted, inherits from ~/.cobuild/config.yaml connection settings.
+
+# --- Phases and gates ---
+# Each phase has an optional gate (quality check) and skill (agent instructions).
+phases:
+    design:
+        gate: readiness-review
+        skill: design/gate-readiness-review.md
+    decompose:
+        gate: decomposition-review
+        # No skill — the orchestrator reads the design and creates tasks.
+    implement:
+        skill: implement/dispatch-task.md
+        stall_check: implement/stall-check.md
+    review:
+        gate: review
+        skill: review/gate-process-review.md    # for external review (Gemini)
+        # skill: review/gate-review-pr.md       # for agent-based review
+    done:
+        gate: retrospective
+        skill: done/gate-retrospective.md
+
+# --- Workflows ---
+# Which phases each work-item type goes through.
+workflows:
+    design:
+        phases: [design, decompose, implement, review, done]
+    bug:
+        phases: [implement, review, done]
+    task:
+        phases: [implement, review, done]
+
+# --- Review strategy ---
+review:
+    strategy: external                    # external (e.g., Gemini) or agent
+    provider: gemini                      # only for external strategy
+    ci_mode: pr-only                      # ignore | all-pass | pr-only
+    wait_for_ci: true                     # wait for CI checks before reviewing
+
+# --- Dispatch ---
+# How agents are spawned for implementation tasks.
+dispatch:
+    max_concurrent: 3                     # max agents running at once
+    model: sonnet                         # model for implementing agents
+    # claude_flags: ""                    # override claude CLI flags (default: interactive + skip permissions)
+    # tmux_session: ""                    # override tmux session name (default: cobuild-<project>)
+
+# --- Monitoring ---
+monitoring:
+    enabled: true
+    # stall_timeout: 30m                  # how long before a task is considered stalled
+    # crash_check: true                   # check for crashed agent sessions
+
+# --- Deploy ---
+# Optional: auto-deploy after PR merge.
+# deploy:
+#     services:
+#         - name: gateway
+#           trigger_paths: [services/gateway/**, pkg/**]
+#           command: penf deploy gateway
+#         - name: worker
+#           trigger_paths: [services/worker/**, pkg/**]
+#           command: penf deploy worker
+#     on_merge: make deploy               # or a simple command for single-service projects
+
+# --- Context layers ---
+# What information agents see in each session type.
+# Sources: file:<path>, work-item:<id>, dispatch-prompt, parent-design, skills:<name>
+# When: always, interactive, dispatch, phase:<name>, gate:<name>
+context:
+    layers:
+        # Everyone gets architecture
+        - name: architecture
+          source: file:ARCHITECTURE.md
+          when: always
+
+        # Design-phase agents get domain knowledge
+        # - name: domain-docs
+        #   source: work-item:pf-c66536
+        #   when: phase:design
+
+        # Implement-phase agents get testing standards
+        # - name: testing
+        #   source: work-item:pf-129647
+        #   when: phase:implement
+
+        # Dispatched agents get their task prompt and parent design
+        - name: task-prompt
+          source: dispatch-prompt
+          when: dispatch
+        - name: design-context
+          source: parent-design
+          when: dispatch
+
+# --- Skills directory ---
+skills_dir: skills                        # relative to repo root
