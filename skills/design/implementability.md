@@ -1,5 +1,6 @@
 ---
 name: implementability
+version: "0.1"
 description: Check whether a design is specific enough for an agent to implement without asking questions. Called as part of the readiness review gate.
 summary: >-
   Can an agent build this without asking questions? Checks that the design specifies the technical approach, code locations, data model, API surface, migration strategy, and error handling — everything an implementing agent needs.

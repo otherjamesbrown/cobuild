@@ -1,5 +1,6 @@
 ---
 name: gate-review-pr
+version: "0.1"
 description: Review a pull request against its task spec and parent design. Trigger when an agent-based review is needed for a task PR.
 summary: >-
   Reviews a pull request by comparing it against the task spec and parent design. Checks three things: does it match the spec, does it fit the design, and will it break anything. Produces an approve, request-changes, or escalate verdict.

@@ -1,5 +1,6 @@
 ---
 name: gate-process-review
+version: "0.1"
 description: Process external review feedback (Gemini, CI) on a task PR and decide approve, request-changes, or escalate. Trigger when a PR has external review results.
 summary: >-
   Processes review feedback from external reviewers (like Gemini) and CI checks. Classifies each comment as must-fix, nice-to-have, or noise. Only blocks the PR for real issues — not style suggestions or pre-existing CI failures.

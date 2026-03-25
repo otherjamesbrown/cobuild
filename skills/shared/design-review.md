@@ -1,5 +1,6 @@
 ---
 name: design-review
+version: "0.1"
 description: Review a design for pipeline readiness. Pre-flight check before submitting to CoBuild. Trigger on "review design", "design review", "is this ready".
 summary: >-
   Pre-flight check before submitting a design to the pipeline. Evaluates the design against readiness criteria, checks project-specific constraints, and reports findings by severity. Offers to submit to CoBuild when everything passes.

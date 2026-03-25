@@ -1,5 +1,6 @@
 ---
 name: playbook
+version: "0.1"
 description: Pipeline orchestration decision tree. Trigger when a pipeline event occurs — phase transition, gate result, task completion, or health check.
 summary: >-
   The orchestrator's decision tree. Reads the pipeline state, determines what action to take (run a gate, dispatch tasks, process reviews, handle escalations), takes one action, and exits. The next orchestrator picks up where this one left off.
