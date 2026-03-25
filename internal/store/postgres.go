@@ -156,6 +156,44 @@ func (s *PostgresStore) UpdateRunStatus(ctx context.Context, designID, status st
 	return nil
 }
 
+func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			pr.design_id,
+			pr.current_phase,
+			pr.status,
+			COALESCE(tc.total, 0),
+			COALESCE(tc.done, 0),
+			COALESCE(tc.blocked, 0),
+			pr.updated_at
+		FROM pipeline_runs pr
+		LEFT JOIN (
+			SELECT pipeline_id,
+				COUNT(*) as total,
+				COUNT(*) FILTER (WHERE status = 'completed') as done,
+				COUNT(*) FILTER (WHERE status = 'failed') as blocked
+			FROM pipeline_tasks
+			GROUP BY pipeline_id
+		) tc ON tc.pipeline_id = pr.id
+		WHERE ($1 = '' OR pr.project = $1)
+		ORDER BY pr.updated_at DESC
+	`, project)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []PipelineRunStatus
+	for rows.Next() {
+		var r PipelineRunStatus
+		if err := rows.Scan(&r.DesignID, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
 // --- Pipeline Gates ---
 
 func (s *PostgresStore) RecordGate(ctx context.Context, input PipelineGateInput) (*PipelineGateRecord, error) {
@@ -275,6 +313,16 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+func (s *PostgresStore) UpdateTaskStatus(ctx context.Context, taskShardID, status string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_tasks SET status = $2, updated_at = NOW() WHERE task_shard_id = $1
+	`, taskShardID, status)
+	if err != nil {
+		return fmt.Errorf("update task status: %w", err)
+	}
+	return nil
 }
 
 // --- Insights ---

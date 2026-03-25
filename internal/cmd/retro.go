@@ -20,24 +20,24 @@ In autonomous mode, the poller triggers this automatically.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if cbClient == nil {
-			return fmt.Errorf("no client configured")
+		if cbStore == nil {
+			return fmt.Errorf("no store configured (need database connection)")
 		}
 
 		designID := args[0]
 
 		// Get pipeline state
-		run, err := cbClient.GetPipelineRun(ctx, designID)
+		run, err := cbStore.GetRun(ctx, designID)
 		if err != nil {
 			return fmt.Errorf("get pipeline: %w", err)
 		}
 
 		if run.CurrentPhase != "done" && run.CurrentPhase != "review" {
-			fmt.Printf("Warning: pipeline is in %q phase (expected: done). Proceeding anyway.\n", run.CurrentPhase)
+			fmt.Printf("Warning: pipeline is in %q phase (expected: done).\n", run.CurrentPhase)
 		}
 
 		// Gather data
-		gates, err := cbClient.GetGateHistory(ctx, designID)
+		gates, err := cbStore.GetGateHistory(ctx, designID)
 		if err != nil {
 			return fmt.Errorf("get gate history: %w", err)
 		}
@@ -88,7 +88,7 @@ In autonomous mode, the poller triggers this automatically.`,
 			fmt.Printf("\nRetrospective recorded: %s\n", result.ReviewShardID)
 
 			// Mark pipeline as completed
-			if err := cbClient.UpdatePipelineRunStatus(ctx, designID, "completed"); err != nil {
+			if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
 				fmt.Printf("Warning: failed to mark pipeline as completed: %v\n", err)
 			} else {
 				fmt.Println("Pipeline marked as completed.")

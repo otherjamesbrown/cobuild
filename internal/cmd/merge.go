@@ -107,7 +107,9 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 				if allDone {
 					fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
 					if cbClient != nil {
-						_ = cbClient.UpdatePipelineRunPhase(ctx, designID, "done")
+						if cbStore != nil {
+						_ = cbStore.UpdateRunPhase(ctx, designID, "done")
+					}
 					}
 				}
 			}

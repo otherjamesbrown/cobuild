@@ -56,6 +56,17 @@ type PipelineGateInput struct {
 	ReviewShardID  *string
 }
 
+// PipelineRunStatus is an enriched view of a pipeline run for the status command.
+type PipelineRunStatus struct {
+	DesignID     string    `json:"design_id"`
+	Phase        string    `json:"phase"`
+	Status       string    `json:"status"`
+	TaskTotal    int       `json:"task_total"`
+	TaskDone     int       `json:"task_done"`
+	TaskBlocked  int       `json:"task_blocked"`
+	LastProgress time.Time `json:"last_progress"`
+}
+
 // GatePassRate holds first-try pass stats for a gate.
 type GatePassRate struct {
 	GateName     string  `json:"gate_name"`

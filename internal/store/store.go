@@ -18,6 +18,7 @@ type Store interface {
 
 	CreateRun(ctx context.Context, designID, project, phase string) (*PipelineRun, error)
 	GetRun(ctx context.Context, designID string) (*PipelineRun, error)
+	ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error)
 	UpdateRunPhase(ctx context.Context, designID, phase string) error
 	UpdateRunStatus(ctx context.Context, designID, status string) error
 
@@ -31,6 +32,7 @@ type Store interface {
 
 	AddTask(ctx context.Context, pipelineID, taskShardID, designID string, wave *int) error
 	ListTasks(ctx context.Context, pipelineID string) ([]PipelineTaskRecord, error)
+	UpdateTaskStatus(ctx context.Context, taskShardID, status string) error
 
 	// --- Insights (read-only aggregates) ---
 

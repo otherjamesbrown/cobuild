@@ -13,11 +13,11 @@ var statusCmd = &cobra.Command{
 	Short: "Show all active pipelines and their state",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if cbClient == nil {
-			return fmt.Errorf("no client configured (need database connection)")
+		if cbStore == nil {
+			return fmt.Errorf("no store configured (need database connection)")
 		}
 
-		runs, err := cbClient.ListPipelineRuns(ctx)
+		runs, err := cbStore.ListRuns(ctx, projectName)
 		if err != nil {
 			return fmt.Errorf("list pipeline runs: %w", err)
 		}
