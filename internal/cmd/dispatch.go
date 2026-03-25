@@ -194,13 +194,20 @@ var dispatchCmd = &cobra.Command{
 
 		completeCmd := fmt.Sprintf("cobuild complete '%s'", strings.ReplaceAll(taskID, "'", "'\\''"))
 
-		shellCmd := fmt.Sprintf("cd '%s' && COBUILD_DISPATCH=true cat '%s' | claude %s ; rm -f '%s' ; %s",
+		// Write a dispatch script — tmux new-window can't handle pipes/stdin
+		// The prompt must be a positional argument, not piped via stdin
+		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
+		scriptContent := fmt.Sprintf("#!/bin/bash\ncd '%s'\nexport COBUILD_DISPATCH=true\nPROMPT=$(cat '%s')\nclaude %s \"$PROMPT\"\nrm -f '%s' '%s'\n%s\n",
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			claudeFlags,
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
+			strings.ReplaceAll(scriptPath, "'", "'\\''"),
 			completeCmd)
-		tmuxArgs := []string{"new-window", "-n", taskID, "-t", tmuxSession, shellCmd}
+		if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+			return fmt.Errorf("failed to write dispatch script: %v", err)
+		}
+		tmuxArgs := []string{"new-window", "-n", taskID, "-t", tmuxSession, "bash", scriptPath}
 
 		if dryRun {
 			fmt.Printf("=== Task ===\n")
