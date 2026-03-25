@@ -308,6 +308,64 @@ var decomposeCmd = &cobra.Command{
 	},
 }
 
+var investigateCmd = &cobra.Command{
+	Use:     "investigate <bug-id>",
+	Short:   "Record bug investigation verdict",
+	Args:    cobra.ExactArgs(1),
+	Example: `  cobuild investigate pf-71f0cf --verdict pass --body "Root cause: struct field mismatch..."`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		bugID := args[0]
+
+		verdict, _ := cmd.Flags().GetString("verdict")
+		body, _ := cmd.Flags().GetString("body")
+		bodyFile, _ := cmd.Flags().GetString("body-file")
+
+		if verdict == "" {
+			return fmt.Errorf("--verdict is required")
+		}
+		if verdict != "pass" && verdict != "fail" {
+			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
+		}
+
+		content, err := resolveBody(body, bodyFile)
+		if err != nil {
+			return err
+		}
+
+		repoRoot := findRepoRoot()
+		pCfg, err := config.LoadConfig(repoRoot)
+		if err != nil {
+			pCfg = config.DefaultConfig()
+		}
+
+		var result *GateVerdictResult
+		if cbStore != nil {
+			result, err = RecordGateVerdict(ctx, conn, cbStore, bugID, "investigation", verdict, content, 0, pCfg)
+		} else {
+			return fmt.Errorf("no store configured")
+		}
+		if err != nil {
+			return err
+		}
+
+		if outputFormat == "json" {
+			s, _ := client.FormatJSON(result)
+			fmt.Println(s)
+			return nil
+		}
+
+		fmt.Printf("Recorded investigation for %s\n", result.DesignID)
+		fmt.Printf("  Review shard: %s\n", result.ReviewShardID)
+		fmt.Printf("  Round:        %d\n", result.Round)
+		fmt.Printf("  Verdict:      %s\n", result.Verdict)
+		if result.NextPhase != "" {
+			fmt.Printf("  Phase:        %s → %s\n", result.Phase, result.NextPhase)
+		}
+		return nil
+	},
+}
+
 var auditCmd = &cobra.Command{
 	Use:     "audit <shard-id>",
 	Short:   "Show pipeline audit trail",
@@ -574,6 +632,11 @@ func init() {
 	decomposeCmd.Flags().String("body", "", "Findings text")
 	decomposeCmd.Flags().String("body-file", "", "Read findings from file")
 
+	// investigate flags
+	investigateCmd.Flags().String("verdict", "", "Investigation verdict: 'pass' or 'fail' (required)")
+	investigateCmd.Flags().String("body", "", "Investigation findings text")
+	investigateCmd.Flags().String("body-file", "", "Read findings from file")
+
 	// lock flags
 	lockCmd.Flags().String("session", "", "Session ID for the lock")
 
@@ -588,6 +651,7 @@ func init() {
 	rootCmd.AddCommand(gateCmd)
 	rootCmd.AddCommand(reviewCmd)
 	rootCmd.AddCommand(decomposeCmd)
+	rootCmd.AddCommand(investigateCmd)
 	rootCmd.AddCommand(auditCmd)
 	rootCmd.AddCommand(lockCmd)
 	rootCmd.AddCommand(unlockCmd)

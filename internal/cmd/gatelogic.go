@@ -122,6 +122,8 @@ func RecordGateVerdict(
 				nextPhase = "decompose"
 			case "decomposition-review":
 				nextPhase = "implement"
+			case "investigation":
+				nextPhase = "implement"
 			case "retrospective":
 				nextPhase = "" // done is terminal
 			}
