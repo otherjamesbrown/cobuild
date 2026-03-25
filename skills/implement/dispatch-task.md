@@ -1,58 +1,79 @@
 ---
 name: dispatch-task
-description: Dispatch a task to an implementing agent in an isolated worktree. Trigger when tasks are ready for implementation.
+description: Dispatch tasks to implementing agents and monitor until complete. Trigger when tasks are ready for implementation.
 ---
 
-# Skill: Dispatch Task to Agent
+# Skill: Dispatch Tasks
 
-You are the pipeline orchestrator, dispatching a task to an implementing agent.
+Dispatch implementation tasks to agents in isolated worktrees, then wait for completion.
 
-## Input
-- Task shard ID
-- Design shard ID (parent)
+## Dispatching a single task
 
-## Steps
+```bash
+cobuild dispatch <task-id>
+```
 
-1. Verify task is dispatchable:
-   ```bash
-   cobuild deps <design-id>
-   ```
-   Confirm task ID appears in the "dispatchable" list.
+This creates a worktree from the correct repo (reads `repo` metadata on the task), spawns a Claude session in tmux with the task prompt and design context, and sets the task to `in_progress`.
 
-2. Dispatch the task:
-   ```bash
-   cobuild task dispatch <task-id>
-   ```
-   This creates a worktree, sets status to in_progress, and spawns the agent in tmux.
+## Dispatching a wave
 
-3. Update pipeline:
-   ```bash
-   cobuild pipeline update <design-id> --add-task <task-id>
-   ```
+For multiple tasks with no dependencies between them:
 
-4. If multiple tasks are ready, dispatch up to 3 concurrently:
-   ```bash
-   cobuild task dispatch-all <design-id> --max 3
-   ```
+```bash
+cobuild dispatch-wave <design-id>
+```
 
-## Agent prompt includes
+This finds all tasks whose blockers are satisfied and dispatches them up to `max_concurrent`.
 
-The dispatch command automatically provides:
-- Task shard content (scope, acceptance criteria, code locations)
+## Waiting for completion
+
+After dispatching, wait for all tasks to finish:
+
+```bash
+# Wait for specific tasks
+cobuild wait <task-id-1> <task-id-2>
+
+# Wait with custom interval and timeout
+cobuild wait <task-id-1> <task-id-2> --interval 30 --timeout 1h
+```
+
+This polls task status every 60 seconds (default) and exits when all tasks reach `needs-review`. If a task is labelled `blocked`, the wait aborts immediately.
+
+## Full wave dispatch + wait pattern
+
+```bash
+# Dispatch all ready tasks
+cobuild dispatch-wave <design-id>
+
+# Wait for them to complete
+cobuild wait <task-id-1> <task-id-2> <task-id-3>
+
+# When done, check if next wave is ready
+cobuild dispatch-wave <design-id>
+```
+
+Repeat until `dispatch-wave` reports "All tasks complete."
+
+## What the dispatched agent does
+
+The agent receives a prompt containing:
+- Task spec (scope, acceptance criteria, code locations)
 - Parent design context
-- Working directory set to the task worktree
+- Build/test commands
+- Instructions to run `cobuild complete <task-id>` as its last action
 
-## On completion
+`cobuild complete` handles: commit remaining changes, push branch, create PR, append evidence to the task, mark `needs-review`.
 
-The agent will:
-1. Implement the task
-2. Run tests
-3. Append evidence to the task shard
-4. Create a PR: `gh pr create`
-5. Mark needs-review: `cobuild wi status <task-id> needs-review`
+## Multi-repo tasks
 
-The poller detects needs-review and spawns the orchestrator for Phase 4.
+Tasks can target a specific repo by setting `repo` metadata during decomposition. The dispatch command reads this metadata and creates the worktree from the correct repo root.
+
+If no `repo` metadata is set, the worktree is created from the current project's registered repo.
 
 ## Gotchas
 
+- Dispatched agents run in interactive mode (not `-p` mode) so they can iterate on edits and tests
+- The agent's tmux window is named after the task ID — check `tmux list-windows` to see active agents
+- If an agent exits without running `cobuild complete`, the task stays `in_progress` — use the stall-check skill
+- `cobuild wait` blocks the calling session — use it in the orchestrating agent, not in a dispatch agent
 <!-- Add failure patterns here as they're discovered -->
