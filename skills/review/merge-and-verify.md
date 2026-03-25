@@ -1,6 +1,8 @@
 ---
 name: merge-and-verify
 description: Merge an approved PR, run post-merge tests, and auto-revert on failure. Trigger after a task PR is approved.
+summary: >-
+  Merges an approved PR, runs post-merge tests on main, and auto-reverts if tests fail. After merging, checks whether all tasks for the design are done — if so, advances the pipeline to the done phase.
 ---
 
 # Skill: Merge PR and Verify

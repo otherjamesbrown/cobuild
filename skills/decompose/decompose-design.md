@@ -1,6 +1,8 @@
 ---
 name: decompose-design
 description: Break a design into implementable tasks with dependency ordering and wave assignment. Trigger after the readiness gate passes and the pipeline advances to the decompose phase.
+summary: >-
+  Breaks a design into small, independent tasks that agents can complete in a single session. Groups tasks into waves based on dependencies — wave 1 runs first, wave 2 depends on wave 1. Each task gets clear scope, acceptance criteria, and code locations.
 ---
 
 # Skill: Decompose Design into Tasks

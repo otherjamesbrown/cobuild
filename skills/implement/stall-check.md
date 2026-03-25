@@ -1,6 +1,8 @@
 ---
 name: stall-check
 description: Diagnose a task that may be stalled, crashed, or rate-limited. Trigger on health check, stall detection, or agent crash.
+summary: >-
+  Detects when a dispatched agent has stalled, crashed, or been rate-limited. Checks the tmux session, diagnoses the problem, and either re-dispatches, escalates to the developer, or waits for recovery.
 ---
 
 # Skill: Agent Health Check

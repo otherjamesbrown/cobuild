@@ -1,6 +1,8 @@
 ---
 name: create-design
 description: Create a well-formed design work item that will pass the readiness review gate. Trigger on "create design", "write a design", "new design".
+summary: >-
+  Template for writing designs that pass the readiness review. Defines the required sections: problem, user, acceptance criteria, scope boundaries, technical approach, and code locations. Designs that skip sections get sent back.
 ---
 
 # Skill: Create a Design

@@ -1,6 +1,8 @@
 ---
 name: dispatch-task
 description: Dispatch tasks to implementing agents and monitor until complete. Trigger when tasks are ready for implementation.
+summary: >-
+  Sends tasks to implementing agents. Creates an isolated git worktree for each task, spawns a Claude session with the task prompt and design context, and monitors until complete. Handles parallel dispatch within concurrency limits.
 ---
 
 # Skill: Dispatch Tasks

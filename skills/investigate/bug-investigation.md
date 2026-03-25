@@ -1,6 +1,8 @@
 ---
 name: bug-investigation
 description: Investigate a bug to identify root cause, affected areas, and produce a fix spec. Trigger when a bug enters the pipeline or when investigation is needed before implementation.
+summary: >-
+  Investigates a bug without fixing it. Reads the bug report, reproduces the issue, traces the root cause, maps affected files, and assesses why this area is fragile. Produces a fix specification that tells an implementing agent exactly what to change.
 ---
 
 # Skill: Bug Investigation

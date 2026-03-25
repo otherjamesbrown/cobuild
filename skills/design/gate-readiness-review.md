@@ -1,6 +1,8 @@
 ---
 name: gate-readiness-review
 description: Evaluate whether a design is ready for decomposition. Trigger on design review, readiness gate, or when a design reaches the design phase.
+summary: >-
+  Is this design ready to build? Checks 5 criteria: is the problem clear, who's it for, how will we know it works, what's out of scope, and is it linked to an outcome. Also checks whether an agent could implement it without asking questions.
 ---
 
 # Skill: Design Readiness Check

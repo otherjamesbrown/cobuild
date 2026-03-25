@@ -1,6 +1,8 @@
 ---
 name: gate-retrospective
 description: Review a completed pipeline to extract lessons learned and suggest improvements. Trigger when a design reaches the done phase.
+summary: >-
+  Reviews the entire pipeline run after completion. Looks at how many gate rounds it took, which tasks needed intervention, what went wrong, and what to improve. Produces suggested changes to skills and config based on real data.
 ---
 
 # Skill: Pipeline Retrospective
