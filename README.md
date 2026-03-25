@@ -240,16 +240,55 @@ cobuild improve --apply   # auto-apply non-skill changes
 |---------|---------|
 | `cobuild setup` | Register repo, create config |
 | `cobuild init-skills` | Copy default skills into repo |
-| `cobuild init <id>` | Start pipeline on a shard |
+| `cobuild init <id>` | Start pipeline on a design |
 | `cobuild gate <id> <name>` | Record gate verdict |
 | `cobuild review <id>` | Phase 1 readiness review |
 | `cobuild decompose <id>` | Phase 2 decomposition gate |
 | `cobuild dispatch <id>` | Dispatch agent to implement task |
+| `cobuild dispatch-wave <id>` | Dispatch all ready tasks for a design |
+| `cobuild wait <id> [id...]` | Wait for tasks to reach target status |
 | `cobuild complete <id>` | Post-agent completion (PR, evidence) |
+| `cobuild merge <id>` | Merge approved PR, close task |
+| `cobuild retro <id>` | Run pipeline retrospective |
+| `cobuild status` | Show all active pipelines |
 | `cobuild audit <id>` | Show gate timeline |
+| `cobuild wi show/list/links` | Work item operations (any connector) |
 | `cobuild poller` | Run trigger + health poller |
 | `cobuild insights` | Execution analysis |
 | `cobuild improve` | Suggest pipeline improvements |
+
+## Tips
+
+### Run manually before going autonomous
+
+Don't jump straight to `cobuild poller`. Step through the pipeline manually for your first few designs:
+
+```bash
+/design-review <id>          # review and submit
+cobuild gate <id> ...        # step through gates
+cobuild dispatch <id>        # dispatch tasks one at a time
+cobuild wait <id>            # watch agents work
+cobuild merge <id>           # merge PRs yourself
+cobuild retro <id>           # review what happened
+```
+
+Every project has quirks — migration numbering conventions, architectural principles, deploy procedures, test patterns — that the default skills don't know about. Manual runs surface these as concrete issues that you can feed back into the skills.
+
+### Use retrospectives to improve the pipeline
+
+After each design completes, `cobuild retro <id>` generates a retrospective. Read it. The most valuable sections are **What Failed** and **Suggested Changes** — they tell you exactly which skills to update.
+
+Common patterns from early runs:
+- **Agents hardcode values** that should be configurable → add explicit "read from config" instructions to task specs during decomposition
+- **Migration number collisions** in parallel tasks → assign numbers explicitly in the decomposition, don't let agents pick
+- **Design review rates things too leniently** → strengthen severity rules in the design-reviewer for your project's constraints
+- **Agents produce empty PRs** → check dispatch flags (`claude_flags` in pipeline.yaml) and worktree configuration
+
+Each retrospective finding should become either a skill gotcha, a decompose guideline, or a project-specific review rule. After 3-4 manual runs, the skills will be tuned for your project and autonomous mode will work reliably.
+
+### Keep skills lean, add gotchas over time
+
+Don't try to write perfect skills upfront. Start with the defaults, run the pipeline, and add a gotcha line each time an agent trips on something. The Gotchas section is the highest-value part of any skill — it's the accumulated knowledge of what goes wrong.
 
 ## License
 
