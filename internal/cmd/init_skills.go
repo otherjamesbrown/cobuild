@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -12,28 +13,38 @@ import (
 )
 
 var defaultSkills = []string{
-	"shared/create-design.md",
-	"shared/playbook.md",
 	"design/gate-readiness-review.md",
 	"design/implementability.md",
+	"decompose/decompose-design.md",
+	"investigate/bug-investigation.md",
 	"implement/dispatch-task.md",
 	"implement/stall-check.md",
 	"review/gate-review-pr.md",
 	"review/gate-process-review.md",
 	"review/merge-and-verify.md",
 	"done/gate-retrospective.md",
+	"shared/playbook.md",
+	"shared/create-design.md",
+	"shared/design-review.md",
 }
 
 var initSkillsCmd = &cobra.Command{
 	Use:   "init-skills",
-	Short: "Copy default pipeline skills into the repo",
+	Short: "Copy or update default pipeline skills in the repo",
 	Long: `Copies default skill files into the repo's skills directory.
-Skills can then be customized per-repo. Existing files are not overwritten
-unless --force is specified.`,
-	Example: `  cobuild init-skills
-  cobuild init-skills --force`,
+
+With --update: refreshes skills from CoBuild defaults while preserving
+your customizations (Gotchas sections). Use this after updating CoBuild
+to get new skills and skill improvements.
+
+Existing files are not overwritten unless --force or --update is specified.`,
+	Example: `  cobuild init-skills              # first-time copy
+  cobuild init-skills --update     # refresh, preserve gotchas
+  cobuild init-skills --force      # overwrite everything
+  cobuild init-skills --dry-run    # show what would change`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
+		update, _ := cmd.Flags().GetBool("update")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		repoRoot, err := config.RepoForProject(projectName)
@@ -53,36 +64,45 @@ unless --force is specified.`,
 
 		destDir := filepath.Join(repoRoot, skillsDir)
 
+		// Source directories — check cobuild repo, global, context-palace
 		home, _ := os.UserHomeDir()
 		sourceDirs := []string{
 			filepath.Join(home, ".cobuild", "skills"),
 		}
-		cpRoot, _ := config.RepoForProject("context-palace")
-		if cpRoot != "" {
-			sourceDirs = append(sourceDirs, filepath.Join(cpRoot, "skills"))
+		// Add cobuild repo itself as source (for development)
+		cobuildRepo, _ := config.RepoForProject("cobuild")
+		if cobuildRepo != "" {
+			sourceDirs = append([]string{filepath.Join(cobuildRepo, "skills")}, sourceDirs...)
 		}
 
 		if dryRun {
 			fmt.Printf("Would create: %s/\n", destDir)
+			fmt.Printf("Source dirs: %s\n", strings.Join(sourceDirs, ", "))
 		} else {
 			os.MkdirAll(destDir, 0755)
 		}
 
 		copied := 0
+		updated := 0
 		skipped := 0
+		added := 0
+
 		for _, skill := range defaultSkills {
 			destPath := filepath.Join(destDir, skill)
-
-			if !force {
-				if _, err := os.Stat(destPath); err == nil {
-					if dryRun {
-						fmt.Printf("  SKIP  %s (exists)\n", skill)
-					}
-					skipped++
-					continue
-				}
+			exists := false
+			if _, err := os.Stat(destPath); err == nil {
+				exists = true
 			}
 
+			if exists && !force && !update {
+				if dryRun {
+					fmt.Printf("  SKIP    %s (exists)\n", skill)
+				}
+				skipped++
+				continue
+			}
+
+			// Find source
 			srcPath := ""
 			for _, dir := range sourceDirs {
 				candidate := filepath.Join(dir, skill)
@@ -93,25 +113,91 @@ unless --force is specified.`,
 			}
 
 			if srcPath == "" {
-				fmt.Printf("  MISS  %s (not found in source dirs)\n", skill)
+				fmt.Printf("  MISS    %s (not found in source dirs)\n", skill)
 				continue
 			}
 
-			if dryRun {
-				fmt.Printf("  COPY  %s -> %s\n", srcPath, destPath)
-			} else {
-				if err := copyFile(srcPath, destPath); err != nil {
-					fmt.Printf("  FAIL  %s: %v\n", skill, err)
-					continue
+			if exists && update {
+				// Preserve gotchas section from existing file
+				gotchas := extractGotchas(destPath)
+				if dryRun {
+					fmt.Printf("  UPDATE  %s", skill)
+					if gotchas != "" {
+						fmt.Printf(" (preserving %d chars of gotchas)", len(gotchas))
+					}
+					fmt.Println()
+				} else {
+					if err := copyFile(srcPath, destPath); err != nil {
+						fmt.Printf("  FAIL    %s: %v\n", skill, err)
+						continue
+					}
+					if gotchas != "" {
+						replaceGotchas(destPath, gotchas)
+					}
+					fmt.Printf("  UPDATE  %s\n", skill)
 				}
-				fmt.Printf("  COPY  %s\n", skill)
+				updated++
+			} else {
+				// Fresh copy
+				if dryRun {
+					fmt.Printf("  COPY    %s\n", skill)
+				} else {
+					os.MkdirAll(filepath.Dir(destPath), 0755)
+					if err := copyFile(srcPath, destPath); err != nil {
+						fmt.Printf("  FAIL    %s: %v\n", skill, err)
+						continue
+					}
+					fmt.Printf("  COPY    %s\n", skill)
+				}
+				if exists {
+					copied++
+				} else {
+					added++
+				}
 			}
-			copied++
 		}
 
-		fmt.Printf("\n%d copied, %d skipped (use --force to overwrite)\n", copied, skipped)
+		fmt.Printf("\n%d copied, %d updated, %d added, %d skipped\n", copied, updated, added, skipped)
+		if skipped > 0 && !update && !force {
+			fmt.Println("Use --update to refresh skills (preserves gotchas) or --force to overwrite.")
+		}
 		return nil
 	},
+}
+
+// extractGotchas reads a skill file and returns the Gotchas section content.
+func extractGotchas(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	idx := strings.Index(content, "## Gotchas")
+	if idx == -1 {
+		return ""
+	}
+	return content[idx:]
+}
+
+// replaceGotchas replaces the Gotchas section in a skill file with preserved content.
+func replaceGotchas(path, gotchas string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	idx := strings.Index(content, "## Gotchas")
+	if idx == -1 {
+		// Append gotchas if the new default doesn't have a gotchas section
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += "\n" + gotchas
+	} else {
+		// Replace the gotchas section
+		content = content[:idx] + gotchas
+	}
+	os.WriteFile(path, []byte(content), 0644)
 }
 
 func copyFile(src, dst string) error {
@@ -121,6 +207,7 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
+	os.MkdirAll(filepath.Dir(dst), 0755)
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -133,6 +220,7 @@ func copyFile(src, dst string) error {
 
 func init() {
 	initSkillsCmd.Flags().Bool("force", false, "Overwrite existing skill files")
-	initSkillsCmd.Flags().Bool("dry-run", false, "Show what would be copied")
+	initSkillsCmd.Flags().Bool("update", false, "Refresh skills from defaults, preserving Gotchas sections")
+	initSkillsCmd.Flags().Bool("dry-run", false, "Show what would be changed")
 	rootCmd.AddCommand(initSkillsCmd)
 }
