@@ -240,7 +240,11 @@ Only deploys services whose trigger_paths match the changed files.`,
 	},
 }
 
-// getDesignChangedFiles returns all files changed by a design's tasks (from merged commits on main).
+// getDesignChangedFiles returns all files changed by a design's tasks.
+// Tries three strategies:
+// 1. Branch diff (if branch still exists and hasn't been merged)
+// 2. Merge commit on main (find commit with task ID in message)
+// 3. PR metadata (if available, get files from GitHub)
 func getDesignChangedFiles(ctx context.Context, repoRoot, designID string) ([]string, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("no connector")
@@ -258,18 +262,49 @@ func getDesignChangedFiles(ctx context.Context, repoRoot, designID string) ([]st
 			continue
 		}
 
-		// Try to get files from the task's branch diff
-		branch := e.ItemID
-		out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--name-only", "main.."+branch).CombinedOutput()
-		if err != nil {
-			// Branch may be deleted after merge — try PR metadata
-			continue
-		}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, ".cobuild/") {
-				fileSet[line] = true
+		taskID := e.ItemID
+		var files []string
+
+		// Strategy 1: find merge commit on main containing the task ID
+		// This is the most reliable — works after merge when branches are stale
+		{
+			// Search git log for commits mentioning this task ID
+			logOut, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "log", "--all", "--grep="+taskID, "--format=%H", "-5").CombinedOutput()
+			if err == nil {
+				for _, hash := range strings.Split(strings.TrimSpace(string(logOut)), "\n") {
+					hash = strings.TrimSpace(hash)
+					if hash == "" {
+						continue
+					}
+					// Get files changed in this commit
+					diffOut, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff-tree", "--no-commit-id", "-r", "--name-only", hash).CombinedOutput()
+					if err == nil {
+						for _, line := range strings.Split(strings.TrimSpace(string(diffOut)), "\n") {
+							line = strings.TrimSpace(line)
+							if line != "" && !strings.HasPrefix(line, ".cobuild/") {
+								files = append(files, line)
+							}
+						}
+					}
+				}
 			}
+		}
+
+		// Strategy 2: branch diff fallback (works before merge)
+		if len(files) == 0 {
+			out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--name-only", "main.."+taskID).CombinedOutput()
+			if err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" && !strings.HasPrefix(line, ".cobuild/") {
+						files = append(files, line)
+					}
+				}
+			}
+		}
+
+		for _, f := range files {
+			fileSet[f] = true
 		}
 	}
 
