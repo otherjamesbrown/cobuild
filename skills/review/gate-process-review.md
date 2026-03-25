@@ -135,4 +135,8 @@ cobuild wi append <task-id> --body "## Review Feedback — Round N
 
 ## Gotchas
 
+- **Check implementations against project-specific principles, not just the PR diff.** An agent may introduce hardcoded values that violate "all config in DB" principles even if the design didn't specify them. If the project has architectural constraints, verify the implementation honours them.
+- Hardcoded thresholds, timeouts, or limits that should be DB-driven are HIGH findings, not LOW. If they violate an explicit architectural principle, they are CRITICAL.
+<!-- Add failure patterns here as they're discovered -->
+
 <!-- Add failure patterns here as they're discovered -->
