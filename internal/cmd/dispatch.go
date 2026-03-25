@@ -194,10 +194,10 @@ var dispatchCmd = &cobra.Command{
 
 		completeCmd := fmt.Sprintf("cobuild complete '%s'", strings.ReplaceAll(taskID, "'", "'\\''"))
 
-		shellCmd := fmt.Sprintf("cd '%s' && COBUILD_DISPATCH=true claude %s \"$(cat '%s')\" ; rm -f '%s' ; %s",
+		shellCmd := fmt.Sprintf("cd '%s' && COBUILD_DISPATCH=true cat '%s' | claude %s ; rm -f '%s' ; %s",
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
-			claudeFlags,
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
+			claudeFlags,
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			completeCmd)
 		tmuxArgs := []string{"new-window", "-n", taskID, "-t", tmuxSession, shellCmd}
