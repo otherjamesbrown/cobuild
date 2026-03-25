@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -83,8 +84,9 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		}
 
 		// Clean up worktree
-		if cbClient != nil {
-			if err := cbClient.RemoveWorktree(ctx, taskID); err != nil {
+		wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+		if wtPath != "" {
+			if err := worktree.Remove(ctx, wtPath); err != nil {
 				fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
 			} else {
 				fmt.Printf("  Worktree cleaned up.\n")

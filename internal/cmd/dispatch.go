@@ -11,6 +11,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +73,11 @@ var dispatchCmd = &cobra.Command{
 					return fmt.Errorf("no repo registered for project %q — run cobuild setup first", projectName)
 				}
 				var wtErr error
-				worktreePath, wtErr = cbClient.CreateWorktree(ctx, taskID, repoRootForWT, projectName)
+				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, projectName)
+				if wtErr == nil {
+					// Record path in work item metadata
+					conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath)
+				}
 				if wtErr != nil {
 					return fmt.Errorf("failed to create worktree: %v", wtErr)
 				}

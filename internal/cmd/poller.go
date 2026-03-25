@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -331,7 +332,7 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 		if conn != nil {
 			_ = conn.UpdateStatus(ctx, task.ID, "open")
 		}
-		_ = cbClient.RemoveWorktree(ctx, task.ID)
+		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, wtPath) }
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	case strings.HasPrefix(action, "skill:"):
 		if conn != nil {
@@ -376,7 +377,7 @@ func handleStall(ctx context.Context, task client.ShardSummary, mon config.Monit
 		if conn != nil {
 			_ = conn.UpdateStatus(ctx, task.ID, "open")
 		}
-		_ = cbClient.RemoveWorktree(ctx, task.ID)
+		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, wtPath) }
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	}
 }
