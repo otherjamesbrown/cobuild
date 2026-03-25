@@ -73,15 +73,16 @@ workflows:
 # --- Review strategy ---
 review:
     strategy: external                    # external (e.g., Gemini) or agent
-    provider: gemini                      # only for external strategy
-    ci_mode: pr-only                      # ignore | all-pass | pr-only
-    wait_for_ci: true                     # wait for CI checks before reviewing
+    external_reviewers: [gemini]          # GitHub bot usernames (external strategy only)
+    ci:
+        mode: pr-only                     # ignore | all-pass | pr-only
+        wait: true                        # wait for CI checks before reviewing
 
 # --- Dispatch ---
 # How agents are spawned for implementation tasks.
 dispatch:
     max_concurrent: 3                     # max agents running at once
-    model: sonnet                         # model for implementing agents
+    default_model: sonnet                 # model for implementing agents
     # claude_flags: ""                    # override claude CLI flags (default: interactive + skip permissions)
     # tmux_session: ""                    # override tmux session name (default: cobuild-<project>)
 

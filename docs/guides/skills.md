@@ -38,14 +38,14 @@ This means you can override any default skill by placing a file with the same na
 
 ```yaml
 phases:
-    - name: design
-      gates:
-          - name: readiness-review
-            skill: design/gate-readiness-review
-    - name: done
-      gates:
-          - name: retrospective
-            skill: done/gate-retrospective
+    design:
+        gates:
+            - name: readiness-review
+              skill: design/gate-readiness-review
+    done:
+        gates:
+            - name: retrospective
+              skill: done/gate-retrospective
 ```
 
 ### Overriding a default skill
@@ -71,6 +71,8 @@ Skills are organized by phase. Gate skills are prefixed with `gate-`.
 | `shared/playbook.md` | — | Orchestrator decision trees and phase rules |
 | `design/gate-readiness-review.md` | design | Gate: readiness + implementability evaluation |
 | `design/implementability.md` | design | Implementability criteria reference |
+| `investigate/gate-investigation.md` | investigate | Gate: bug investigation and root cause |
+| `decompose/gate-decomposition-review.md` | decompose | Gate: task decomposition review |
 | `implement/dispatch-task.md` | implement | Task dispatch procedure |
 | `implement/stall-check.md` | implement | Stall diagnosis for stuck agents |
 | `review/gate-review-pr.md` | review | Gate: PR review (agent strategy) |
@@ -82,6 +84,7 @@ Skills are organized by phase. Gate skills are prefixed with `gate-`.
 
 ```bash
 cobuild init-skills --force      # overwrite existing skills
+cobuild init-skills --update     # update skills, overwriting existing files
 cobuild init-skills --dry-run    # show what would be copied
 ```
 
@@ -194,11 +197,11 @@ Then reference it in config:
 
 ```yaml
 phases:
-    - name: security
-      gates:
-          - name: security-review
-            skill: security/gate-security-check
-            model: haiku
+    security:
+        gates:
+            - name: security-review
+              skill: security/gate-security-check
+              model: haiku
 ```
 
 ## Troubleshooting

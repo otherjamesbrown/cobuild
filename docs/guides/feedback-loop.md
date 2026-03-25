@@ -78,7 +78,6 @@ Detected patterns and their suggestions:
 | Missing model configuration | No per-phase models | Add haiku for judgment, sonnet for creation |
 | No monitoring configured | Empty `monitoring:` section | Add health check config with defaults |
 | Missing integration test gate | No `requires_label` on decompose gate | Add `requires_label: integration-test` |
-| Missing dispatch guard | No `COBUILD_DISPATCH` check in session hook | Add dispatch environment check |
 | Skills not initialized | No skills directory | Suggest `cobuild init-skills` |
 
 The `--apply` flag auto-applies config and process changes. Skill changes always require human review because they affect agent behavior.
@@ -121,11 +120,11 @@ The feedback loop requires no special config -- it reads from existing pipeline 
 
 ```yaml
 phases:
-    - name: done
-      gates:
-          - name: retrospective
-            skill: done/gate-retrospective
-            model: haiku
+    done:
+        gates:
+            - name: retrospective
+              skill: done/gate-retrospective
+              model: haiku
 ```
 
 ### Project filtering

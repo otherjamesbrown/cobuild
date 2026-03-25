@@ -67,7 +67,7 @@ CoBuild is newly extracted and needs work. Focus areas in priority order:
 CoBuild still depends on Context Palace's database for storage. It should work independently:
 - Own database (SQLite for single-user, Postgres for teams) OR pluggable backend
 - Own shard model (or thin adapter over CP)
-- ~~Remove all `cxp` shell-outs — use native Go calls~~ **DONE** — all shard operations are now native
+- ~~Remove all `cxp` shell-outs from pipeline logic~~ **DONE** — all shard operations are now native via CPConnector (which shells out to `cxp` CLI with `-o json`)
 
 ### 2. ~~Rename `.cxp/` to `.cobuild/`~~ **DONE**
 Config directory, registry file, env vars, and all references updated. Legacy `.cxp/` paths are still supported as fallback.
@@ -112,6 +112,8 @@ internal/client/              # legacy database layer (being migrated to connect
 internal/config/              # config types + context assembly
 internal/config/config.go     # Config struct, merge, resolve
 internal/config/context.go    # context layer assembly for CLAUDE.md
+internal/merge/               # merge logic for PRs and dependent branches
+internal/worktree/            # git worktree lifecycle management
 skills/                       # default skill files (copied to repos via init-skills)
 migrations/                   # database migrations
 research/                     # design docs and research
@@ -175,7 +177,7 @@ connectors:
     work_items:
         type: context-palace    # or "beads", "jira"
 ```
-Implementations: `CPConnector` (`cxp` CLI + JSON), `BeadsConnector` (`bd` CLI + JSON), future `JiraConnector` (REST API).
+Implementations: `CPConnector` (shells out to `cxp` CLI with `-o json`), `BeadsConnector` (shells out to `bd` CLI with `--json`), future `JiraConnector` (REST API).
 
 ## Principles
 

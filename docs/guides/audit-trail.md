@@ -7,7 +7,7 @@ Every pipeline decision is recorded with structured data. Gate verdicts, review 
 ```bash
 cobuild audit <design-id>       # show full gate timeline
 cobuild show <design-id>        # pipeline state + metadata
-cobuild dashboard               # overview across all active designs
+cobuild status                  # overview across all active designs
 ```
 
 ## How it works
@@ -85,12 +85,12 @@ The audit trail requires no special config -- it is built into every gate comman
 
 ```yaml
 phases:
-    - name: design
-      gates:
-          - name: readiness-review
-            skill: design/gate-readiness-review
-            fields:
-                readiness: {type: int, min: 1, max: 5, required: true}
+    design:
+        gates:
+            - name: readiness-review
+              skill: design/gate-readiness-review
+              fields:
+                  readiness: {type: int, min: 1, max: 5, required: true}
 ```
 
 The `fields` config determines what structured data is captured alongside the review body.

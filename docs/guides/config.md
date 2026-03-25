@@ -38,12 +38,12 @@ Add an entry to the `phases:` list:
 
 ```yaml
 phases:
-    - name: security
-      model: sonnet
-      gates:
-          - name: security-review
-            skill: security/gate-security-check
-            model: haiku
+    security:
+        model: sonnet
+        gates:
+            - name: security-review
+              skill: security/gate-security-check
+              model: haiku
 ```
 
 Then reference the phase in a workflow:
@@ -60,14 +60,14 @@ Gates live inside phases. Add a gate by appending to the phase's `gates:` list:
 
 ```yaml
 phases:
-    - name: decompose
-      model: sonnet
-      gates:
-          - name: decomposition-review
-            requires_label: integration-test
-          - name: architecture-check        # new gate
-            skill: decompose/gate-architecture-check
-            model: haiku
+    decompose:
+        model: sonnet
+        gates:
+            - name: decomposition-review
+              requires_label: integration-test
+            - name: architecture-check        # new gate
+              skill: decompose/gate-architecture-check
+              model: haiku
 ```
 
 ## Configuration
@@ -139,35 +139,35 @@ workflows:
 
 # Pipeline phases with per-phase models and gates
 phases:
-    - name: design
-      model: haiku
-      gates:
-          - name: readiness-review
-            skill: design/gate-readiness-review
-            model: haiku
-            fields:
-                readiness: {type: int, min: 1, max: 5, required: true}
-    - name: decompose
-      model: sonnet
-      gates:
-          - name: decomposition-review
-            requires_label: integration-test
-    - name: implement
-      model: sonnet
-    - name: review
-      model: haiku
-    - name: done
-      gates:
-          - name: retrospective
-            skill: done/gate-retrospective
-            model: haiku
+    design:
+        model: haiku
+        gates:
+            - name: readiness-review
+              skill: design/gate-readiness-review
+              model: haiku
+              fields:
+                  readiness: {type: int, min: 1, max: 5, required: true}
+    decompose:
+        model: sonnet
+        gates:
+            - name: decomposition-review
+              requires_label: integration-test
+    implement:
+        model: sonnet
+    review:
+        model: haiku
+    done:
+        gates:
+            - name: retrospective
+              skill: done/gate-retrospective
+              model: haiku
 
 # Auto-deploy after PR merge
 deploy:
     enabled: true
     services:
         - name: api
-          paths: [services/api/]
+          trigger_paths: [services/api/]
           command: ./scripts/deploy.sh api
 
 # GitHub repository
@@ -209,6 +209,19 @@ fields:
 ```
 
 When a gate has `fields`, the gate command validates the provided values before recording the verdict.
+
+### Phase stall_check
+
+Each phase can reference a skill to run when an agent is detected as stalled:
+
+```yaml
+phases:
+    implement:
+        model: sonnet
+        stall_check: implement/stall-check    # skill to run on stall detection
+```
+
+The `stall_check` field is a skill path (without `.md`). When the monitoring detects a stall in this phase, CoBuild loads and follows the skill to diagnose and recover. If not set, the global `monitoring.actions.on_stall` action applies.
 
 ### Minimal config
 
@@ -260,10 +273,10 @@ deploy:
     enabled: true
     services:
         - name: ai
-          paths: [services/ai/]
+          trigger_paths: [services/ai/]
           command: ./scripts/deploy.sh ai
         - name: worker
-          paths: [services/worker/, pkg/]
+          trigger_paths: [services/worker/, pkg/]
           command: ./scripts/deploy.sh worker
 ```
 

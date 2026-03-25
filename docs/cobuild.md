@@ -34,10 +34,10 @@ Sets `metadata.pipeline` on the design shard with phase=`design`, timestamps, an
 ### 4. Check status
 
 ```bash
-cobuild dashboard                          # high-level overview
+cobuild status                             # high-level overview of all active pipelines
 cobuild show <design-id>    # pipeline state + lock + iterations
 cobuild audit <design-id>   # full gate timeline
-cobuild deps <design-id>              # dependency graph with dispatch plan
+cobuild wi links <design-id>              # dependency graph with dispatch plan
 ```
 
 ### 5. Run the poller
@@ -57,7 +57,7 @@ Workflows define which phases a shard goes through. Configured in `pipeline.yaml
 | Workflow | Phases | Use case |
 |----------|--------|----------|
 | `design` | design, decompose, implement, review, done | Full design-to-delivery |
-| `bug` | implement, review, done | Bug fixes (skip design/decompose) |
+| `bug` | investigate, implement, review, done | Bug fixes (skip design/decompose) |
 | `task` | implement, review, done | Standalone tasks (skip design/decompose) |
 
 The pipeline resolves the workflow from the shard type. If no match, falls back to `design`, then the full phase list.
@@ -87,7 +87,7 @@ Gate config drives this: the `readiness-review` gate references skill `design/ga
 A domain agent breaks the design into tasks:
 
 1. Produce task tree with titles, scope, deps
-2. Create tasks with `cobuild task create --parent <design-id>`
+2. Create tasks with `cobuild wi create --parent <design-id>`
 3. Create an integration test task labeled `integration-test`, blocked by all other tasks
 4. Record verdict:
 
@@ -120,7 +120,7 @@ Two strategies, configured per-repo:
 
 After approval:
 ```bash
-cobuild pr merge <task-id>
+cobuild merge <task-id>
 ```
 
 ### Phase 5: Done
@@ -212,15 +212,15 @@ dispatch:
     default_model: sonnet         # fallback for everything
 
 phases:
-    - name: design
-      model: haiku                # readiness checks are judgment
-      gates:
-          - name: readiness-review
-            model: haiku          # gate can override phase
-    - name: implement
-      model: sonnet               # code writing needs capability
-    - name: review
-      model: haiku                # reviewing is judgment
+    design:
+        model: haiku                # readiness checks are judgment
+        gates:
+            - name: readiness-review
+              model: haiku          # gate can override phase
+    implement:
+        model: sonnet               # code writing needs capability
+    review:
+        model: haiku                # reviewing is judgment
 
 monitoring:
     model: haiku                  # health checks
@@ -354,14 +354,14 @@ deploy:
     enabled: true
     services:
         - name: ai
-          paths: [services/ai/]
+          trigger_paths: [services/ai/]
           command: ./scripts/deploy.sh ai
         - name: worker
-          paths: [services/worker/, pkg/]
+          trigger_paths: [services/worker/, pkg/]
           command: ./scripts/deploy.sh worker
 ```
 
-Each service has a name, a list of path prefixes that trigger it, and a deploy command.
+Each service has a name, a list of path globs that trigger it (`trigger_paths`), and a deploy command.
 
 ---
 
@@ -412,7 +412,6 @@ Analyzes patterns from insights data and proposes specific changes to skills, co
 - Missing model configuration -> add per-phase models
 - No monitoring configured -> add health check config
 - Missing integration test gate requirement -> add `requires_label`
-- Missing `COBUILD_DISPATCH` check in session hook -> add dispatch guard
 - Skills not initialized -> suggest `cobuild init-skills`
 
 `--apply` auto-applies config/process changes (skill changes require human review).
@@ -538,8 +537,10 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild setup` | Register repo, create `.cobuild/pipeline.yaml`, update `~/.cobuild/repos.yaml` |
 | `cobuild poller` | Poll for triggers and health issues, spawn M sessions |
 | `cobuild init-skills` | Copy default skill files into repo |
+| `cobuild init-skills --update` | Update skills, overwriting existing files |
 | `cobuild insights` | Analyze execution data, produce report |
 | `cobuild improve` | Suggest/apply pipeline improvements from patterns |
+| `cobuild status` | Show all active pipelines (outcomes, blockers, agents) |
 
 ### Shard pipeline commands
 
@@ -550,6 +551,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild update <id>` | Update phase, waiting-for, add-task, tokens |
 | `cobuild review <id>` | Phase 1 gate: readiness review (requires `--verdict`, `--readiness`) |
 | `cobuild decompose <id>` | Phase 2 gate: decomposition review (requires `--verdict`) |
+| `cobuild investigate <id>` | Bug investigation gate (requires `--verdict`) |
 | `cobuild gate <id> <gate>` | Generic gate: any named gate (requires `--verdict`) |
 | `cobuild audit <id>` | Show full gate timeline |
 | `cobuild lock <id>` | Acquire pipeline lock |
@@ -561,13 +563,31 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | Command | Purpose |
 |---------|---------|
 | `cobuild dispatch <task-id>` | Spawn agent in tmux with full context |
+| `cobuild dispatch-wave <design-id>` | Dispatch all ready tasks for a design |
+| `cobuild wait <task-id> [id...]` | Wait for tasks to reach target status |
 | `cobuild complete <task-id>` | Post-agent: commit, push, PR, evidence, needs-review |
-| `cobuild deps <design-id>` | Dependency graph with dispatch plan |
-| `cobuild worktree create/show/remove` | Isolated git worktrees |
-| `cobuild evidence` | Structured evidence append |
-| `gh pr create / merge` | PR lifecycle via gh CLI |
-| `cobuild task review / review-verdict` | Review dispatch and verdicts |
-| `cobuild dashboard` | Outcomes, pipelines, blockers, agents |
+| `cobuild merge <task-id>` | Merge approved PR, close task |
+| `cobuild merge-design <design-id>` | Merge all tasks for a design |
+| `cobuild deploy <design-id>` | Run deploy for a merged design |
+| `cobuild investigate <id>` | Bug investigation gate |
+| `cobuild update-agents` | Update agent assignments in pipeline |
+| `cobuild gate <id>` | Generic gate evaluation |
+
+### Work item commands
+
+| Command | Purpose |
+|---------|---------|
+| `cobuild wi show <id>` | Show work item details |
+| `cobuild wi list` | List work items |
+| `cobuild wi links <id>` | Show work item dependencies |
+| `cobuild wi create` | Create a new work item |
+| `cobuild wi append <id>` | Append content to a work item |
+
+### Status commands
+
+| Command | Purpose |
+|---------|---------|
+| `cobuild status` | Outcomes, pipelines, blockers, agents |
 
 ---
 
@@ -664,7 +684,7 @@ deploy:
     enabled: true
     services:
         - name: ai
-          paths: [services/ai/]
+          trigger_paths: [services/ai/]
           command: ./scripts/deploy.sh ai
 
 # GitHub repository
@@ -676,29 +696,29 @@ skills_dir: skills
 
 # Pipeline phases with models and gates
 phases:
-    - name: design
-      model: haiku
-      gates:
-          - name: readiness-review
-            skill: design/gate-readiness-review
-            model: haiku
-            fields:
-                readiness: {type: int, min: 1, max: 5, required: true}
-    - name: decompose
-      model: sonnet
-      gates:
-          - name: decomposition-review
-            skill: decompose/gate-decomposition-review
-            model: haiku
-            requires_label: integration-test
-    - name: implement
-      model: sonnet
-    - name: review
-      model: haiku
-    - name: done
-      gates:
-          - name: retrospective
-            skill: done/gate-retrospective
+    design:
+        model: haiku
+        gates:
+            - name: readiness-review
+              skill: design/gate-readiness-review
+              model: haiku
+              fields:
+                  readiness: {type: int, min: 1, max: 5, required: true}
+    decompose:
+        model: sonnet
+        gates:
+            - name: decomposition-review
+              skill: decompose/gate-decomposition-review
+              model: haiku
+              requires_label: integration-test
+    implement:
+        model: sonnet
+    review:
+        model: haiku
+    done:
+        gates:
+            - name: retrospective
+              skill: done/gate-retrospective
             model: haiku
 ```
 

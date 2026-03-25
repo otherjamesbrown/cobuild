@@ -47,7 +47,7 @@ cobuild poller --all-projects
 | Workflow | Phases | Use case |
 |----------|--------|----------|
 | `design` | design → decompose → implement → review → done | Full design-to-delivery |
-| `bug` | implement → review → done | Bug fixes |
+| `bug` | investigate → implement → review → done | Bug fixes |
 | `task` | implement → review → done | Standalone tasks |
 
 ### Pipeline Phases
@@ -80,26 +80,26 @@ workflows:
         phases: [implement, review, done]
 
 phases:
-    - name: design
-      model: haiku
-      gates:
-          - name: readiness-review
-            skill: design/gate-readiness-review
-            fields:
-                readiness: {type: int, min: 1, max: 5, required: true}
-    - name: decompose
-      model: sonnet
-      gates:
-          - name: decomposition-review
-            requires_label: integration-test
-    - name: implement
-      model: sonnet
-    - name: review
-      model: haiku
-    - name: done
-      gates:
-          - name: retrospective
-            skill: done/gate-retrospective
+    design:
+        model: haiku
+        gates:
+            - name: readiness-review
+              skill: design/gate-readiness-review
+              fields:
+                  readiness: {type: int, min: 1, max: 5, required: true}
+    decompose:
+        model: sonnet
+        gates:
+            - name: decomposition-review
+              requires_label: integration-test
+    implement:
+        model: sonnet
+    review:
+        model: haiku
+    done:
+        gates:
+            - name: retrospective
+              skill: done/gate-retrospective
 
 dispatch:
     max_concurrent: 3
@@ -136,7 +136,7 @@ deploy:
     enabled: true
     services:
         - name: api
-          paths: [services/api/]
+          trigger_paths: [services/api/]
           command: ./scripts/deploy.sh api
 ```
 
@@ -240,19 +240,28 @@ cobuild improve --apply   # auto-apply non-skill changes
 |---------|---------|
 | `cobuild setup` | Register repo, create config |
 | `cobuild init-skills` | Copy default skills into repo |
+| `cobuild init-skills --update` | Update skills, overwriting existing files |
 | `cobuild init <id>` | Start pipeline on a design |
 | `cobuild gate <id> <name>` | Record gate verdict |
 | `cobuild review <id>` | Phase 1 readiness review |
 | `cobuild decompose <id>` | Phase 2 decomposition gate |
+| `cobuild investigate <id>` | Bug investigation gate |
 | `cobuild dispatch <id>` | Dispatch agent to implement task |
 | `cobuild dispatch-wave <id>` | Dispatch all ready tasks for a design |
 | `cobuild wait <id> [id...]` | Wait for tasks to reach target status |
 | `cobuild complete <id>` | Post-agent completion (PR, evidence) |
 | `cobuild merge <id>` | Merge approved PR, close task |
+| `cobuild merge-design <id>` | Merge all tasks for a design |
+| `cobuild deploy <id>` | Run deploy for a merged design |
+| `cobuild update-agents` | Update agent assignment in pipeline |
 | `cobuild retro <id>` | Run pipeline retrospective |
 | `cobuild status` | Show all active pipelines |
 | `cobuild audit <id>` | Show gate timeline |
-| `cobuild wi show/list/links` | Work item operations (any connector) |
+| `cobuild wi show <id>` | Show work item details |
+| `cobuild wi list` | List work items |
+| `cobuild wi links <id>` | Show work item dependencies |
+| `cobuild wi create` | Create a new work item |
+| `cobuild wi append <id>` | Append content to a work item |
 | `cobuild poller` | Run trigger + health poller |
 | `cobuild insights` | Execution analysis |
 | `cobuild improve` | Suggest pipeline improvements |
