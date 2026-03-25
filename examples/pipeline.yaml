@@ -92,16 +92,21 @@ monitoring:
     # crash_check: true                   # check for crashed agent sessions
 
 # --- Deploy ---
-# Optional: auto-deploy after PR merge.
+# Optional: auto-deploy after merge. CoBuild runs your deploy commands,
+# verifies with your smoke tests, and rolls back on failure.
 # deploy:
 #     services:
 #         - name: gateway
 #           trigger_paths: [services/gateway/**, pkg/**]
 #           command: penf deploy gateway
+#           smoke_test: curl -sf https://gateway.example.com/health
+#           rollback: penf rollback gateway
+#           timeout: 5m
 #         - name: worker
 #           trigger_paths: [services/worker/**, pkg/**]
 #           command: penf deploy worker
-#     on_merge: make deploy               # or a simple command for single-service projects
+#           smoke_test: penf health --service worker
+#           rollback: penf rollback worker
 
 # --- Context layers ---
 # What information agents see in each session type.
