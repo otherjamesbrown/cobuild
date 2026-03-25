@@ -65,30 +65,45 @@ var dispatchCmd = &cobra.Command{
 		targetRepo, _ := conn.GetMetadata(ctx, taskID, "repo")
 		repoRootForWT := ""
 		if targetRepo != "" {
-			repoRootForWT, _ = config.RepoForProject(targetRepo)
-		}
-		if repoRootForWT == "" {
+			var repoErr error
+			repoRootForWT, repoErr = config.RepoForProject(targetRepo)
+			if repoErr != nil {
+				return fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %v", targetRepo, repoErr)
+			}
+			fmt.Printf("Target repo: %s (from task metadata: repo=%s)\n", repoRootForWT, targetRepo)
+		} else {
 			repoRootForWT, _ = config.RepoForProject(projectName)
+			if repoRootForWT == "" {
+				repoRootForWT = findRepoRoot()
+			}
+			fmt.Printf("Target repo: %s (from project: %s)\n", repoRootForWT, projectName)
 		}
-		if repoRootForWT == "" {
-			repoRootForWT = findRepoRoot()
-		}
-		fmt.Printf("Target repo: %s\n", repoRootForWT)
 
 		// Get or create worktree
 		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+		if worktreePath != "" {
+			// Verify existing worktree is still valid
+			if err := worktree.Verify(ctx, worktreePath); err != nil {
+				fmt.Printf("Existing worktree invalid (%v), recreating...\n", err)
+				worktree.Remove(ctx, repoRootForWT, worktreePath, taskID)
+				conn.SetMetadata(ctx, taskID, "worktree_path", "")
+				worktreePath = ""
+			}
+		}
 		if worktreePath == "" {
 			if dryRun {
 				fmt.Println("[dry-run] Would create worktree for " + taskID + " in " + repoRootForWT)
 				worktreePath = fmt.Sprintf("~/worktrees/%s/%s", projectName, taskID)
 			} else {
+				fmt.Printf("Creating worktree for %s...\n", taskID)
 				var wtErr error
 				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, projectName)
-				if wtErr == nil {
-					conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath)
-				}
 				if wtErr != nil {
 					return fmt.Errorf("failed to create worktree: %v", wtErr)
+				}
+				fmt.Printf("Worktree created: %s\n", worktreePath)
+				if err := conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath); err != nil {
+					fmt.Printf("Warning: worktree created but failed to record path: %v\n", err)
 				}
 			}
 		}
@@ -197,13 +212,43 @@ var dispatchCmd = &cobra.Command{
 		// Write a dispatch script — tmux new-window can't handle pipes/stdin
 		// The prompt must be a positional argument, not piped via stdin
 		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
-		scriptContent := fmt.Sprintf("#!/bin/bash\ncd '%s'\nexport COBUILD_DISPATCH=true\nPROMPT=$(cat '%s')\nclaude %s \"$PROMPT\"\nrm -f '%s' '%s'\n%s\n",
+		scriptContent := fmt.Sprintf(`#!/bin/bash
+set -e
+cd '%s'
+export COBUILD_DISPATCH=true
+LOGFILE=".cobuild/dispatch.log"
+mkdir -p .cobuild
+echo "[$(date)] Dispatch starting" >> "$LOGFILE"
+
+# Load prompt from temp file
+PROMPT_FILE='%s'
+if [ ! -f "$PROMPT_FILE" ]; then
+    echo "[$(date)] ERROR: Prompt file not found: $PROMPT_FILE" >> "$LOGFILE"
+    exit 1
+fi
+
+# Save a copy for debugging
+cp "$PROMPT_FILE" .cobuild/last-prompt.md
+
+echo "[$(date)] Prompt loaded ($(wc -c < "$PROMPT_FILE") bytes)" >> "$LOGFILE"
+
+# Run claude with prompt as positional argument
+claude %s "$(cat "$PROMPT_FILE")" < /dev/null >> "$LOGFILE" 2>&1
+CLAUDE_EXIT=$?
+echo "[$(date)] Claude exited with $CLAUDE_EXIT" >> "$LOGFILE"
+
+# Cleanup
+rm -f "$PROMPT_FILE" '%s'
+
+# Run completion
+%s
+`,
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			claudeFlags,
-			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			strings.ReplaceAll(scriptPath, "'", "'\\''"),
-			completeCmd)
+			completeCmd,
+		)
 		if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
 			return fmt.Errorf("failed to write dispatch script: %v", err)
 		}

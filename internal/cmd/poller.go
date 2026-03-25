@@ -332,7 +332,7 @@ func handleCrash(ctx context.Context, task client.ShardSummary, mon config.Monit
 		if conn != nil {
 			_ = conn.UpdateStatus(ctx, task.ID, "open")
 		}
-		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, wtPath) }
+		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, findRepoRoot(), wtPath, task.ID) }
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	case strings.HasPrefix(action, "skill:"):
 		if conn != nil {
@@ -377,7 +377,7 @@ func handleStall(ctx context.Context, task client.ShardSummary, mon config.Monit
 		if conn != nil {
 			_ = conn.UpdateStatus(ctx, task.ID, "open")
 		}
-		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, wtPath) }
+		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, findRepoRoot(), wtPath, task.ID) }
 		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
 	}
 }
