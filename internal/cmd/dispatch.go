@@ -183,7 +183,7 @@ var dispatchCmd = &cobra.Command{
 				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
 			}
 		}
-		claudeFlags := "-p --dangerously-skip-permissions"
+		claudeFlags := "-p --dangerously-skip-permissions --no-session-persistence --max-turns 50"
 		if pCfg.Dispatch.ClaudeFlags != "" {
 			claudeFlags = pCfg.Dispatch.ClaudeFlags
 		}
