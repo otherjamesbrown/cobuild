@@ -80,7 +80,7 @@ In autonomous mode, the poller triggers this automatically.`,
 				pCfg = config.DefaultConfig()
 			}
 
-			result, err := cbClient.PipelineGatePass(ctx, designID, "retrospective", "pass", body, 0, pCfg)
+			result, err := RecordGateVerdict(ctx, conn, cbStore, designID, "retrospective", "pass", body, 0, pCfg)
 			if err != nil {
 				return fmt.Errorf("record retrospective: %w", err)
 			}

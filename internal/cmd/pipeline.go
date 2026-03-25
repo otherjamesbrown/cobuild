@@ -123,25 +123,45 @@ var gateCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
-		result, err := cbClient.PipelineGatePass(ctx, designID, gateName, verdict, content, readiness, pCfg)
+		// Use new store+connector orchestration if available, fall back to legacy
+		var gateResult *GateVerdictResult
+		if cbStore != nil {
+			gateResult, err = RecordGateVerdict(ctx, conn, cbStore, designID, gateName, verdict, content, readiness, pCfg)
+		} else if cbClient != nil {
+			legacyResult, legacyErr := cbClient.PipelineGatePass(ctx, designID, gateName, verdict, content, readiness, pCfg)
+			if legacyErr != nil {
+				return legacyErr
+			}
+			gateResult = &GateVerdictResult{
+				DesignID:      legacyResult.DesignID,
+				GateName:      legacyResult.GateName,
+				Phase:         legacyResult.Phase,
+				Round:         legacyResult.Round,
+				Verdict:       legacyResult.Verdict,
+				ReviewShardID: legacyResult.ReviewShardID,
+				NextPhase:     legacyResult.NextPhase,
+			}
+		} else {
+			return fmt.Errorf("no store or client configured")
+		}
 		if err != nil {
 			return err
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(result)
+			s, _ := client.FormatJSON(gateResult)
 			fmt.Println(s)
 			return nil
 		}
 
-		fmt.Printf("Recorded gate %q for %s\n", result.GateName, result.DesignID)
-		fmt.Printf("  Review shard: %s\n", result.ReviewShardID)
-		fmt.Printf("  Round:        %d\n", result.Round)
-		fmt.Printf("  Verdict:      %s\n", result.Verdict)
-		if result.NextPhase != "" {
-			fmt.Printf("  Phase:        %s -> %s\n", result.Phase, result.NextPhase)
+		fmt.Printf("Recorded gate %q for %s\n", gateResult.GateName, gateResult.DesignID)
+		fmt.Printf("  Review shard: %s\n", gateResult.ReviewShardID)
+		fmt.Printf("  Round:        %d\n", gateResult.Round)
+		fmt.Printf("  Verdict:      %s\n", gateResult.Verdict)
+		if gateResult.NextPhase != "" {
+			fmt.Printf("  Phase:        %s -> %s\n", gateResult.Phase, gateResult.NextPhase)
 		} else {
-			fmt.Printf("  Phase:        %s\n", result.Phase)
+			fmt.Printf("  Phase:        %s\n", gateResult.Phase)
 		}
 		return nil
 	},
@@ -182,7 +202,12 @@ var reviewCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
-		result, err := cbClient.PipelineGatePass(ctx, designID, "readiness-review", verdict, content, readiness, pCfg)
+		var result *GateVerdictResult
+		if cbStore != nil {
+			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, "readiness-review", verdict, content, readiness, pCfg)
+		} else {
+			return fmt.Errorf("no store configured")
+		}
 		if err != nil {
 			return err
 		}
@@ -240,7 +265,12 @@ var decomposeCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
-		result, err := cbClient.PipelineGatePass(ctx, designID, "decomposition-review", verdict, content, 0, pCfg)
+		var result *GateVerdictResult
+		if cbStore != nil {
+			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, "decomposition-review", verdict, content, 0, pCfg)
+		} else {
+			return fmt.Errorf("no store configured")
+		}
 		if err != nil {
 			return err
 		}
