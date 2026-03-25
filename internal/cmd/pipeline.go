@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -21,21 +22,31 @@ var initCmd = &cobra.Command{
 		ctx := context.Background()
 		id := args[0]
 
-		state, err := cbClient.PipelineInit(ctx, id)
-		if err != nil {
-			return err
+		// Use store if available, fall back to legacy client
+		if cbStore != nil {
+			run, err := cbStore.CreateRun(ctx, id, projectName, "design")
+			if err != nil {
+				return fmt.Errorf("init pipeline: %w", err)
+			}
+			if outputFormat == "json" {
+				s, _ := client.FormatJSON(run)
+				fmt.Println(s)
+				return nil
+			}
+			fmt.Printf("Initialised pipeline on %s\n", id)
+			fmt.Printf("  Phase:    %s\n", run.CurrentPhase)
+			fmt.Printf("  Progress: %s\n", run.CreatedAt.Format(time.RFC3339))
+		} else if cbClient != nil {
+			state, err := cbClient.PipelineInit(ctx, id)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Initialised pipeline on %s\n", id)
+			fmt.Printf("  Phase:    %s\n", state.Phase)
+			fmt.Printf("  Progress: %s\n", state.LastProgress)
+		} else {
+			return fmt.Errorf("no store or client configured")
 		}
-
-		if outputFormat == "json" {
-			out := map[string]any{"id": id, "pipeline": state}
-			s, _ := client.FormatJSON(out)
-			fmt.Println(s)
-			return nil
-		}
-
-		fmt.Printf("Initialised pipeline on %s\n", id)
-		fmt.Printf("  Phase:    %s\n", state.Phase)
-		fmt.Printf("  Progress: %s\n", state.LastProgress)
 		return nil
 	},
 }
@@ -306,52 +317,80 @@ var auditCmd = &cobra.Command{
 		ctx := context.Background()
 		designID := args[0]
 
-		entries, err := cbClient.PipelineAudit(ctx, designID)
-		if err != nil {
-			return err
+		// Try store first, fall back to legacy
+		var phase, status string
+		if cbStore != nil {
+			run, err := cbStore.GetRun(ctx, designID)
+			if err == nil {
+				phase = run.CurrentPhase
+				status = run.Status
+			}
+		}
+		if phase == "" && cbClient != nil {
+			state, err := cbClient.PipelineGet(ctx, designID)
+			if err == nil {
+				phase = state.Phase
+				status = "active"
+			}
 		}
 
-		if outputFormat == "json" {
-			s, _ := client.FormatJSON(entries)
-			fmt.Println(s)
-			return nil
-		}
-
-		state, stateErr := cbClient.PipelineGet(ctx, designID)
-		shard, shardErr := conn.Get(ctx, designID)
-
+		shard, _ := conn.Get(ctx, designID)
 		title := designID
-		if shardErr == nil {
+		if shard != nil {
 			title = shard.Title
-		}
-		phase := "unknown"
-		status := "unknown"
-		if stateErr == nil {
-			phase = state.Phase
-			status = "active"
 		}
 
 		fmt.Printf("%s: %s\n", designID, title)
 		fmt.Printf("Phase: %s | Status: %s\n", phase, status)
 		fmt.Println()
 
-		if len(entries) == 0 {
+		// Gate history from store
+		var gates []store.PipelineGateRecord
+		if cbStore != nil {
+			gates, _ = cbStore.GetGateHistory(ctx, designID)
+		}
+
+		if len(gates) == 0 {
+			// Fall back to legacy audit
+			if cbClient != nil {
+				entries, err := cbClient.PipelineAudit(ctx, designID)
+				if err == nil && len(entries) > 0 {
+					if outputFormat == "json" {
+						s, _ := client.FormatJSON(entries)
+						fmt.Println(s)
+						return nil
+					}
+					fmt.Println("TIMELINE")
+					for _, e := range entries {
+						ts := e.Timestamp.Format("2006-01-02 15:04")
+						fmt.Printf("  %s  %-22s  Round %d  %-4s   %s\n", ts, e.GateName, e.Round, strings.ToUpper(e.Verdict), e.ReviewShardID)
+						if e.Body != "" {
+							fmt.Printf("    %s\n", client.Truncate(e.Body, 100))
+						}
+					}
+					return nil
+				}
+			}
 			fmt.Println("No gate records found.")
 			return nil
 		}
 
+		if outputFormat == "json" {
+			s, _ := client.FormatJSON(gates)
+			fmt.Println(s)
+			return nil
+		}
+
 		fmt.Println("TIMELINE")
-		for _, e := range entries {
-			verdictUpper := strings.ToUpper(e.Verdict)
-			ts := e.Timestamp.Format("2006-01-02 15:04")
-			fmt.Printf("  %s  %-22s  Round %d  %-4s   %s\n",
-				ts, e.GateName, e.Round, verdictUpper, e.ReviewShardID)
-			if e.Body != "" {
-				bodyPreview := e.Body
-				if len(bodyPreview) > 100 {
-					bodyPreview = bodyPreview[:100] + "..."
-				}
-				fmt.Printf("    %s\n", bodyPreview)
+		for _, g := range gates {
+			ts := g.CreatedAt.Format("2006-01-02 15:04")
+			shardID := ""
+			if g.ReviewShardID != nil {
+				shardID = *g.ReviewShardID
+			}
+			fmt.Printf("  %s  %-22s  Round %d  %-4s   %s\n", ts, g.GateName, g.Round, strings.ToUpper(g.Verdict), shardID)
+			if g.Body != nil && *g.Body != "" {
+				fmt.Printf("    %s\n", client.Truncate(*g.Body, 100))
 			}
 		}
 
