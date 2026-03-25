@@ -57,13 +57,48 @@ Use --check to see if the integration is stale without modifying files.`,
 			return nil
 		}
 
-		// Write .cobuild/AGENTS.md
-		agentsPath := filepath.Join(repoRoot, ".cobuild", "AGENTS.md")
-		os.MkdirAll(filepath.Dir(agentsPath), 0755)
-		if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
+		// Write CoBuild section into AGENTS.md at the repo root.
+		// Uses markers to coexist with other tools (Beads, Gastown, etc.)
+		// that also write to AGENTS.md.
+		agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+
+		existing, _ := os.ReadFile(agentsPath)
+		var finalContent string
+
+		if len(existing) > 0 && strings.Contains(string(existing), markerBegin) {
+			// Replace existing CoBuild section between markers
+			content := string(existing)
+			beginIdx := strings.Index(content, markerBegin)
+			endIdx := strings.Index(content, markerEnd)
+			if beginIdx >= 0 && endIdx > beginIdx {
+				endIdx += len(markerEnd)
+				if endIdx < len(content) && content[endIdx] == '\n' {
+					endIdx++
+				}
+				finalContent = content[:beginIdx] + agentsContent + content[endIdx:]
+				fmt.Printf("Replaced CoBuild section in %s (hash: %s)\n", agentsPath, hash[:8])
+			} else {
+				// Malformed markers — append
+				finalContent = string(existing) + "\n" + agentsContent
+				fmt.Printf("Appended CoBuild section to %s (malformed markers) (hash: %s)\n", agentsPath, hash[:8])
+			}
+		} else if len(existing) > 0 {
+			// File exists (maybe from beads/gastown) — append our section
+			content := string(existing)
+			if !strings.HasSuffix(content, "\n") {
+				content += "\n"
+			}
+			finalContent = content + "\n" + agentsContent
+			fmt.Printf("Appended CoBuild section to %s (hash: %s)\n", agentsPath, hash[:8])
+		} else {
+			// No AGENTS.md — create with our section
+			finalContent = agentsContent
+			fmt.Printf("Created %s (hash: %s)\n", agentsPath, hash[:8])
+		}
+
+		if err := os.WriteFile(agentsPath, []byte(finalContent), 0644); err != nil {
 			return fmt.Errorf("write AGENTS.md: %w", err)
 		}
-		fmt.Printf("Updated %s (hash: %s)\n", agentsPath, hash[:8])
 
 		// Update CLAUDE.md with pointer section
 		claudePath := filepath.Join(repoRoot, "CLAUDE.md")
@@ -251,7 +286,7 @@ func computeHash(content string) string {
 }
 
 func checkFreshness(repoRoot, currentHash string) error {
-	agentsPath := filepath.Join(repoRoot, ".cobuild", "AGENTS.md")
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
 	data, err := os.ReadFile(agentsPath)
 	if err != nil {
 		fmt.Println("AGENTS.md not found — run `cobuild setup` to install.")
@@ -293,7 +328,7 @@ func updateClaudePointer(claudePath string) error {
 
 This project uses [CoBuild](https://github.com/otherjamesbrown/cobuild) for pipeline automation — designs flow through structured phases with quality gates.
 
-**Read ` + "`.cobuild/AGENTS.md`" + ` for full pipeline instructions, commands, and task completion protocol.**
+**Read ` + "`AGENTS.md`" + ` for pipeline instructions, commands, and task completion protocol.**
 `
 
 	data, err := os.ReadFile(claudePath)
