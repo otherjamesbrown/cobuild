@@ -2,13 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +28,7 @@ Steps:
 		ctx := context.Background()
 		taskID := args[0]
 
-		task, err := cbClient.GetTask(ctx, taskID)
+		task, err := conn.Get(ctx, taskID)
 		if err != nil {
 			return fmt.Errorf("task not found: %s", taskID)
 		}
@@ -40,10 +39,10 @@ Steps:
 		}
 
 		if task.Status == "needs-review" {
-			return validateCompletion(ctx, taskID, task, cbClient)
+			return validateCompletionViaConnector(ctx, taskID, task)
 		}
 
-		worktreePath, _ := cbClient.GetMetadataField(ctx, taskID, []string{"worktree_path"})
+		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 		if worktreePath == "" {
 			return fmt.Errorf("no worktree_path in task metadata")
 		}
@@ -82,7 +81,7 @@ Steps:
 		}
 
 		// Create PR
-		prURL, _ := cbClient.GetMetadataField(ctx, taskID, []string{"pr_url"})
+		prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
 		if prURL == "" {
 			fmt.Println("Creating PR...")
 			repo := ""
@@ -116,8 +115,7 @@ Steps:
 				} else {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("PR created: %s\n", prURL)
-					prJSON, _ := json.Marshal(prURL)
-					cbClient.SetMetadataPath(ctx, taskID, []string{"pr_url"}, prJSON)
+					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
 				}
 			} else {
 				fmt.Println("Could not detect GitHub repo -- skipping PR creation")
@@ -154,10 +152,10 @@ Steps:
 	},
 }
 
-func validateCompletion(ctx context.Context, taskID string, task *client.Shard, c *client.Client) error {
+func validateCompletionViaConnector(ctx context.Context, taskID string, task *connector.WorkItem) error {
 	issues := []string{}
 
-	wtPath, _ := c.GetMetadataField(ctx, taskID, []string{"worktree_path"})
+	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 
 	if wtPath != "" {
 		commitOut, err := exec.Command("git", "-C", wtPath, "log", "--oneline", "main..HEAD").Output()
@@ -166,12 +164,12 @@ func validateCompletion(ctx context.Context, taskID string, task *client.Shard, 
 		}
 	}
 
-	prURL, _ := c.GetMetadataField(ctx, taskID, []string{"pr_url"})
+	prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
 	if prURL == "" {
 		issues = append(issues, "no PR created")
 		if wtPath != "" {
 			fmt.Println("Validation: no PR -- creating one...")
-			repoRoot, _ := config.RepoForProject(c.Config.Project)
+			repoRoot, _ := config.RepoForProject(projectName)
 			pCfg, _ := config.LoadConfig(repoRoot)
 			repo := ""
 			if pCfg != nil && pCfg.GitHub.OwnerRepo != "" {
@@ -189,8 +187,7 @@ func validateCompletion(ctx context.Context, taskID string, task *client.Shard, 
 				if err == nil {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("Validation: PR created: %s\n", prURL)
-					prJSON, _ := json.Marshal(prURL)
-					c.SetMetadataPath(ctx, taskID, []string{"pr_url"}, prJSON)
+					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
 				}
 			}
 		}

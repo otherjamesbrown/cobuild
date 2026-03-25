@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -185,13 +184,13 @@ func shouldSpawn(ctx context.Context, designID string, dryRun bool) bool {
 }
 
 func findParentDesign(ctx context.Context, taskID string) string {
-	edges, err := cbClient.GetShardEdges(ctx, taskID, "outgoing", []string{"child-of"})
+	edges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
 	if err != nil {
 		return ""
 	}
 	for _, e := range edges {
 		if e.Type == "design" {
-			return e.ShardID
+			return e.ItemID
 		}
 	}
 	return ""
@@ -383,24 +382,16 @@ func handleStall(ctx context.Context, task client.ShardSummary, mon config.Monit
 }
 
 func getRetryCount(ctx context.Context, taskID string) int {
-	shard, err := cbClient.GetShard(ctx, taskID)
-	if err != nil {
+	shard, err := conn.Get(ctx, taskID)
+	if err != nil || shard.Metadata == nil {
 		return 0
 	}
-	if shard.Metadata == nil {
-		return 0
-	}
-	var meta map[string]interface{}
-	if err := json.Unmarshal(shard.Metadata, &meta); err != nil {
-		return 0
-	}
-	count, _ := meta["dispatch_retries"].(float64)
+	count, _ := shard.Metadata["dispatch_retries"].(float64)
 	return int(count)
 }
 
 func setRetryCount(ctx context.Context, taskID string, count int) {
-	countJSON, _ := json.Marshal(count)
-	_, _ = cbClient.SetMetadataPath(ctx, taskID, []string{"dispatch_retries"}, countJSON)
+	_ = conn.SetMetadata(ctx, taskID, "dispatch_retries", count)
 }
 
 func init() {

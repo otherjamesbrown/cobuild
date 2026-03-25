@@ -288,7 +288,7 @@ var auditCmd = &cobra.Command{
 		}
 
 		state, stateErr := cbClient.PipelineGet(ctx, designID)
-		shard, shardErr := cbClient.GetShard(ctx, designID)
+		shard, shardErr := conn.Get(ctx, designID)
 
 		title := designID
 		if shardErr == nil {

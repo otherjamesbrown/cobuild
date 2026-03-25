@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,7 +33,7 @@ var dispatchCmd = &cobra.Command{
 			agent = agentOverride
 		}
 
-		task, err := cbClient.GetTask(ctx, taskID)
+		task, err := conn.Get(ctx, taskID)
 		if err != nil {
 			return fmt.Errorf("task not found: %s", taskID)
 		}
@@ -47,14 +46,14 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		// Check blocked-by edges
-		blockerEdges, err := cbClient.GetShardEdges(ctx, taskID, "outgoing", []string{"blocked-by"})
+		blockerEdges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"blocked-by"})
 		if err != nil {
 			return fmt.Errorf("failed to check blockers: %w", err)
 		}
 		var unsatisfied []string
 		for _, e := range blockerEdges {
 			if e.Status != "closed" {
-				unsatisfied = append(unsatisfied, fmt.Sprintf("%s (%s)", e.ShardID, e.Status))
+				unsatisfied = append(unsatisfied, fmt.Sprintf("%s (%s)", e.ItemID, e.Status))
 			}
 		}
 		if len(unsatisfied) > 0 {
@@ -62,7 +61,7 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		// Get or create worktree
-		worktreePath, _ := cbClient.GetMetadataField(ctx, taskID, []string{"worktree_path"})
+		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 		if worktreePath == "" {
 			if dryRun {
 				fmt.Println("[dry-run] Would create worktree for " + taskID)
@@ -82,13 +81,13 @@ var dispatchCmd = &cobra.Command{
 
 		// Get parent design context
 		var designContext string
-		parentEdges, err := cbClient.GetShardEdges(ctx, taskID, "outgoing", []string{"child-of"})
+		parentEdges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
 		if err == nil && len(parentEdges) > 0 {
-			parentID := parentEdges[0].ShardID
-			parent, err := cbClient.GetShard(ctx, parentID)
+			parentID := parentEdges[0].ItemID
+			parentItem, err := conn.Get(ctx, parentID)
 			if err == nil {
 				designContext = fmt.Sprintf("## Design Context (from %s)\n\n**%s**\n\n%s",
-					parent.ID, parent.Title, parent.Content)
+					parentItem.ID, parentItem.Title, parentItem.Content)
 			}
 		}
 
@@ -137,7 +136,7 @@ var dispatchCmd = &cobra.Command{
 			"parent-design":   designContext,
 		}
 		workItemFetcher := func(id string) (string, string, error) {
-			s, err := cbClient.GetShard(ctx, id)
+			s, err := conn.Get(ctx, id)
 			if err != nil {
 				return "", "", err
 			}
@@ -232,14 +231,13 @@ var dispatchCmd = &cobra.Command{
 			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''"))).Run()
 
 		// Record dispatch metadata
-		dispatchInfo := map[string]string{
+		dispatchInfo := map[string]any{
 			"dispatched_at": time.Now().UTC().Format(time.RFC3339),
 			"agent":         agent,
 			"tmux_window":   taskID,
 			"log_file":      logFile,
 		}
-		patch, _ := json.Marshal(dispatchInfo)
-		if _, err := cbClient.UpdateMetadata(ctx, taskID, patch); err != nil {
+		if err := conn.UpdateMetadataMap(ctx, taskID, dispatchInfo); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched but failed to update metadata: %v\n", err)
 		}
 
