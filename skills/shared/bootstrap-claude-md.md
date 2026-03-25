@@ -79,6 +79,18 @@ This commits remaining changes, pushes your branch, creates a PR, appends eviden
 
 **Do this as your LAST action. Do not skip it.**
 
+## What CoBuild manages vs what you do directly
+
+Be explicit when reporting status to the developer. State clearly whether an action is:
+- **A CoBuild pipeline action** — "CoBuild will handle this: `cobuild merge-design <id>`"
+- **A direct action you'll take** — "I'll run `penf deploy gateway` now"
+- **A human action needed** — "You need to approve this PR before CoBuild can merge"
+
+Do not say vague things like "ready for deployment" — say exactly who does what:
+- "All PRs merged. Running `cobuild merge-design pf-6e38e9 --auto` to merge and test."
+- "Merge complete. Deploy is not managed by CoBuild for this project — run `penf deploy all` to deploy."
+- "Deploy is configured in pipeline.yaml. Running `cobuild deploy pf-6e38e9` to deploy affected services."
+
 ## Skills
 
 Pipeline skills are in `skills/` organized by phase:
