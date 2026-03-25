@@ -27,9 +27,12 @@ type GateConfig struct {
 
 // PhaseConfig describes a pipeline phase and its gates.
 type PhaseConfig struct {
-	Name  string       `yaml:"name"`
-	Model string       `yaml:"model,omitempty"`
-	Gates []GateConfig `yaml:"gates,omitempty"`
+	Name       string       `yaml:"name,omitempty"`
+	Gate       string       `yaml:"gate,omitempty"`
+	Skill      string       `yaml:"skill,omitempty"`
+	StallCheck string       `yaml:"stall_check,omitempty"`
+	Model      string       `yaml:"model,omitempty"`
+	Gates      []GateConfig `yaml:"gates,omitempty"`
 }
 
 // WorkflowConfig defines a pipeline path for a specific shard type.
@@ -85,7 +88,7 @@ type Config struct {
 	Storage         StoreCfg                    `yaml:"storage,omitempty"`
 	Connectors      ConnectorsCfg               `yaml:"connectors,omitempty"`
 	SkillsDir       string                      `yaml:"skills_dir,omitempty"`
-	Phases          []PhaseConfig               `yaml:"phases,omitempty"`
+	Phases          map[string]PhaseConfig       `yaml:"phases,omitempty"`
 }
 
 // AgentCfg defines an agent's domain capabilities.
@@ -129,11 +132,14 @@ type GitHubCfg struct {
 	OwnerRepo string `yaml:"owner_repo"`
 }
 
-// DeployServiceCfg maps file paths to deploy commands.
+// DeployServiceCfg maps file paths to deploy/test/rollback commands.
 type DeployServiceCfg struct {
-	Name    string   `yaml:"name"`
-	Paths   []string `yaml:"paths"`
-	Command string   `yaml:"command"`
+	Name         string   `yaml:"name"`
+	TriggerPaths []string `yaml:"trigger_paths"`          // file globs that trigger this deploy
+	Command      string   `yaml:"command"`                 // deploy command (e.g., "penf deploy gateway")
+	SmokeTest    string   `yaml:"smoke_test,omitempty"`    // verify deploy succeeded (e.g., "curl -s .../health")
+	Rollback     string   `yaml:"rollback,omitempty"`      // revert on smoke test failure
+	Timeout      string   `yaml:"timeout,omitempty"`       // max time for deploy + smoke test (default: 5m)
 }
 
 // DeployCfg controls auto-deploy after PR merge.
@@ -381,6 +387,34 @@ func MergeConfig(base, override *Config) *Config {
 		out.Monitoring.Model = override.Monitoring.Model
 	}
 
+	// Deploy
+	if len(override.Deploy.Services) > 0 {
+		out.Deploy = override.Deploy
+	} else if len(base.Deploy.Services) > 0 {
+		out.Deploy = base.Deploy
+	}
+
+	// Storage
+	if override.Storage.Backend != "" {
+		out.Storage = override.Storage
+	} else {
+		out.Storage = base.Storage
+	}
+
+	// Connectors
+	if override.Connectors.WorkItems.Type != "" {
+		out.Connectors = override.Connectors
+	} else {
+		out.Connectors = base.Connectors
+	}
+
+	// Context
+	if len(override.Context.Layers) > 0 {
+		out.Context = override.Context
+	} else {
+		out.Context = base.Context
+	}
+
 	return out
 }
 
@@ -484,19 +518,20 @@ func (cfg *Config) PhaseNames() []string {
 	if len(cfg.Phases) == 0 {
 		return ValidPipelinePhases
 	}
-	names := make([]string, len(cfg.Phases))
-	for i, p := range cfg.Phases {
-		names[i] = p.Name
+	names := make([]string, 0, len(cfg.Phases))
+	for name := range cfg.Phases {
+		names = append(names, name)
 	}
 	return names
 }
 
 // FindPhase finds a phase by name.
 func (cfg *Config) FindPhase(name string) *PhaseConfig {
-	for i := range cfg.Phases {
-		if cfg.Phases[i].Name == name {
-			return &cfg.Phases[i]
-		}
+	if cfg.Phases == nil {
+		return nil
+	}
+	if p, ok := cfg.Phases[name]; ok {
+		return &p
 	}
 	return nil
 }
@@ -580,11 +615,13 @@ func copyAgents(m map[string]AgentCfg) map[string]AgentCfg {
 	return out
 }
 
-func copyPhases(p []PhaseConfig) []PhaseConfig {
+func copyPhases(p map[string]PhaseConfig) map[string]PhaseConfig {
 	if p == nil {
 		return nil
 	}
-	out := make([]PhaseConfig, len(p))
-	copy(out, p)
+	out := make(map[string]PhaseConfig, len(p))
+	for k, v := range p {
+		out[k] = v
+	}
 	return out
 }
