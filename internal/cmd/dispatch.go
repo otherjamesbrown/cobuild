@@ -145,7 +145,7 @@ var dispatchCmd = &cobra.Command{
 		// Phase-aware instructions
 		promptBuilder.WriteString("## Instructions\n\n")
 
-		// Detect if this is a bug in investigate phase
+		// Detect current phase from pipeline state
 		currentPhase := ""
 		if cbStore != nil {
 			run, err := cbStore.GetRun(ctx, task.ID)
@@ -153,38 +153,19 @@ var dispatchCmd = &cobra.Command{
 				currentPhase = run.CurrentPhase
 			}
 		}
-
-		if currentPhase == "investigate" || task.Type == "bug" && currentPhase == "" {
-			// Investigation mode — read-only
-			promptBuilder.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
-			promptBuilder.WriteString("Follow the bug-investigation skill:\n")
-			promptBuilder.WriteString("1. Understand the bug report above\n")
-			promptBuilder.WriteString("2. Reproduce and verify the bug\n")
-			promptBuilder.WriteString("3. Trace the root cause — check code, git blame, database state\n")
-			promptBuilder.WriteString("4. Map all affected files and related patterns\n")
-			promptBuilder.WriteString("5. Assess fragility — why did this area break?\n")
-			promptBuilder.WriteString("6. Write an investigation report and append to the bug:\n")
-			promptBuilder.WriteString(fmt.Sprintf("   `cobuild wi append %s --body \"## Investigation Report\\n...\"`\n", task.ID))
-			promptBuilder.WriteString("7. Record the investigation gate:\n")
-			promptBuilder.WriteString(fmt.Sprintf("   `cobuild investigate %s --verdict pass --body \"<summary>\"`\n", task.ID))
-			promptBuilder.WriteString("8. Create a fix task with the exact changes needed:\n")
-			promptBuilder.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"Fix: ...\" --body \"...\" --parent %s`\n", task.ID))
-		} else {
-			// Implementation mode
-			promptBuilder.WriteString("Implement this task following the acceptance criteria above.\n\n")
-			promptBuilder.WriteString("### On completion\n\n")
-
-			step := 1
-			if len(pCfg.Test) > 0 {
-				promptBuilder.WriteString(fmt.Sprintf("%d. Run tests: `%s`\n", step, strings.Join(pCfg.Test, " && ")))
-				step++
+		// Infer phase from work item type if no pipeline run exists
+		if currentPhase == "" {
+			switch task.Type {
+			case "bug":
+				currentPhase = "investigate"
+			case "design":
+				currentPhase = "design"
+			default:
+				currentPhase = "implement"
 			}
-			if len(pCfg.Build) > 0 {
-				promptBuilder.WriteString(fmt.Sprintf("%d. Build: `%s`\n", step, strings.Join(pCfg.Build, " && ")))
-				step++
-			}
-			promptBuilder.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n", step, taskID))
 		}
+
+		writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
 
 		prompt := promptBuilder.String()
 
@@ -469,6 +450,87 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		}
 		return nil
 	},
+}
+
+// writePhasePrompt writes phase-appropriate instructions into the dispatch prompt.
+func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg *config.Config) {
+	switch phase {
+	case "design":
+		b.WriteString("**Evaluate this design for pipeline readiness.**\n\n")
+		b.WriteString("Follow the gate-readiness-review skill:\n")
+		b.WriteString("1. Read the design content above\n")
+		b.WriteString("2. Check 5 readiness criteria: problem stated, user identified, success criteria, scope boundaries, links to parent\n")
+		b.WriteString("3. Run implementability check — can an agent build this without asking questions?\n")
+		b.WriteString("4. Score readiness (1-5) and determine verdict\n")
+		b.WriteString("5. Record the review:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild review %s --verdict pass|fail --readiness <N> --body \"<findings>\"`\n", workItemID))
+
+	case "decompose":
+		b.WriteString("**Break this design into implementable tasks.**\n\n")
+		b.WriteString("Follow the decompose-design skill:\n")
+		b.WriteString("1. Read the design content above\n")
+		b.WriteString("2. Identify discrete tasks — each completable in a single agent session (1-5 files, ~100-300 lines)\n")
+		b.WriteString("3. Order by dependency — assign wave numbers (wave 1 has no blockers, wave 2 depends on wave 1)\n")
+		b.WriteString("4. For each task, create a work item with scope, acceptance criteria, and code locations:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"<title>\" --body \"<spec>\" --parent %s`\n", workItemID))
+		b.WriteString("5. Link dependencies between tasks:\n")
+		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
+		b.WriteString("6. Record the decomposition gate:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary>\"`\n", workItemID))
+		b.WriteString("\n**Important:** Assign migration numbers explicitly if multiple tasks create DB migrations. Set `repo` metadata on tasks for multi-repo projects.\n")
+
+	case "investigate":
+		b.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
+		b.WriteString("Follow the bug-investigation skill:\n")
+		b.WriteString("1. Understand the bug report above\n")
+		b.WriteString("2. Reproduce and verify the bug\n")
+		b.WriteString("3. Trace the root cause — check code, git blame, database state\n")
+		b.WriteString("4. Map all affected files and related patterns\n")
+		b.WriteString("5. Assess fragility — why did this area break?\n")
+		b.WriteString("6. Write an investigation report and append to the bug:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild wi append %s --body \"## Investigation Report\\n...\"`\n", workItemID))
+		b.WriteString("7. Record the investigation gate:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild investigate %s --verdict pass --body \"<summary>\"`\n", workItemID))
+		b.WriteString("8. Create a fix task with the exact changes needed:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"Fix: ...\" --body \"...\" --parent %s`\n", workItemID))
+
+	case "review":
+		b.WriteString("**Review this PR against its task spec and parent design.**\n\n")
+		b.WriteString("Follow the gate-process-review or gate-review-pr skill:\n")
+		b.WriteString("1. Read the task spec and parent design above\n")
+		b.WriteString("2. Check CI status: `gh pr checks <pr-number>`\n")
+		b.WriteString("3. Read the PR diff: `gh pr diff <pr-number>`\n")
+		b.WriteString("4. Evaluate: does it match the spec? Does it fit the design? Will it break anything?\n")
+		b.WriteString("5. Check for hardcoded values that should be configurable (project-specific constraints)\n")
+		b.WriteString("6. Record the verdict:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild gate %s review --verdict pass|fail --body \"<findings>\"`\n", workItemID))
+
+	case "done":
+		b.WriteString("**Run a pipeline retrospective.**\n\n")
+		b.WriteString("Follow the gate-retrospective skill:\n")
+		b.WriteString("1. Gather execution data: `cobuild audit " + workItemID + "`\n")
+		b.WriteString("2. Review each gate — how many rounds, what failed, was it avoidable?\n")
+		b.WriteString("3. Review implementation — did agents complete without intervention?\n")
+		b.WriteString("4. Identify patterns — repeated failures, agent gaps, process friction\n")
+		b.WriteString("5. Record the retrospective:\n")
+		b.WriteString(fmt.Sprintf("   `cobuild retro %s --body \"<findings>\"`\n", workItemID))
+
+	default:
+		// Implementation (default for tasks and unknown phases)
+		b.WriteString("Implement this task following the acceptance criteria above.\n\n")
+		b.WriteString("### On completion\n\n")
+
+		step := 1
+		if pCfg != nil && len(pCfg.Test) > 0 {
+			b.WriteString(fmt.Sprintf("%d. Run tests: `%s`\n", step, strings.Join(pCfg.Test, " && ")))
+			step++
+		}
+		if pCfg != nil && len(pCfg.Build) > 0 {
+			b.WriteString(fmt.Sprintf("%d. Build: `%s`\n", step, strings.Join(pCfg.Build, " && ")))
+			step++
+		}
+		b.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n", step, taskID))
+	}
 }
 
 func init() {
