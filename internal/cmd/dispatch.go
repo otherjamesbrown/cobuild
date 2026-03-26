@@ -225,12 +225,21 @@ var dispatchCmd = &cobra.Command{
 		// Write a dispatch script — tmux new-window can't handle pipes/stdin
 		// The prompt must be a positional argument, not piped via stdin
 		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
+		// Get session ID if it was stored
+		sessionID := ""
+		if conn != nil {
+			sessionID, _ = conn.GetMetadata(ctx, taskID, "session_id")
+		}
+
 		scriptContent := fmt.Sprintf(`#!/bin/bash
 cd '%s'
 export COBUILD_DISPATCH=true
+export COBUILD_SESSION_ID='%s'
+export COBUILD_HOOKS_DIR='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
-echo "[$(date)] Dispatch starting" >> "$LOGFILE"
+echo "$COBUILD_SESSION_ID" > .cobuild/session_id
+echo "[$(date)] Dispatch starting (session: $COBUILD_SESSION_ID)" >> "$LOGFILE"
 
 # Load prompt from temp file
 PROMPT_FILE='%s'
@@ -247,7 +256,14 @@ rm -f "$PROMPT_FILE"
 
 # Run claude in interactive mode — agent needs multiple turns to implement
 # Interactive mode allows: read files, edit, run tests, fix errors, iterate
-claude %s "$PROMPT"
+claude %s "$PROMPT"`,
+			strings.ReplaceAll(worktreePath, "'", "'\\''"),
+			sessionID,
+			filepath.Join(findRepoRoot(), "hooks"),
+			strings.ReplaceAll(promptPath, "'", "'\\''"),
+			claudeFlags,
+		)
+		scriptContent += fmt.Sprintf(`
 echo "[$(date)] Claude session ended" >> "$LOGFILE"
 
 # Cleanup script
@@ -256,9 +272,6 @@ rm -f '%s'
 # Run completion (commit, push, create PR, mark needs-review)
 %s
 `,
-			strings.ReplaceAll(worktreePath, "'", "'\\''"),
-			strings.ReplaceAll(promptPath, "'", "'\\''"),
-			claudeFlags,
 			strings.ReplaceAll(scriptPath, "'", "'\\''"),
 			completeCmd,
 		)

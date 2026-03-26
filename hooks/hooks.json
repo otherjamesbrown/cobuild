@@ -1,0 +1,100 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${COBUILD_HOOKS_DIR:-$HOME/.cobuild/hooks}/cobuild-event.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
