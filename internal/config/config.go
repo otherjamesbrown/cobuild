@@ -152,8 +152,9 @@ type DeployServiceCfg struct {
 
 // DeployCfg controls auto-deploy after PR merge.
 type DeployCfg struct {
-	Enabled  bool               `yaml:"enabled,omitempty"`
-	Services []DeployServiceCfg `yaml:"services,omitempty"`
+	Enabled   bool               `yaml:"enabled,omitempty"`
+	PreDeploy string             `yaml:"pre_deploy,omitempty"` // command to run before any deploys (e.g., migrations)
+	Services  []DeployServiceCfg `yaml:"services,omitempty"`
 }
 
 // CICfg controls how CI results are evaluated.

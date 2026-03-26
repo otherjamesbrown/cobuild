@@ -78,10 +78,24 @@ Only deploys services whose trigger_paths match the changed files.`,
 			return fmt.Errorf("no pipeline config found in %s", repoRoot)
 		}
 
-		if len(pCfg.Deploy.Services) == 0 {
+		if len(pCfg.Deploy.Services) == 0 && pCfg.Deploy.PreDeploy == "" {
 			fmt.Println("No deploy services configured in pipeline.yaml.")
 			fmt.Println("Add a deploy section with services, trigger_paths, commands, and smoke_tests.")
 			return nil
+		}
+
+		// Run pre-deploy step (e.g., database migrations)
+		if pCfg.Deploy.PreDeploy != "" {
+			if dryRun {
+				fmt.Printf("[dry-run] Would run pre-deploy: %s\n\n", pCfg.Deploy.PreDeploy)
+			} else {
+				fmt.Printf("Running pre-deploy: %s\n", pCfg.Deploy.PreDeploy)
+				out, err := exec.CommandContext(ctx, "bash", "-c", pCfg.Deploy.PreDeploy).CombinedOutput()
+				if err != nil {
+					return fmt.Errorf("pre-deploy failed: %s\n%s", err, string(out))
+				}
+				fmt.Printf("Pre-deploy complete.\n\n")
+			}
 		}
 
 		// Get all changed files from the design's tasks

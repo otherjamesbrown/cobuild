@@ -147,4 +147,5 @@ The implementing agent receives the fix task — it has everything needed to fix
 - The fragility assessment is as valuable as the fix — it feeds back into architecture decisions and identifies areas that need refactoring or better test coverage.
 - Check git blame on the broken code — if it was recently changed by a pipeline task, note which design introduced the bug. This feeds into the retrospective.
 - If multiple bugs stem from the same root cause, link them and create one fix task that addresses all of them.
-<!-- Add failure patterns here as they're discovered -->
+- **If the fix needs a database migration**, check the current highest migration number (`ls migrations/ | sort -n | tail -1`) and assign the NEXT number in the fix specification. Do not let the implementing agent pick its own number — collisions happen when multiple fixes are in flight.
+- **If the fix needs a deploy**, specify which services need restarting and whether migrations must be applied first. The implementing agent should not deploy — that's the orchestrator's job via `cobuild deploy`.
