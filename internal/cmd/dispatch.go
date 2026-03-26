@@ -598,7 +598,12 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 			b.WriteString(fmt.Sprintf("%d. Build: `%s`\n", step, strings.Join(pCfg.Build, " && ")))
 			step++
 		}
-		b.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n", step, taskID))
+		b.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n\n", step, taskID))
+		b.WriteString("**IMPORTANT RULES:**\n")
+		b.WriteString("- NEVER use raw `git merge` or `git push` to main — always use `cobuild complete` which creates a PR\n")
+		b.WriteString("- NEVER merge PRs yourself — the orchestrating agent handles merge via `cobuild merge` after review\n")
+		b.WriteString("- If a reviewer (Gemini, human) leaves a critical comment on your PR, you MUST address it before the PR can merge\n")
+		b.WriteString("- Check review comments: `gh pr view <pr-number> --comments`\n")
 	}
 }
 
