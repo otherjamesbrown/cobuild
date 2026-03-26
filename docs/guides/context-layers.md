@@ -125,6 +125,125 @@ Resolves the skill file using the standard resolution chain (repo `skills/` then
 
 Loads all `.md` files from the skills directory. The optional `filter` list restricts which files are included.
 
+## Context Strategy
+
+The mechanics are simple — the hard part is deciding what goes where. This section explains how to think about context for each pipeline phase, especially for projects with rich knowledge systems (playbooks, KB shards, sub-agent context docs, architectural principles).
+
+### The key question
+
+For each piece of context, ask: **which phase needs this to do its job?**
+
+| Context | Who needs it | When |
+|---------|-------------|------|
+| Architecture docs | Everyone — how the system is built | `always` |
+| Architectural principles / constraints | Design reviewers and implementing agents | `always` |
+| Domain knowledge (pipeline specs, API docs) | Design reviewers — need domain context to evaluate | `phase:design` |
+| Testing standards | Implementing agents — need to know how to test | `phase:implement` |
+| Playbook / orchestration instructions | The orchestrating agent (interactive sessions) | `interactive` |
+| Task prompt | Dispatched agents only | `dispatch` |
+| Parent design | Dispatched agents need the big picture | `dispatch` |
+| Sub-agent context (dev-index, domain guides) | Only when that specific sub-agent is spawned | Not a layer — loaded by the agent itself |
+
+### What NOT to put in context layers
+
+- **Playbooks and interactive-only instructions.** Dispatched agents are NOT the orchestrating agent. Don't load your orchestrator's playbook into an implementing agent's context — it'll confuse it with orchestration instructions when it should be writing code.
+- **All your knowledge shards.** Context window is finite. Loading 20 KB shards wastes tokens. Pick the 2-3 most relevant per phase.
+- **Sub-agent context.** Your sub-agents (debugger, worker-dev, service-dev) have their own context loaded when they're spawned. CoBuild dispatch handles its own context injection — don't duplicate it.
+- **Identity/personality.** "You are Mycroft" is for interactive sessions. Dispatched agents get their role from the task prompt.
+
+### Building context for a complex project
+
+If your project has a knowledge graph (e.g., Context Palace shards with triggers and relationships), here's how to map it to CoBuild phases:
+
+**Step 1: Identify your always-on context**
+
+What does every agent need regardless of phase? Usually:
+- Architecture overview (file structure, patterns, conventions)
+- Hard constraints (architectural principles, "all config in DB", etc.)
+
+```yaml
+- name: architecture
+  source: file:ARCHITECTURE.md
+  when: always
+- name: principles
+  source: work-item:pf-eeb256
+  when: always
+```
+
+**Step 2: Map domain knowledge to design phase**
+
+Design reviewers need to understand the domain to evaluate whether a design is complete. Which knowledge shards describe the subsystem being changed?
+
+```yaml
+- name: ingest-pipeline
+  source: work-item:pf-c66536
+  when: phase:design
+- name: entity-resolution
+  source: work-item:pf-637703
+  when: phase:design
+```
+
+You don't need to load ALL domain shards — just the top-level ones. The design reviewer can follow links from there if needed.
+
+**Step 3: Map implementation context**
+
+Implementing agents need: testing standards, coding patterns, and whatever context helps them write correct code for this specific codebase.
+
+```yaml
+- name: testing-standards
+  source: work-item:pf-129647
+  when: phase:implement
+- name: dev-index
+  source: work-item:pf-6eac47
+  when: phase:implement
+```
+
+**Step 4: Investigation context for bugs**
+
+Bug investigators need infrastructure and operational knowledge — how things are deployed, what observability exists, where logs are.
+
+```yaml
+- name: infrastructure
+  source: work-item:pf-30eb23
+  when: phase:investigate
+```
+
+**Step 5: Don't configure what CoBuild already provides**
+
+CoBuild automatically injects these — you don't need layers for them:
+- `dispatch-prompt` — the task spec (injected at dispatch)
+- `parent-design` — the parent design content (injected at dispatch)
+- CLAUDE.md — the repo's instructions (loaded by Claude Code itself)
+
+### Interactive vs dispatched: the boundary
+
+Your orchestrating agent (the one YOU talk to) uses CLAUDE.md, hooks, playbooks, and interactive context. That's outside CoBuild's layers.
+
+CoBuild's context layers control what **dispatched agents** see — the ones spawned by `cobuild dispatch` into worktrees. They don't see your CLAUDE.md, your hooks, or your playbook. They see:
+1. Context layers with `when: always` or `when: dispatch`
+2. Phase-specific layers (`when: phase:implement`)
+3. The task prompt and parent design
+
+This is intentional. Dispatched agents should be focused on their specific task, not loaded with orchestration context.
+
+### Growing context over time
+
+Start minimal:
+```yaml
+context:
+    layers:
+        - name: architecture
+          source: file:ARCHITECTURE.md
+          when: always
+```
+
+After your first pipeline run, the retrospective will tell you what agents were missing:
+- "Agent didn't follow testing conventions" → add testing standards to `phase:implement`
+- "Design reviewer missed an architectural constraint" → add principles to `always`
+- "Investigator didn't know about the deploy topology" → add infra to `phase:investigate`
+
+Each retrospective finding becomes a context layer. Don't try to get it right upfront — iterate.
+
 ## Examples
 
 ### Example 1: Basic project (files only)
