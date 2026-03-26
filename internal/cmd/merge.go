@@ -123,6 +123,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			}
 		}
 
+		printNextStep(taskID, "review", "merge")
 		return nil
 	},
 }

@@ -182,6 +182,7 @@ Steps:
 		}
 
 		fmt.Printf("Task %s complete -> needs-review\n", taskID)
+		printNextStep(taskID, "implement", "complete")
 		return nil
 	},
 }

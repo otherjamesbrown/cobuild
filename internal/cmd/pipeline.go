@@ -60,6 +60,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  Phase:    %s\n", run.CurrentPhase)
 			fmt.Printf("  Mode:     %s\n", mode)
 			fmt.Printf("  Progress: %s\n", run.CreatedAt.Format(time.RFC3339))
+			printNextStep(id, startPhase, "init")
 		} else if cbClient != nil {
 			state, err := cbClient.PipelineInit(ctx, id)
 			if err != nil {
@@ -198,6 +199,11 @@ var gateCmd = &cobra.Command{
 		} else {
 			fmt.Printf("  Phase:        %s\n", gateResult.Phase)
 		}
+		if gateResult.Verdict == "pass" {
+			printNextStep(designID, gateResult.NextPhase, "gate-pass")
+		} else {
+			printNextStep(designID, gateResult.Phase, "gate-fail")
+		}
 		return nil
 	},
 }
@@ -265,6 +271,11 @@ var reviewCmd = &cobra.Command{
 		}
 		fmt.Printf("  Verdict:      %s (%d/5)\n", result.Verdict, readiness)
 		fmt.Printf("  Phase:        %s\n", phaseTransition)
+		if result.Verdict == "pass" {
+			printNextStep(designID, result.NextPhase, "gate-pass")
+		} else {
+			printNextStep(designID, "design", "gate-fail")
+		}
 		return nil
 	},
 }
@@ -385,6 +396,11 @@ var investigateCmd = &cobra.Command{
 		fmt.Printf("  Verdict:      %s\n", result.Verdict)
 		if result.NextPhase != "" {
 			fmt.Printf("  Phase:        %s → %s\n", result.Phase, result.NextPhase)
+		}
+		if result.Verdict == "pass" {
+			printNextStep(bugID, result.NextPhase, "gate-pass")
+		} else {
+			printNextStep(bugID, "investigate", "gate-fail")
 		}
 		return nil
 	},

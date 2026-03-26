@@ -69,9 +69,7 @@ merge PRs, and run retrospectives.`,
 			fmt.Printf("  Phase: %s\n", run.CurrentPhase)
 		}
 
-		fmt.Printf("\nThe poller will process this through all remaining phases.\n")
-		fmt.Printf("Start the poller: cobuild poller\n")
-		fmt.Printf("Check progress:   cobuild status\n")
+		printNextStep(id, "", "run")
 
 		return nil
 	},
