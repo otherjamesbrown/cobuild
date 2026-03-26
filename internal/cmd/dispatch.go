@@ -182,8 +182,13 @@ var dispatchCmd = &cobra.Command{
 			}
 			return s.Title, s.Content, nil
 		}
-		if err := config.WriteWorktreeCLAUDEMD(pCfg, repoRoot, worktreePath, "dispatch", "implement", extras, workItemFetcher); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not generate worktree CLAUDE.md: %v\n", err)
+		// Assemble context and write to worktree CLAUDE.md
+		assembledContext, _ := config.AssembleContext(pCfg, repoRoot, "dispatch", currentPhase, extras, workItemFetcher)
+		if assembledContext != "" {
+			claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
+			if err := os.WriteFile(claudeMDPath, []byte(assembledContext), 0644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write worktree CLAUDE.md: %v\n", err)
+			}
 		}
 
 		// Write prompt to temp file
@@ -351,17 +356,18 @@ rm -f '%s'
 			}
 
 			session, err := cbStore.CreateSession(ctx, store.SessionInput{
-				PipelineID:   pipelineID,
-				DesignID:     designID,
-				TaskID:       taskID,
-				Phase:        currentPhase,
-				Project:      projectName,
-				Model:        pCfg.Dispatch.DefaultModel,
-				PromptChars:  len(prompt),
-				Prompt:       prompt,
-				WorktreePath: worktreePath,
-				TmuxSession:  tmuxSession,
-				TmuxWindow:   taskID,
+				PipelineID:       pipelineID,
+				DesignID:         designID,
+				TaskID:           taskID,
+				Phase:            currentPhase,
+				Project:          projectName,
+				Model:            pCfg.Dispatch.DefaultModel,
+				PromptChars:      len(prompt),
+				Prompt:           prompt,
+				AssembledContext: assembledContext,
+				WorktreePath:     worktreePath,
+				TmuxSession:      tmuxSession,
+				TmuxWindow:       taskID,
 			})
 			if err != nil {
 				fmt.Printf("Warning: failed to record session: %v\n", err)

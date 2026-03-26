@@ -360,14 +360,19 @@ func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (
 		tmuxWin = &input.TmuxWindow
 	}
 
+	var assembledCtx *string
+	if input.AssembledContext != "" {
+		assembledCtx = &input.AssembledContext
+	}
+
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO pipeline_sessions (
 			id, pipeline_id, design_id, task_id, phase, project,
-			model, prompt_chars, prompt, worktree_path, tmux_session, tmux_window
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			model, prompt_chars, prompt, assembled_context, worktree_path, tmux_session, tmux_window
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING started_at
 	`, rec.ID, rec.PipelineID, rec.DesignID, rec.TaskID, rec.Phase, rec.Project,
-		model, promptChars, prompt, wtPath, tmuxSess, tmuxWin,
+		model, promptChars, prompt, assembledCtx, wtPath, tmuxSess, tmuxWin,
 	).Scan(&rec.StartedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)

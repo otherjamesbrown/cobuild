@@ -69,17 +69,18 @@ type PipelineRunStatus struct {
 
 // SessionInput captures the fields needed to start a session record.
 type SessionInput struct {
-	PipelineID   string
-	DesignID     string
-	TaskID       string
-	Phase        string
-	Project      string
-	Model        string
-	PromptChars  int
-	Prompt       string
-	WorktreePath string
-	TmuxSession  string
-	TmuxWindow   string
+	PipelineID       string
+	DesignID         string
+	TaskID           string
+	Phase            string
+	Project          string
+	Model            string
+	PromptChars      int
+	Prompt           string
+	AssembledContext string // full CLAUDE.md content the agent sees
+	WorktreePath     string
+	TmuxSession      string
+	TmuxWindow       string
 }
 
 // SessionResult captures the outcome of a completed session.
