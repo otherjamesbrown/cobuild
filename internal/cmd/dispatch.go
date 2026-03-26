@@ -209,15 +209,16 @@ var dispatchCmd = &cobra.Command{
 				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
 			}
 		}
-		// Interactive mode (not -p) — agent needs multiple turns to implement
-		// -p mode is single-turn and can't iterate on edits/tests
+		// Use interactive mode by default — proven to work for multi-turn implementation.
+		// -p mode works but was unreliable earlier. Keep interactive as the safe default.
 		claudeFlags := "--dangerously-skip-permissions"
 		if pCfg.Dispatch.ClaudeFlags != "" {
 			claudeFlags = pCfg.Dispatch.ClaudeFlags
 		}
-
 		if model := pCfg.ModelForPhase("implement", ""); model != "" {
 			claudeFlags += " --model " + model
+		} else if pCfg.Dispatch.DefaultModel != "" {
+			claudeFlags += " --model " + pCfg.Dispatch.DefaultModel
 		}
 
 		completeCmd := fmt.Sprintf("cobuild complete '%s'", strings.ReplaceAll(taskID, "'", "'\\''"))
@@ -254,9 +255,21 @@ PROMPT=$(cat "$PROMPT_FILE")
 echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
 rm -f "$PROMPT_FILE"
 
-# Run claude in interactive mode — agent needs multiple turns to implement
-# Interactive mode allows: read files, edit, run tests, fix errors, iterate
-claude %s "$PROMPT"`,
+# Run claude in interactive mode (proven reliable for multi-turn work)
+claude %s "$PROMPT"
+echo "[$(date)] Claude session ended" >> "$LOGFILE"
+
+# Parse transcript for token/cost data after session ends
+# The transcript JSONL has usage data in each API response
+TRANSCRIPT_DIR="$HOME/.claude/projects"
+TRANSCRIPT=$(find "$TRANSCRIPT_DIR" -name "*.jsonl" -newer "$LOGFILE" -type f 2>/dev/null | head -1)
+if [ -n "$TRANSCRIPT" ] && command -v jq &>/dev/null; then
+    # Extract usage from the last result message in the transcript
+    USAGE=$(tail -100 "$TRANSCRIPT" | grep '"usage"' | tail -1 | jq -c '.usage // empty' 2>/dev/null)
+    if [ -n "$USAGE" ]; then
+        echo "[$(date)] Transcript usage: $USAGE" >> "$LOGFILE"
+    fi
+fi`,
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
 			sessionID,
 			filepath.Join(findRepoRoot(), "hooks"),
@@ -264,7 +277,6 @@ claude %s "$PROMPT"`,
 			claudeFlags,
 		)
 		scriptContent += fmt.Sprintf(`
-echo "[$(date)] Claude session ended" >> "$LOGFILE"
 
 # Cleanup script
 rm -f '%s'
