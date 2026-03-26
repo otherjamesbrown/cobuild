@@ -240,7 +240,7 @@ cobuild improve --apply   # auto-apply non-skill changes
 |---------|---------|
 | `cobuild setup` | Register repo, create config |
 | `cobuild init-skills` | Copy default skills into repo |
-| `cobuild init-skills --update` | Update skills, overwriting existing files |
+| `cobuild init-skills --update` | Refresh skills from defaults, preserving gotchas |
 | `cobuild init <id>` | Start pipeline on a design |
 | `cobuild gate <id> <name>` | Record gate verdict |
 | `cobuild review <id>` | Phase 1 readiness review |
@@ -253,15 +253,18 @@ cobuild improve --apply   # auto-apply non-skill changes
 | `cobuild merge <id>` | Merge approved PR, close task |
 | `cobuild merge-design <id>` | Merge all tasks for a design |
 | `cobuild deploy <id>` | Run deploy for a merged design |
-| `cobuild update-agents` | Update agent assignment in pipeline |
+| `cobuild update-agents` | Regenerate AGENTS.md from current skills and config |
+| `cobuild explain` | Show the full pipeline in human-readable form |
 | `cobuild retro <id>` | Run pipeline retrospective |
 | `cobuild status` | Show all active pipelines |
 | `cobuild audit <id>` | Show gate timeline |
 | `cobuild wi show <id>` | Show work item details |
 | `cobuild wi list` | List work items |
-| `cobuild wi links <id>` | Show work item dependencies |
+| `cobuild wi links <id>` | Show work item relationships |
+| `cobuild wi status <id> <status>` | Update work item status |
 | `cobuild wi create` | Create a new work item |
 | `cobuild wi append <id>` | Append content to a work item |
+| `cobuild wi label add <id> <label>` | Add a label to a work item |
 | `cobuild poller` | Run trigger + health poller |
 | `cobuild insights` | Execution analysis |
 | `cobuild improve` | Suggest pipeline improvements |

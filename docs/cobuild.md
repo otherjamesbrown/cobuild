@@ -540,7 +540,10 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild init-skills --update` | Update skills, overwriting existing files |
 | `cobuild insights` | Analyze execution data, produce report |
 | `cobuild improve` | Suggest/apply pipeline improvements from patterns |
-| `cobuild status` | Show all active pipelines (outcomes, blockers, agents) |
+| `cobuild status` | Show all active pipelines with phase, tasks, last activity |
+| `cobuild explain` | Show the full pipeline in human-readable markdown |
+| `cobuild update-agents` | Regenerate AGENTS.md from current skills and config |
+| `cobuild retro <id>` | Run pipeline retrospective, record gate |
 
 ### Shard pipeline commands
 
@@ -568,9 +571,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild complete <task-id>` | Post-agent: commit, push, PR, evidence, needs-review |
 | `cobuild merge <task-id>` | Merge approved PR, close task |
 | `cobuild merge-design <design-id>` | Merge all tasks for a design |
-| `cobuild deploy <design-id>` | Run deploy for a merged design |
-| `cobuild investigate <id>` | Bug investigation gate |
-| `cobuild update-agents` | Update agent assignments in pipeline |
+| `cobuild deploy <design-id>` | Deploy affected services (matches trigger_paths) |
 | `cobuild gate <id>` | Generic gate evaluation |
 
 ### Work item commands

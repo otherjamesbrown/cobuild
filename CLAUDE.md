@@ -112,9 +112,13 @@ internal/client/              # legacy database layer (being migrated to connect
 internal/config/              # config types + context assembly
 internal/config/config.go     # Config struct, merge, resolve
 internal/config/context.go    # context layer assembly for CLAUDE.md
-internal/merge/               # merge logic for PRs and dependent branches
-internal/worktree/            # git worktree lifecycle management
+internal/merge/               # smart merge: conflict analysis, supersession, wave-aware
+internal/worktree/            # git worktree lifecycle (create, verify, cleanup)
+hooks/                        # claude code hooks for session event tracking
+hooks/cobuild-event.sh        # records tool calls, compaction, errors to Postgres
+hooks/hooks.json              # hook registration for SessionStart, PreToolUse, etc.
 skills/                       # default skill files (copied to repos via init-skills)
+examples/                     # example config files (pipeline.yaml, cobuild.yaml)
 migrations/                   # database migrations
 research/                     # design docs and research
 docs/                         # reference documentation + guides
@@ -135,9 +139,11 @@ The config hierarchy follows the Claude Code pattern: repo overrides global.
 
 Currently connects to Context Palace postgres via `~/.cobuild/config.yaml` (legacy: `~/.cxp/config.yaml` or `~/.cp/config.yaml`). Uses these tables:
 - `shards` — design, bug, task, review shards (CP's table)
-- `pipeline_runs` — one row per pipeline (CoBuild's table)
-- `pipeline_gates` — gate audit records (CoBuild's table)
-- `pipeline_tasks` — task tracking within pipelines (CoBuild's table)
+- `pipeline_runs` — one row per pipeline, phase, status (CoBuild's table)
+- `pipeline_gates` — gate audit records with verdicts and findings (CoBuild's table)
+- `pipeline_tasks` — task tracking within pipelines with wave assignments (CoBuild's table)
+- `pipeline_sessions` — per-dispatch session records: timing, model, prompt, results, costs (CoBuild's table)
+- `pipeline_session_events` — per-tool-call events: file reads, edits, commands, errors (CoBuild's table)
 
 ## Design Direction: Connectors + Separated Storage
 
