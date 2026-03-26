@@ -34,6 +34,13 @@ type Store interface {
 	ListTasks(ctx context.Context, pipelineID string) ([]PipelineTaskRecord, error)
 	UpdateTaskStatus(ctx context.Context, taskShardID, status string) error
 
+	// --- Pipeline Sessions ---
+
+	CreateSession(ctx context.Context, input SessionInput) (*SessionRecord, error)
+	EndSession(ctx context.Context, id string, result SessionResult) error
+	GetSession(ctx context.Context, taskID string) (*SessionRecord, error)
+	ListSessions(ctx context.Context, designID string) ([]SessionRecord, error)
+
 	// --- Insights (read-only aggregates) ---
 
 	GetRunStatusCounts(ctx context.Context, project string) (map[string]int, error)

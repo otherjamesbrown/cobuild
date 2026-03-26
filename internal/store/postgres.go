@@ -325,6 +325,143 @@ func (s *PostgresStore) UpdateTaskStatus(ctx context.Context, taskShardID, statu
 	return nil
 }
 
+// --- Pipeline Sessions ---
+
+func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (*SessionRecord, error) {
+	rec := &SessionRecord{
+		ID:         newID("ps"),
+		PipelineID: input.PipelineID,
+		DesignID:   input.DesignID,
+		TaskID:     input.TaskID,
+		Phase:      input.Phase,
+		Project:    input.Project,
+		Status:     "running",
+	}
+
+	var model, wtPath, tmuxSess, tmuxWin *string
+	var promptChars *int
+	var prompt *string
+	if input.Model != "" {
+		model = &input.Model
+	}
+	if input.PromptChars > 0 {
+		promptChars = &input.PromptChars
+	}
+	if input.Prompt != "" {
+		prompt = &input.Prompt
+	}
+	if input.WorktreePath != "" {
+		wtPath = &input.WorktreePath
+	}
+	if input.TmuxSession != "" {
+		tmuxSess = &input.TmuxSession
+	}
+	if input.TmuxWindow != "" {
+		tmuxWin = &input.TmuxWindow
+	}
+
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO pipeline_sessions (
+			id, pipeline_id, design_id, task_id, phase, project,
+			model, prompt_chars, prompt, worktree_path, tmux_session, tmux_window
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING started_at
+	`, rec.ID, rec.PipelineID, rec.DesignID, rec.TaskID, rec.Phase, rec.Project,
+		model, promptChars, prompt, wtPath, tmuxSess, tmuxWin,
+	).Scan(&rec.StartedAt)
+	if err != nil {
+		return nil, fmt.Errorf("create session: %w", err)
+	}
+	return rec, nil
+}
+
+func (s *PostgresStore) EndSession(ctx context.Context, id string, result SessionResult) error {
+	var errStr *string
+	if result.Error != "" {
+		errStr = &result.Error
+	}
+	var prURL *string
+	if result.PRURL != "" {
+		prURL = &result.PRURL
+	}
+	var sessionLog *string
+	if result.SessionLog != "" {
+		sessionLog = &result.SessionLog
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_sessions SET
+			ended_at = NOW(),
+			duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INTEGER,
+			exit_code = $2,
+			files_changed = $3,
+			lines_added = $4,
+			lines_removed = $5,
+			commits = $6,
+			pr_url = $7,
+			status = $8,
+			error = $9,
+			session_log = $10
+		WHERE id = $1
+	`, id, result.ExitCode, result.FilesChanged, result.LinesAdded, result.LinesRemoved,
+		result.Commits, prURL, result.Status, errStr, sessionLog)
+	if err != nil {
+		return fmt.Errorf("end session: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*SessionRecord, error) {
+	var r SessionRecord
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, pipeline_id, design_id, task_id, phase, project,
+			started_at, ended_at, duration_seconds, model, prompt_chars,
+			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
+			status, error, worktree_path
+		FROM pipeline_sessions WHERE task_id = $1
+		ORDER BY started_at DESC LIMIT 1
+	`, taskID).Scan(
+		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project,
+		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
+		&r.Status, &r.Error, &r.WorktreePath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	return &r, nil
+}
+
+func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]SessionRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, pipeline_id, design_id, task_id, phase, project,
+			started_at, ended_at, duration_seconds, model, prompt_chars,
+			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
+			status, error, worktree_path
+		FROM pipeline_sessions WHERE design_id = $1
+		ORDER BY started_at ASC
+	`, designID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionRecord
+	for rows.Next() {
+		var r SessionRecord
+		if err := rows.Scan(
+			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project,
+			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
+			&r.Status, &r.Error, &r.WorktreePath,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, r)
+	}
+	return sessions, rows.Err()
+}
+
 // --- Insights ---
 
 func (s *PostgresStore) GetRunStatusCounts(ctx context.Context, project string) (map[string]int, error) {

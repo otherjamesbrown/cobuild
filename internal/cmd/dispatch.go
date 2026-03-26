@@ -11,6 +11,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -307,6 +308,43 @@ rm -f '%s'
 		logFile := filepath.Join(logDir, "session.log")
 		exec.CommandContext(ctx, "tmux", "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),
 			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''"))).Run()
+
+		// Record session in store for analytics
+		if cbStore != nil {
+			pipelineID := ""
+			designID := ""
+			// Find parent design for this task
+			parentEdges, _ := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+			if len(parentEdges) > 0 {
+				designID = parentEdges[0].ItemID
+				if run, err := cbStore.GetRun(ctx, designID); err == nil {
+					pipelineID = run.ID
+				}
+			}
+			if designID == "" {
+				designID = taskID // bug dispatched directly
+			}
+
+			session, err := cbStore.CreateSession(ctx, store.SessionInput{
+				PipelineID:   pipelineID,
+				DesignID:     designID,
+				TaskID:       taskID,
+				Phase:        currentPhase,
+				Project:      projectName,
+				Model:        pCfg.Dispatch.DefaultModel,
+				PromptChars:  len(prompt),
+				Prompt:       prompt,
+				WorktreePath: worktreePath,
+				TmuxSession:  tmuxSession,
+				TmuxWindow:   taskID,
+			})
+			if err != nil {
+				fmt.Printf("Warning: failed to record session: %v\n", err)
+			} else {
+				// Store session ID in work item metadata so complete can find it
+				conn.SetMetadata(ctx, taskID, "session_id", session.ID)
+			}
+		}
 
 		// Record dispatch metadata
 		dispatchInfo := map[string]any{

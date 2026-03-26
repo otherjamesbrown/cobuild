@@ -67,6 +67,58 @@ type PipelineRunStatus struct {
 	LastProgress time.Time `json:"last_progress"`
 }
 
+// SessionInput captures the fields needed to start a session record.
+type SessionInput struct {
+	PipelineID   string
+	DesignID     string
+	TaskID       string
+	Phase        string
+	Project      string
+	Model        string
+	PromptChars  int
+	Prompt       string
+	WorktreePath string
+	TmuxSession  string
+	TmuxWindow   string
+}
+
+// SessionResult captures the outcome of a completed session.
+type SessionResult struct {
+	ExitCode     int
+	FilesChanged int
+	LinesAdded   int
+	LinesRemoved int
+	Commits      int
+	PRURL        string
+	Status       string // completed, failed, timeout
+	Error        string
+	SessionLog   string
+}
+
+// SessionRecord is a row from pipeline_sessions.
+type SessionRecord struct {
+	ID             string     `json:"id"`
+	PipelineID     string     `json:"pipeline_id"`
+	DesignID       string     `json:"design_id"`
+	TaskID         string     `json:"task_id"`
+	Phase          string     `json:"phase"`
+	Project        string     `json:"project"`
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	DurationSec    *int       `json:"duration_seconds,omitempty"`
+	Model          *string    `json:"model,omitempty"`
+	PromptChars    *int       `json:"prompt_chars,omitempty"`
+	ExitCode       *int       `json:"exit_code,omitempty"`
+	FilesChanged   *int       `json:"files_changed,omitempty"`
+	LinesAdded     *int       `json:"lines_added,omitempty"`
+	LinesRemoved   *int       `json:"lines_removed,omitempty"`
+	Commits        *int       `json:"commits,omitempty"`
+	PRURL          *string    `json:"pr_url,omitempty"`
+	Status         string     `json:"status"`
+	Error          *string    `json:"error,omitempty"`
+	WorktreePath   *string    `json:"worktree_path,omitempty"`
+}
+
 // GatePassRate holds first-try pass stats for a gate.
 type GatePassRate struct {
 	GateName     string  `json:"gate_name"`

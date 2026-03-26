@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -146,6 +149,35 @@ Steps:
 		if conn != nil {
 			if err := conn.UpdateStatus(ctx, taskID, "needs-review"); err != nil {
 				fmt.Printf("Warning: failed to set status: %v\n", err)
+			}
+		}
+
+		// End session record in store
+		if cbStore != nil && conn != nil {
+			sessionID, _ := conn.GetMetadata(ctx, taskID, "session_id")
+			if sessionID != "" {
+				// Count files and lines from diff
+				filesCount := len(strings.Split(strings.TrimSpace(filesChanged), "\n"))
+				if strings.TrimSpace(filesChanged) == "" {
+					filesCount = 0
+				}
+				// Read session log
+				sessionLog := ""
+				if worktreePath != "" {
+					logData, err := os.ReadFile(filepath.Join(worktreePath, ".cobuild", "session.log"))
+					if err == nil {
+						sessionLog = string(logData)
+					}
+				}
+
+				cbStore.EndSession(ctx, sessionID, store.SessionResult{
+					ExitCode:     0,
+					FilesChanged: filesCount,
+					Commits:      1,
+					PRURL:        prURL,
+					Status:       "completed",
+					SessionLog:   sessionLog,
+				})
 			}
 		}
 
