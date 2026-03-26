@@ -211,14 +211,57 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("| `cobuild wi create --type <type> --title \"...\"` | Create work item |\n")
 	sb.WriteString("\n")
 
+	// How to run pipelines
+	sb.WriteString("## How to Run Pipelines (Manual Mode)\n\n")
+	sb.WriteString("**There is no automatic poller.** You must step through each phase manually using `cobuild dispatch` and `cobuild wait`. Do not assume work will happen automatically.\n\n")
+	sb.WriteString("Every phase transition requires:\n")
+	sb.WriteString("1. **Dispatch** — `cobuild dispatch <id>` spawns an agent in tmux for the current phase\n")
+	sb.WriteString("2. **Wait** — `cobuild wait <id>` blocks until the agent completes\n")
+	sb.WriteString("3. **Next** — dispatch the next phase or the next wave of tasks\n\n")
+
+	// Design workflow
+	sb.WriteString("### Design Workflow\n\n")
+	sb.WriteString("```bash\n")
+	sb.WriteString("cobuild init <design-id>                     # enters design phase\n")
+	sb.WriteString("cobuild dispatch <design-id>                 # spawns readiness review agent\n")
+	sb.WriteString("cobuild wait <design-id>                     # wait for review to complete\n")
+	sb.WriteString("# Agent records gate → advances to decompose\n")
+	sb.WriteString("cobuild dispatch <design-id>                 # spawns decomposition agent\n")
+	sb.WriteString("cobuild wait <design-id>                     # wait for decomposition\n")
+	sb.WriteString("# Agent creates tasks, records gate → advances to implement\n")
+	sb.WriteString("cobuild dispatch-wave <design-id>            # dispatch ready tasks\n")
+	sb.WriteString("cobuild wait <task-1> <task-2> ...           # wait for implementation\n")
+	sb.WriteString("# Repeat dispatch-wave/wait for each wave\n")
+	sb.WriteString("cobuild merge-design <design-id> --dry-run   # preview merge plan\n")
+	sb.WriteString("cobuild merge-design <design-id>             # merge all PRs\n")
+	sb.WriteString("cobuild deploy <design-id>                   # deploy affected services\n")
+	sb.WriteString("cobuild retro <design-id>                    # run retrospective\n")
+	sb.WriteString("```\n\n")
+
 	// Bug workflow
-	sb.WriteString("## Bug Workflow\n\n")
-	sb.WriteString("Bugs go through investigation before implementation:\n\n")
-	sb.WriteString("1. `cobuild init <bug-id>` — enters investigate phase\n")
-	sb.WriteString("2. Investigation agent analyses root cause (read-only, does NOT fix)\n")
-	sb.WriteString("3. `cobuild investigate <bug-id> --verdict pass` — advances to implement\n")
-	sb.WriteString("4. Fix task created as child with implementation spec\n")
-	sb.WriteString("5. `cobuild dispatch <fix-task-id>` → review → merge → done\n\n")
+	sb.WriteString("### Bug Workflow\n\n")
+	sb.WriteString("```bash\n")
+	sb.WriteString("cobuild init <bug-id>                        # enters investigate phase\n")
+	sb.WriteString("cobuild dispatch <bug-id>                    # spawns investigation agent (READ-ONLY)\n")
+	sb.WriteString("cobuild wait <bug-id>                        # wait for investigation\n")
+	sb.WriteString("# Agent records investigation report + gate → creates fix task → advances to implement\n")
+	sb.WriteString("cobuild dispatch <fix-task-id>               # spawns implementing agent\n")
+	sb.WriteString("cobuild wait <fix-task-id>                   # wait for fix\n")
+	sb.WriteString("cobuild merge <fix-task-id>                  # merge the fix PR\n")
+	sb.WriteString("cobuild deploy <bug-id>                      # deploy if needed\n")
+	sb.WriteString("```\n\n")
+
+	// Task workflow
+	sb.WriteString("### Task Workflow\n\n")
+	sb.WriteString("```bash\n")
+	sb.WriteString("cobuild init <task-id>                       # enters implement phase\n")
+	sb.WriteString("cobuild dispatch <task-id>                   # spawns implementing agent\n")
+	sb.WriteString("cobuild wait <task-id>                       # wait for completion\n")
+	sb.WriteString("cobuild merge <task-id>                      # merge PR\n")
+	sb.WriteString("```\n\n")
+
+	// Key point
+	sb.WriteString("**Key:** `cobuild dispatch` is phase-aware. It reads the current pipeline phase and generates the right prompt automatically — investigation prompt for bugs, readiness review for designs, implementation for tasks. You don't need different commands for different phases.\n\n")
 
 	// Task completion
 	sb.WriteString("## Task Completion Protocol\n\n")
