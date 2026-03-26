@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,14 @@ Also runs health checks for stalled agents.`,
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("\n[%s] Polling...\n", ts)
 
+			// Check for auto-labelled work items (Mode 1)
+			autoLabel := "cobuild"
+			if pCfg != nil && pCfg.Poller.AutoLabel != "" {
+				autoLabel = pCfg.Poller.AutoLabel
+			}
+			pollAutoLabelledItems(ctx, autoLabel, dryRun)
+
+			// Process autonomous pipelines (Mode 2)
 			pollActivePipelines(ctx, repoRoot, pCfg, dryRun)
 			pollNeedsReviewTasks(ctx, repoRoot, pCfg, dryRun)
 
@@ -65,6 +74,69 @@ Also runs health checks for stalled agents.`,
 		}
 		return nil
 	},
+}
+
+// pollAutoLabelledItems finds work items with the auto-process label
+// that don't have a pipeline run yet, and initialises them in autonomous mode.
+func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
+	if conn == nil || autoLabel == "" {
+		return
+	}
+
+	// Search for items with the label
+	// This is connector-specific — for CP we'd search by label
+	// For now, use a simple list and filter
+	for _, itemType := range []string{"design", "bug"} {
+		result, err := conn.List(ctx, connector.ListFilters{
+			Type:   itemType,
+			Status: "open",
+			Limit:  50,
+		})
+		if err != nil {
+			continue
+		}
+
+		for _, item := range result.Items {
+			// Check if item has the auto-process label
+			hasLabel := false
+			for _, l := range item.Labels {
+				if l == autoLabel {
+					hasLabel = true
+					break
+				}
+			}
+			if !hasLabel {
+				continue
+			}
+
+			// Check if it already has a pipeline run
+			if cbStore != nil {
+				_, err := cbStore.GetRun(ctx, item.ID)
+				if err == nil {
+					continue // already has a pipeline
+				}
+			}
+
+			if dryRun {
+				fmt.Printf("  [auto] %s (%s) — has label %q, would init autonomous pipeline\n", item.ID, item.Type, autoLabel)
+			} else {
+				fmt.Printf("  [auto] %s (%s) — initialising autonomous pipeline\n", item.ID, item.Type)
+				startPhase := "design"
+				repoRoot := findRepoRoot()
+				pCfg, _ := config.LoadConfig(repoRoot)
+				if pCfg != nil {
+					sp := pCfg.StartPhaseForType(item.Type)
+					if sp != "" {
+						startPhase = sp
+					}
+				}
+				_, err := cbStore.CreateRunWithMode(ctx, item.ID, projectName, startPhase, "autonomous")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  [auto] init %s failed: %v\n", item.ID, err)
+				}
+			}
+		}
+	}
 }
 
 // pollActivePipelines checks each active pipeline and dispatches if no agent is working.
@@ -80,6 +152,13 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 			continue
 		}
 
+		// Only process autonomous pipelines
+		// Check mode from the full run record
+		fullRun, err := cbStore.GetRun(ctx, run.DesignID)
+		if err != nil || fullRun.Mode != "autonomous" {
+			continue
+		}
+
 		// Check if there's already an agent session running for this pipeline
 		if hasActiveSession(ctx, run.DesignID) {
 			fmt.Printf("  [%s] %s — agent running\n", run.Phase, run.DesignID)
@@ -89,8 +168,19 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 		// Check phase — some phases need task-level dispatch, not design-level
 		switch run.Phase {
 		case "implement":
-			// Check for tasks that need dispatch
-			dispatchReadyTasks(ctx, repoRoot, pCfg, run.DesignID, dryRun)
+			// Check for child tasks that need dispatch
+			edges, _ := conn.GetEdges(ctx, run.DesignID, "incoming", []string{"child-of"})
+			if len(edges) > 0 {
+				dispatchReadyTasks(ctx, repoRoot, pCfg, run.DesignID, dryRun)
+			} else {
+				// Standalone task — dispatch the item itself
+				if dryRun {
+					fmt.Printf("  [implement] %s — standalone task, would dispatch\n", run.DesignID)
+				} else {
+					fmt.Printf("  [implement] %s — dispatching standalone task\n", run.DesignID)
+					dispatchForPhase(ctx, run.DesignID)
+				}
+			}
 
 		case "design", "decompose", "investigate", "review", "done":
 			// Design-level dispatch — spawn agent for this phase

@@ -9,6 +9,7 @@ type PipelineRun struct {
 	Project      string    `json:"project"`
 	CurrentPhase string    `json:"current_phase"`
 	Status       string    `json:"status"`
+	Mode         string    `json:"mode"` // manual or autonomous
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

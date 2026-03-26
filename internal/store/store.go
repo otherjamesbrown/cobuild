@@ -17,10 +17,12 @@ type Store interface {
 	// --- Pipeline Runs ---
 
 	CreateRun(ctx context.Context, designID, project, phase string) (*PipelineRun, error)
+	CreateRunWithMode(ctx context.Context, designID, project, phase, mode string) (*PipelineRun, error)
 	GetRun(ctx context.Context, designID string) (*PipelineRun, error)
 	ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error)
 	UpdateRunPhase(ctx context.Context, designID, phase string) error
 	UpdateRunStatus(ctx context.Context, designID, status string) error
+	SetRunMode(ctx context.Context, designID, mode string) error
 
 	// --- Pipeline Gates ---
 

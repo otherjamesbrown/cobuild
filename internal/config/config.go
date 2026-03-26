@@ -87,8 +87,16 @@ type Config struct {
 	GitHub          GitHubCfg                   `yaml:"github,omitempty"`
 	Storage         StoreCfg                    `yaml:"storage,omitempty"`
 	Connectors      ConnectorsCfg               `yaml:"connectors,omitempty"`
+	Poller          PollerCfg                   `yaml:"poller,omitempty"`
 	SkillsDir       string                      `yaml:"skills_dir,omitempty"`
 	Phases          map[string]PhaseConfig       `yaml:"phases,omitempty"`
+}
+
+// PollerCfg controls the autonomous pipeline poller.
+type PollerCfg struct {
+	AutoLabel     string `yaml:"auto_label,omitempty"`     // label that triggers auto-processing (default: "cobuild")
+	Interval      int    `yaml:"interval,omitempty"`       // poll interval in seconds (default: 30)
+	MaxConcurrent int    `yaml:"max_concurrent,omitempty"` // max simultaneous dispatches (default: 3)
 }
 
 // AgentCfg defines an agent's domain capabilities.

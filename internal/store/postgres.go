@@ -114,13 +114,54 @@ func (s *PostgresStore) CreateRun(ctx context.Context, designID, project, phase 
 	return run, nil
 }
 
+func (s *PostgresStore) CreateRunWithMode(ctx context.Context, designID, project, phase, mode string) (*PipelineRun, error) {
+	if designID == "" {
+		return nil, fmt.Errorf("design_id is required")
+	}
+	if phase == "" {
+		phase = "design"
+	}
+	if mode == "" {
+		mode = "manual"
+	}
+
+	run := &PipelineRun{
+		ID:           newID("pr"),
+		DesignID:     designID,
+		Project:      project,
+		CurrentPhase: phase,
+		Status:       "active",
+		Mode:         mode,
+	}
+
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO pipeline_runs (id, design_id, project, current_phase, status, mode)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING created_at, updated_at
+	`, run.ID, run.DesignID, run.Project, run.CurrentPhase, run.Status, run.Mode).Scan(&run.CreatedAt, &run.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("create pipeline run: %w", err)
+	}
+	return run, nil
+}
+
+func (s *PostgresStore) SetRunMode(ctx context.Context, designID, mode string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_runs SET mode = $2, updated_at = NOW() WHERE design_id = $1
+	`, designID, mode)
+	if err != nil {
+		return fmt.Errorf("set run mode: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) GetRun(ctx context.Context, designID string) (*PipelineRun, error) {
 	var run PipelineRun
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, design_id, project, current_phase, status, created_at, updated_at
+		SELECT id, design_id, project, current_phase, status, COALESCE(mode, 'manual'), created_at, updated_at
 		FROM pipeline_runs WHERE design_id = $1
 		ORDER BY created_at DESC LIMIT 1
-	`, designID).Scan(&run.ID, &run.DesignID, &run.Project, &run.CurrentPhase, &run.Status, &run.CreatedAt, &run.UpdatedAt)
+	`, designID).Scan(&run.ID, &run.DesignID, &run.Project, &run.CurrentPhase, &run.Status, &run.Mode, &run.CreatedAt, &run.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("no pipeline run for design %s", designID)

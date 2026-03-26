@@ -21,6 +21,7 @@ var initCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		id := args[0]
+		autonomous, _ := cmd.Flags().GetBool("autonomous")
 
 		// Determine start phase from work item type + workflow config
 		startPhase := "design"
@@ -40,8 +41,13 @@ var initCmd = &cobra.Command{
 		}
 
 		// Use store if available, fall back to legacy client
+		mode := "manual"
+		if autonomous {
+			mode = "autonomous"
+		}
+
 		if cbStore != nil {
-			run, err := cbStore.CreateRun(ctx, id, projectName, startPhase)
+			run, err := cbStore.CreateRunWithMode(ctx, id, projectName, startPhase, mode)
 			if err != nil {
 				return fmt.Errorf("init pipeline: %w", err)
 			}
@@ -52,6 +58,7 @@ var initCmd = &cobra.Command{
 			}
 			fmt.Printf("Initialised pipeline on %s\n", id)
 			fmt.Printf("  Phase:    %s\n", run.CurrentPhase)
+			fmt.Printf("  Mode:     %s\n", mode)
 			fmt.Printf("  Progress: %s\n", run.CreatedAt.Format(time.RFC3339))
 		} else if cbClient != nil {
 			state, err := cbClient.PipelineInit(ctx, id)
@@ -663,7 +670,11 @@ func init() {
 	updateCmd.Flags().String("add-task", "", "Shard ID to append to task_shards")
 	updateCmd.Flags().Int("tokens", 0, "Token count to add to cumulative_tokens")
 
+	// init flags
+	initCmd.Flags().Bool("autonomous", false, "Submit for autonomous processing (poller handles all phases)")
+
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(gateCmd)
 	rootCmd.AddCommand(reviewCmd)
