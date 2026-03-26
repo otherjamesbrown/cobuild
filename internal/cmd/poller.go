@@ -5,26 +5,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
-	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var pollerCmd = &cobra.Command{
 	Use:   "poller",
-	Short: "Poll for actionable pipeline state and spawn M sessions",
-	Long: `Runs a polling loop that checks for three trigger conditions every interval:
+	Short: "Continuously poll for actionable pipeline state and dispatch agents",
+	Long: `Runs a polling loop that checks all active pipelines and takes action:
 
-  1. New design ready -- open designs without pipeline metadata
-  2. Task needs review -- tasks in needs-review with pipeline parent in implement phase
-  3. Waiting condition satisfied -- pipeline waiting_for shards all closed
+For each active pipeline:
+  1. Check if there's an active agent session (running in tmux)
+  2. If no agent is working → dispatch one for the current phase
+  3. If agent completed → check if next phase needs dispatching
 
-For each trigger, spawns an M session in a tmux window (unless --dry-run).`,
+Also runs health checks for stalled agents.`,
 	Example: `  cobuild poller
   cobuild poller --interval 60
   cobuild poller --once --dry-run`,
@@ -33,63 +31,33 @@ For each trigger, spawns an M session in a tmux window (unless --dry-run).`,
 		interval, _ := cmd.Flags().GetInt("interval")
 		once, _ := cmd.Flags().GetBool("once")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		allProjects, _ := cmd.Flags().GetBool("all-projects")
 
-		if interval < 1 {
+		if interval < 10 {
 			interval = 30
 		}
 
-		type projectEntry struct {
-			name   string
-			root   string
-			config *config.Config
+		if cbStore == nil {
+			return fmt.Errorf("no store configured — poller needs database access")
 		}
-		var projects []projectEntry
+		if conn == nil {
+			return fmt.Errorf("no connector configured — poller needs work-item access")
+		}
 
-		if allProjects {
-			reg, err := config.LoadRepoRegistry()
-			if err != nil {
-				return fmt.Errorf("failed to load repo registry: %v", err)
-			}
-			for name, entry := range reg.Repos {
-				cfg, _ := config.LoadConfig(entry.Path)
-				if cfg == nil {
-					cfg = config.DefaultConfig()
-				}
-				projects = append(projects, projectEntry{name: name, root: entry.Path, config: cfg})
-			}
-			if len(projects) == 0 {
-				return fmt.Errorf("no projects registered. Run `cobuild setup` in each repo.")
-			}
-			fmt.Printf("[poller] Polling %d projects: ", len(projects))
-			for i, p := range projects {
-				if i > 0 {
-					fmt.Print(", ")
-				}
-				fmt.Print(p.name)
-			}
-			fmt.Println()
-		} else {
-			repoRoot, err := config.RepoForProject(projectName)
-			if err != nil {
-				repoRoot = findRepoRoot()
-				fmt.Fprintf(os.Stderr, "[poller] No repo registered for project %q, using %s\n", projectName, repoRoot)
-			}
-			cfg, cfgErr := config.LoadConfig(repoRoot)
-			if cfgErr != nil {
-				cfg = config.DefaultConfig()
-			}
-			projects = append(projects, projectEntry{name: projectName, root: repoRoot, config: cfg})
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
 		}
+
+		fmt.Printf("[poller] Starting (project: %s, interval: %ds)\n", projectName, interval)
 
 		for {
-			for _, p := range projects {
-				if len(projects) > 1 {
-					fmt.Printf("[%s] ", p.name)
-				}
-				runTriggerChecks(ctx, p.root, p.config, dryRun)
-				runHealthChecks(ctx, p.root, p.config, dryRun)
-			}
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("\n[%s] Polling...\n", ts)
+
+			pollActivePipelines(ctx, repoRoot, pCfg, dryRun)
+			pollNeedsReviewTasks(ctx, repoRoot, pCfg, dryRun)
+
 			if once {
 				break
 			}
@@ -99,307 +67,179 @@ For each trigger, spawns an M session in a tmux window (unless --dry-run).`,
 	},
 }
 
-func runTriggerChecks(ctx context.Context, repoRoot string, cfg *config.Config, dryRun bool) {
-	fmt.Printf("[%s] Polling for triggers...\n", time.Now().Format("15:04:05"))
-	triggerNewDesigns(ctx, repoRoot, cfg, dryRun)
-	triggerTasksNeedingReview(ctx, repoRoot, cfg, dryRun)
-	triggerSatisfiedWaits(ctx, repoRoot, cfg, dryRun)
-}
-
-func triggerNewDesigns(ctx context.Context, repoRoot string, cfg *config.Config, dryRun bool) {
-	designs, err := cbClient.FindNewDesigns(ctx)
+// pollActivePipelines checks each active pipeline and dispatches if no agent is working.
+func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Config, dryRun bool) {
+	runs, err := cbStore.ListRuns(ctx, projectName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [trigger:new-design] error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  [error] list runs: %v\n", err)
 		return
 	}
-	for _, d := range designs {
-		if !shouldSpawn(ctx, d.ID, dryRun) {
+
+	for _, run := range runs {
+		if run.Status != "active" {
 			continue
 		}
-		if dryRun {
-			fmt.Printf("  [trigger:new-design] Would init pipeline and spawn M for %s (%s)\n", d.ID, d.Title)
+
+		// Check if there's already an agent session running for this pipeline
+		if hasActiveSession(ctx, run.DesignID) {
+			fmt.Printf("  [%s] %s — agent running\n", run.Phase, run.DesignID)
 			continue
 		}
-		if _, err := cbClient.PipelineInit(ctx, d.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "  [trigger:new-design] pipeline init %s: %v\n", d.ID, err)
-			continue
+
+		// Check phase — some phases need task-level dispatch, not design-level
+		switch run.Phase {
+		case "implement":
+			// Check for tasks that need dispatch
+			dispatchReadyTasks(ctx, repoRoot, pCfg, run.DesignID, dryRun)
+
+		case "design", "decompose", "investigate", "review", "done":
+			// Design-level dispatch — spawn agent for this phase
+			if dryRun {
+				fmt.Printf("  [%s] %s — would dispatch\n", run.Phase, run.DesignID)
+			} else {
+				fmt.Printf("  [%s] %s — dispatching...\n", run.Phase, run.DesignID)
+				dispatchForPhase(ctx, run.DesignID)
+			}
+
+		default:
+			fmt.Printf("  [%s] %s — unknown phase, skipping\n", run.Phase, run.DesignID)
 		}
-		spawnM(ctx, repoRoot, cfg, d.ID, "new-design")
 	}
 }
 
-func triggerTasksNeedingReview(ctx context.Context, repoRoot string, cfg *config.Config, dryRun bool) {
-	tasks, err := cbClient.FindTasksNeedingReview(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [trigger:needs-review] error: %v\n", err)
+// pollNeedsReviewTasks finds tasks in needs-review and triggers review/merge.
+func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Config, dryRun bool) {
+	if conn == nil {
 		return
 	}
-	for _, t := range tasks {
-		designID := findParentDesign(ctx, t.ID)
-		if designID == "" {
-			fmt.Fprintf(os.Stderr, "  [trigger:needs-review] no parent design for %s\n", t.ID)
-			continue
-		}
-		if !shouldSpawn(ctx, designID, dryRun) {
-			continue
-		}
-		if dryRun {
-			fmt.Printf("  [trigger:needs-review] Would spawn M for review of %s (design: %s)\n", t.ID, designID)
-			continue
-		}
-		spawnM(ctx, repoRoot, cfg, designID, "needs-review")
-	}
-}
 
-func triggerSatisfiedWaits(ctx context.Context, repoRoot string, cfg *config.Config, dryRun bool) {
-	waits, err := cbClient.FindSatisfiedWaits(ctx)
+	// List tasks needing review
+	result, err := conn.List(ctx, connectorListFilters("task", "needs-review"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [trigger:wait-satisfied] error: %v\n", err)
 		return
 	}
-	for _, w := range waits {
-		if !shouldSpawn(ctx, w.DesignID, dryRun) {
+
+	for _, item := range result.Items {
+		// Find parent design
+		edges, err := conn.GetEdges(ctx, item.ID, "outgoing", []string{"child-of"})
+		if err != nil || len(edges) == 0 {
 			continue
 		}
-		if dryRun {
-			fmt.Printf("  [trigger:wait-satisfied] Would spawn M for %s (%s), all %d waiting_for closed\n",
-				w.DesignID, w.Title, len(w.WaitingFor))
-			continue
+		designID := edges[0].ItemID
+
+		// Check if all sibling tasks are done
+		allDone := true
+		siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+		if err == nil {
+			for _, s := range siblings {
+				if s.Status != "closed" && s.Status != "needs-review" {
+					allDone = false
+					break
+				}
+			}
 		}
-		spawnM(ctx, repoRoot, cfg, w.DesignID, "wait-satisfied")
+
+		if allDone {
+			if dryRun {
+				fmt.Printf("  [needs-review] %s — all tasks done, would advance %s to review\n", item.ID, designID)
+			} else {
+				fmt.Printf("  [needs-review] %s — all tasks done, advancing %s\n", item.ID, designID)
+				cbStore.UpdateRunPhase(ctx, designID, "review")
+			}
+		} else {
+			// Check if this task's wave is complete — dispatch next wave
+			if dryRun {
+				fmt.Printf("  [needs-review] %s — checking if next wave is ready\n", item.ID)
+			}
+		}
 	}
 }
 
-func shouldSpawn(ctx context.Context, designID string, dryRun bool) bool {
-	status, _, err := cbClient.PipelineLockCheck(ctx, designID)
+// hasActiveSession checks if there's a running tmux window for this design.
+func hasActiveSession(ctx context.Context, designID string) bool {
+	tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+
+	// Check for design-level window
+	out, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").CombinedOutput()
 	if err != nil {
-		return true
-	}
-	if status == "locked" {
-		if dryRun {
-			fmt.Printf("  [lock] %s is locked, skipping\n", designID)
-		}
 		return false
 	}
-	return true
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(line)
+		if name == designID || strings.HasPrefix(name, designID) {
+			return true
+		}
+	}
+	return false
 }
 
-func findParentDesign(ctx context.Context, taskID string) string {
-	edges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+// dispatchForPhase runs cobuild dispatch for a design/bug at its current phase.
+func dispatchForPhase(ctx context.Context, workItemID string) {
+	out, err := exec.CommandContext(ctx, "cobuild", "dispatch", workItemID).CombinedOutput()
 	if err != nil {
-		return ""
+		fmt.Fprintf(os.Stderr, "  [dispatch] %s failed: %v\n%s\n", workItemID, err, string(out))
+		return
 	}
+	fmt.Printf("  [dispatch] %s — %s\n", workItemID, strings.TrimSpace(string(out)))
+}
+
+// dispatchReadyTasks dispatches ready tasks for a design in the implement phase.
+func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Config, designID string, dryRun bool) {
+	edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return
+	}
+
+	ready := 0
+	inProgress := 0
+	done := 0
+
 	for _, e := range edges {
-		if e.Type == "design" {
-			return e.ItemID
-		}
-	}
-	return ""
-}
-
-func spawnM(ctx context.Context, repoRoot string, cfg *config.Config, designID, trigger string) {
-	skillsDir := cfg.SkillsDir
-	if skillsDir == "" {
-		skillsDir = "skills"
-	}
-	playbookPath := filepath.Join(skillsDir, "shared", "playbook.md")
-
-	tmuxSession := cfg.Dispatch.TmuxSession
-	if tmuxSession == "" {
-		tmuxSession = fmt.Sprintf("cobuild-%s", projectName)
-	}
-
-	// Ensure tmux session exists
-	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", tmuxSession).Run(); err != nil {
-		if createErr := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", tmuxSession).Run(); createErr != nil {
-			fmt.Fprintf(os.Stderr, "  [spawn] failed to create tmux session %q: %v\n", tmuxSession, createErr)
-			return
-		}
-	}
-	claudeFlags := cfg.Dispatch.ClaudeFlags
-	if claudeFlags == "" {
-		claudeFlags = "--print"
-	}
-
-	prompt := fmt.Sprintf(
-		"You are M. Read your playbook at %s. Your pipeline shard is %s. Current trigger: %s.",
-		playbookPath, designID, trigger,
-	)
-
-	windowName := fmt.Sprintf("m-%s", designID)
-	tmuxArgs := []string{
-		"new-window",
-		"-c", repoRoot,
-		"-n", windowName,
-		"-t", tmuxSession,
-		"claude",
-	}
-	if claudeFlags != "" {
-		tmuxArgs = append(tmuxArgs, strings.Fields(claudeFlags)...)
-	}
-	tmuxArgs = append(tmuxArgs, prompt)
-
-	out, err := exec.CommandContext(ctx, "tmux", tmuxArgs...).CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [spawn] failed for %s: %v\n%s\n", designID, err, string(out))
-		return
-	}
-	fmt.Printf("  [spawn] M session started: window=%s trigger=%s\n", windowName, trigger)
-}
-
-func runHealthChecks(ctx context.Context, repoRoot string, cfg *config.Config, dryRun bool) {
-	mon := cfg.Monitoring
-	if mon.StallTimeout == "" && !mon.CrashCheck {
-		return
-	}
-
-	stallTimeout, _ := time.ParseDuration(mon.StallTimeout)
-	if stallTimeout == 0 {
-		stallTimeout = 30 * time.Minute
-	}
-
-	tmuxSession := cfg.Dispatch.TmuxSession
-	if tmuxSession == "" {
-		tmuxSession = fmt.Sprintf("cobuild-%s", projectName)
-	}
-
-	tasks, err := cbClient.FindInProgressTasks(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [health] error finding tasks: %v\n", err)
-		return
-	}
-	if len(tasks) == 0 {
-		return
-	}
-
-	fmt.Printf("  [health] checking %d in-progress tasks\n", len(tasks))
-
-	for _, task := range tasks {
-		if mon.CrashCheck {
-			windowExists := checkTmuxWindow(tmuxSession, task.ID)
-			if !windowExists {
-				handleCrash(ctx, task, mon, repoRoot, cfg, dryRun)
-				continue
+		switch e.Status {
+		case "closed":
+			done++
+		case "in_progress":
+			inProgress++
+		case "needs-review":
+			done++ // effectively done
+		case "open":
+			// Check if blockers are satisfied
+			blockers, _ := conn.GetEdges(ctx, e.ItemID, "outgoing", []string{"blocked-by"})
+			allSatisfied := true
+			for _, b := range blockers {
+				if b.Status != "closed" {
+					allSatisfied = false
+					break
+				}
+			}
+			if allSatisfied {
+				ready++
+				if !dryRun && !hasActiveSession(ctx, e.ItemID) {
+					maxConcurrent := 3
+					if pCfg.Dispatch.MaxConcurrent > 0 {
+						maxConcurrent = pCfg.Dispatch.MaxConcurrent
+					}
+					if inProgress < maxConcurrent {
+						dispatchForPhase(ctx, e.ItemID)
+						inProgress++
+					}
+				} else if dryRun {
+					fmt.Printf("  [implement] %s — ready to dispatch\n", e.ItemID)
+				}
 			}
 		}
-		if time.Since(task.UpdatedAt) > stallTimeout {
-			handleStall(ctx, task, mon, repoRoot, cfg, tmuxSession, dryRun)
-		}
-	}
-}
-
-func checkTmuxWindow(session, taskID string) bool {
-	out, err := exec.Command("tmux", "list-windows", "-t", session).Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), taskID)
-}
-
-func handleCrash(ctx context.Context, task client.ShardSummary, mon config.MonitoringCfg, repoRoot string, cfg *config.Config, dryRun bool) {
-	retryCount := getRetryCount(ctx, task.ID)
-
-	if mon.MaxRetries > 0 && retryCount >= mon.MaxRetries {
-		if dryRun {
-			fmt.Printf("  [health:crash] %s -- max retries (%d) exceeded, would escalate\n", task.ID, mon.MaxRetries)
-			return
-		}
-		fmt.Printf("  [health:crash] %s -- max retries (%d) exceeded, escalating\n", task.ID, mon.MaxRetries)
-		action := mon.Actions.OnMaxRetries
-		if action == "escalate" || action == "" {
-			if conn != nil {
-				_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash\nMax retries (%d) exceeded. Escalating.", mon.MaxRetries))
-				_ = conn.AddLabel(ctx, task.ID, "blocked")
-			}
-		}
-		return
 	}
 
-	action := mon.Actions.OnCrash
-	if dryRun {
-		fmt.Printf("  [health:crash] %s -- window gone, retry %d/%d, would %s\n", task.ID, retryCount+1, mon.MaxRetries, action)
-		return
+	total := ready + inProgress + done
+	if total > 0 {
+		fmt.Printf("  [implement] %s — %d/%d done, %d in-progress, %d ready\n",
+			designID, done, total, inProgress, ready)
 	}
-
-	fmt.Printf("  [health:crash] %s -- window gone, retry %d/%d, action: %s\n", task.ID, retryCount+1, mon.MaxRetries, action)
-
-	switch {
-	case action == "redispatch" || action == "":
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Re-dispatching.", retryCount+1, mon.MaxRetries))
-		}
-		setRetryCount(ctx, task.ID, retryCount+1)
-		if conn != nil {
-			_ = conn.UpdateStatus(ctx, task.ID, "open")
-		}
-		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, findRepoRoot(), wtPath, task.ID) }
-		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
-	case strings.HasPrefix(action, "skill:"):
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Crash detected\nRetry %d/%d. Spawning skill %s.", retryCount+1, mon.MaxRetries, action))
-		}
-		setRetryCount(ctx, task.ID, retryCount+1)
-		spawnM(ctx, repoRoot, cfg, task.ID, "health-crash")
-	case action == "escalate":
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, "\n\n## Health Check -- Crash detected\nEscalating.")
-			_ = conn.AddLabel(ctx, task.ID, "blocked")
-		}
-	}
-}
-
-func handleStall(ctx context.Context, task client.ShardSummary, mon config.MonitoringCfg, repoRoot string, cfg *config.Config, tmuxSession string, dryRun bool) {
-	action := mon.Actions.OnStall
-	if dryRun {
-		fmt.Printf("  [health:stall] %s -- no progress for %s, would %s\n", task.ID, mon.StallTimeout, action)
-		return
-	}
-
-	fmt.Printf("  [health:stall] %s -- no progress for %s, action: %s\n", task.ID, mon.StallTimeout, action)
-
-	switch {
-	case strings.HasPrefix(action, "skill:"):
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Spawning skill %s.", mon.StallTimeout, action))
-		}
-		spawnM(ctx, repoRoot, cfg, task.ID, "health-stall")
-	case action == "escalate":
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Escalating.", mon.StallTimeout))
-			_ = conn.AddLabel(ctx, task.ID, "blocked")
-		}
-	case action == "redispatch":
-		retryCount := getRetryCount(ctx, task.ID)
-		if conn != nil {
-			_ = conn.AppendContent(ctx, task.ID, fmt.Sprintf("\n\n## Health Check -- Stall detected\nNo progress for %s. Re-dispatching (retry %d/%d).", mon.StallTimeout, retryCount+1, mon.MaxRetries))
-		}
-		setRetryCount(ctx, task.ID, retryCount+1)
-		if conn != nil {
-			_ = conn.UpdateStatus(ctx, task.ID, "open")
-		}
-		wtPath, _ := conn.GetMetadata(ctx, task.ID, "worktree_path"); if wtPath != "" { _ = worktree.Remove(ctx, findRepoRoot(), wtPath, task.ID) }
-		_ = exec.Command("cobuild", "dispatch", task.ID).Run()
-	}
-}
-
-func getRetryCount(ctx context.Context, taskID string) int {
-	shard, err := conn.Get(ctx, taskID)
-	if err != nil || shard.Metadata == nil {
-		return 0
-	}
-	count, _ := shard.Metadata["dispatch_retries"].(float64)
-	return int(count)
-}
-
-func setRetryCount(ctx context.Context, taskID string, count int) {
-	_ = conn.SetMetadata(ctx, taskID, "dispatch_retries", count)
 }
 
 func init() {
-	pollerCmd.Flags().Int("interval", 30, "Polling interval in seconds")
-	pollerCmd.Flags().Bool("once", false, "Run one check cycle and exit")
-	pollerCmd.Flags().Bool("dry-run", false, "Print what would be spawned without executing")
-	pollerCmd.Flags().Bool("all-projects", false, "Poll all registered projects from ~/.cobuild/repos.yaml")
-
+	pollerCmd.Flags().Int("interval", 30, "Poll interval in seconds")
+	pollerCmd.Flags().Bool("once", false, "Run once and exit")
+	pollerCmd.Flags().Bool("dry-run", false, "Show what would be done")
 	rootCmd.AddCommand(pollerCmd)
 }
