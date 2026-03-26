@@ -71,7 +71,36 @@ If `context.layers` is empty or missing:
 
 This means context layers are opt-in. An unconfigured project works the same as before.
 
-## Configuration
+## Directory Convention (zero config)
+
+The simplest way to manage context: put markdown files in phase-named directories under `.cobuild/context/`. CoBuild auto-discovers them — no YAML configuration needed.
+
+```
+.cobuild/context/
+    always/                        # every agent sees these
+        architecture.md            # system structure, patterns
+        principles.md              # hard constraints, rules
+        naming-conventions.md      # terminology, style
+    design/                        # design phase agents
+        domain-ingest.md           # how the ingest pipeline works
+        domain-entities.md         # entity model reference
+    implement/                     # implementing agents
+        sub-agents.md              # available sub-agents and when to use them
+        testing-standards.md       # how to write tests for this project
+        coding-patterns.md         # patterns to follow, anti-patterns to avoid
+    investigate/                   # bug investigation agents
+        sub-agents.md              # debugger agent available
+        infrastructure.md          # deploy topology, logs, monitoring
+        known-fragile-areas.md     # areas that break often and why
+    review/                        # review agents
+        review-checklist.md        # project-specific review criteria
+```
+
+Each `.md` file in a phase directory is loaded as a context layer for that phase. No YAML needed — just create the file and it's included next time an agent is dispatched.
+
+**Combined with YAML layers:** Auto-discovered files load first, then YAML-configured layers. Use YAML for work-item references (`source: work-item:<id>`) since those can't be files on disk. Use directories for static documents.
+
+## Configuration (YAML)
 
 ### Layer definition
 

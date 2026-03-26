@@ -20,6 +20,19 @@ func AssembleContext(cfg *Config, repoRoot, mode, phase string, extras map[strin
 
 	var sections []string
 
+	// 1. Auto-discover context files from .cobuild/context/<phase>/ directories
+	autoLayers := discoverContextDirs(repoRoot, mode, phase)
+	for _, layer := range autoLayers {
+		content, err := resolveLayer(layer, cfg, repoRoot, extras, workItemFetcher)
+		if err != nil {
+			continue
+		}
+		if content != "" {
+			sections = append(sections, fmt.Sprintf("<!-- context: %s (auto) -->\n%s", layer.Name, content))
+		}
+	}
+
+	// 2. Configured layers from pipeline.yaml
 	for _, layer := range cfg.Context.Layers {
 		if !layerActive(layer.When, mode, phase) {
 			continue
@@ -38,6 +51,56 @@ func AssembleContext(cfg *Config, repoRoot, mode, phase string, extras map[strin
 	}
 
 	return strings.Join(sections, "\n\n---\n\n"), nil
+}
+
+// discoverContextDirs finds .md files in .cobuild/context/<phase>/ directories.
+// Convention:
+//   .cobuild/context/always/     → loaded for every phase
+//   .cobuild/context/design/     → loaded for design phase
+//   .cobuild/context/implement/  → loaded for implement phase
+//   .cobuild/context/investigate/→ loaded for investigate phase
+//   etc.
+func discoverContextDirs(repoRoot, mode, phase string) []ContextLayer {
+	var layers []ContextLayer
+	contextBase := filepath.Join(repoRoot, ".cobuild", "context")
+
+	// Load "always" directory
+	layers = append(layers, readContextDir(contextBase, "always")...)
+
+	// Load "dispatch" directory if in dispatch mode
+	if mode == "dispatch" {
+		layers = append(layers, readContextDir(contextBase, "dispatch")...)
+	}
+
+	// Load phase-specific directory
+	if phase != "" {
+		layers = append(layers, readContextDir(contextBase, phase)...)
+	}
+
+	return layers
+}
+
+func readContextDir(contextBase, dirName string) []ContextLayer {
+	var layers []ContextLayer
+	dir := filepath.Join(contextBase, dirName)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil // directory doesn't exist, that's fine
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		layers = append(layers, ContextLayer{
+			Name:   fmt.Sprintf("%s/%s", dirName, name),
+			Source: fmt.Sprintf("file:%s", filepath.Join(".cobuild", "context", dirName, e.Name())),
+			When:   "always", // filtering already done by discoverContextDirs
+		})
+	}
+	return layers
 }
 
 // layerActive checks whether a context layer should be included.
