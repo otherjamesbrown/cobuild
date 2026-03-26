@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -84,9 +86,11 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			fmt.Printf("  Task %s → closed.\n", taskID)
 		}
 
-		// Clean up worktree
+		// Archive session logs before cleanup
 		wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 		if wtPath != "" {
+			archiveSessionLogs(wtPath, taskID)
+
 			repoForCleanup, _ := config.RepoForProject(projectName)
 			if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
 				fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
@@ -121,6 +125,40 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 
 		return nil
 	},
+}
+
+// archiveSessionLogs copies session logs from a worktree to .cobuild/sessions/<task-id>/
+// before the worktree is deleted. This preserves logs for retrospectives.
+func archiveSessionLogs(wtPath, taskID string) {
+	repoRoot := findRepoRoot()
+	archiveDir := filepath.Join(repoRoot, ".cobuild", "sessions", taskID)
+
+	cobuildDir := filepath.Join(wtPath, ".cobuild")
+	entries, err := os.ReadDir(cobuildDir)
+	if err != nil {
+		return // no .cobuild dir in worktree
+	}
+
+	os.MkdirAll(archiveDir, 0755)
+	archived := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		src := filepath.Join(cobuildDir, e.Name())
+		dst := filepath.Join(archiveDir, e.Name())
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			continue
+		}
+		archived++
+	}
+	if archived > 0 {
+		fmt.Printf("  Archived %d session log(s) to %s\n", archived, archiveDir)
+	}
 }
 
 func init() {
