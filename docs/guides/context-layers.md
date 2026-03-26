@@ -160,25 +160,71 @@ The mechanics are simple — the hard part is deciding what goes where. This sec
 
 ### The key question
 
-For each piece of context, ask: **which phase needs this to do its job?**
+For each piece of context, ask: **does this agent need this to do its specific job?**
 
-| Context | Who needs it | When |
-|---------|-------------|------|
-| Architecture docs | Everyone — how the system is built | `always` |
-| Architectural principles / constraints | Design reviewers and implementing agents | `always` |
-| Domain knowledge (pipeline specs, API docs) | Design reviewers — need domain context to evaluate | `phase:design` |
-| Testing standards | Implementing agents — need to know how to test | `phase:implement` |
-| Playbook / orchestration instructions | The orchestrating agent (interactive sessions) | `interactive` |
-| Task prompt | Dispatched agents only | `dispatch` |
-| Parent design | Dispatched agents need the big picture | `dispatch` |
-| Sub-agent context (dev-index, domain guides) | Only when that specific sub-agent is spawned | Not a layer — loaded by the agent itself |
+If the answer is "maybe" — leave it out. You can always add it later when a retrospective shows an agent was missing context. You can't un-waste the tokens from loading context the agent didn't need.
+
+### What to consider for each phase
+
+Use this as a checklist when setting up context. Not everything will apply — pick what's relevant for your project.
+
+**Always (every dispatched agent):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Architecture overview | `ARCHITECTURE.md` | Every agent needs to know how the system is structured |
+| Hard constraints | Architectural principles doc | Rules that must never be broken (e.g., "all config in DB") |
+| Naming conventions | Terminology / etymology guide | Consistent naming across all agents |
+| Coding style | Style guide, linting rules | Agents should produce code that fits the codebase |
+
+**Design phase (evaluating designs):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Domain knowledge | Pipeline specs, API docs, entity model | Reviewer needs domain expertise to judge completeness |
+| Prior designs | Related completed designs | Avoid duplicating solved problems |
+| Known limitations | Tech debt, planned deprecations | Don't design against something being removed |
+
+**Decompose phase (breaking designs into tasks):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Migration numbering | Last migration number, collision rules | Prevent parallel tasks from picking the same number |
+| Repo boundaries | Which code lives in which repo | Multi-repo projects need task-to-repo tagging |
+| Test infrastructure | What test tiers exist, how to run them | Tasks need correct acceptance criteria |
+
+**Investigate phase (bug analysis):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Known fragile areas | Areas that break often and why | Speeds up root cause identification |
+| Infrastructure topology | Deploy topology, log locations, monitoring | Investigator needs to check running systems |
+| Available sub-agents | Debugger, domain-specific agents | Investigator may want to delegate |
+
+**Implement phase (writing code):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Testing standards | Test tiers, patterns, anti-patterns | Agent needs to write correct tests |
+| Available sub-agents | Worker-dev, service-dev, data-dev | Agent can delegate specialised work |
+| Build/deploy notes | "Worker uses launchd, not systemd" | Platform-specific gotchas |
+| DB patterns | "Use pipeline_operational_config for config" | Project-specific data access patterns |
+
+**Review phase (PR review):**
+| Context type | Example | Why |
+|-------------|---------|-----|
+| Review checklist | Project-specific review criteria | What to check beyond "does it compile" |
+| Security policy | Auth patterns, data handling rules | Security-sensitive review criteria |
+| Architectural principles | Constraints the implementation must honour | Catch violations at review time, not production |
 
 ### What NOT to put in context layers
 
-- **Playbooks and interactive-only instructions.** Dispatched agents are NOT the orchestrating agent. Don't load your orchestrator's playbook into an implementing agent's context — it'll confuse it with orchestration instructions when it should be writing code.
-- **All your knowledge shards.** Context window is finite. Loading 20 KB shards wastes tokens. Pick the 2-3 most relevant per phase.
-- **Sub-agent context.** Your sub-agents (debugger, worker-dev, service-dev) have their own context loaded when they're spawned. CoBuild dispatch handles its own context injection — don't duplicate it.
-- **Identity/personality.** "You are Mycroft" is for interactive sessions. Dispatched agents get their role from the task prompt.
+- **Playbooks and orchestration instructions.** Dispatched agents are NOT the orchestrating agent. Loading your orchestrator's playbook into an implementing agent confuses it with management instructions when it should be writing code.
+
+- **Everything "just in case".** Context window is finite. Every document you load reduces the tokens available for the agent's actual work (reading code, planning, editing). 3 focused documents is better than 15 broad ones.
+
+- **Duplicate information.** If your architecture doc already describes your test infrastructure, don't also load a separate test infrastructure doc. Check for overlap. The same information loaded twice costs double the tokens and can cause contradictory instructions if they drift.
+
+- **Full sub-agent definitions.** Your sub-agents (debugger, worker-dev, etc.) have their own context loaded when Claude Code spawns them from `.claude/agents/`. Don't duplicate their full instructions as context layers. Instead, provide an **inventory** — a short doc listing which sub-agents exist and when to use them, so the dispatched agent knows they're available.
+
+- **Identity or personality.** "You are Mycroft, a senior backend engineer" is for interactive sessions. Dispatched agents get their role from the task prompt and the phase-specific instructions.
+
+- **Large reference documents.** A 50-page API reference wastes context. Instead, give the agent a pointer ("API docs are at docs/api.md — refer to the section on auth endpoints when implementing") and let it read what it needs.
 
 ### Building context for a complex project
 
@@ -354,6 +400,35 @@ context:
           source: dispatch-prompt
           when: dispatch
 ```
+
+## Gotchas
+
+**Context volume directly impacts agent performance.** Every token of context reduces the tokens available for the agent's work. A dispatched agent with 50K tokens of context has less room for code reads, planning, and edits than one with 10K. Measure: if agents are compacting frequently or producing shallow work, you may be loading too much context.
+
+**Duplicate context causes contradictions.** If your architecture doc says "use PostgreSQL" and a domain knowledge shard says "we're migrating to SQLite", the agent gets contradictory instructions. Before adding a new layer, grep for overlap with existing layers. One authoritative source per topic is better than three partial ones.
+
+**The `always` bucket grows silently.** Every document you add to `always` loads for every dispatched agent — design reviewers, implementers, investigators, everyone. After a few months you may have 10 documents in `always` that were each "just one more small doc." Audit `always` periodically — if something is only needed for one or two phases, move it.
+
+**Work-item content changes but your context doesn't.** If you reference `work-item:pf-eeb256` as architectural principles, and someone updates that shard, agents automatically get the new version. This is a feature — but it means a badly edited shard can silently degrade agent performance. Pin to specific versions if your work-item system supports it, or use `file:` sources for stable documents.
+
+**Directory-discovered files have no ordering.** Files in `.cobuild/context/always/` load in filesystem order (alphabetical). If ordering matters (e.g., architecture before principles), prefix with numbers: `01-architecture.md`, `02-principles.md`.
+
+**The prompt IS context too.** The task prompt (from decomposition) and the parent design are already loaded via `dispatch-prompt` and `parent-design`. Don't also load the design as a `work-item:` layer — you'll have it twice. CoBuild handles the task-specific context automatically.
+
+**Sub-agent inventory, not instructions.** For projects with sub-agents (`.claude/agents/`), create a short inventory doc listing what's available, not a copy of each agent's full instructions. The inventory goes in `.cobuild/context/implement/sub-agents.md`:
+
+```markdown
+# Available Sub-Agents
+
+| Agent | Expertise | Use when |
+|-------|-----------|----------|
+| debugger | Root cause analysis | Investigating failures, read-only |
+| worker-dev | Temporal workflows | Worker service modifications |
+| service-dev | gRPC, protobuf | Gateway/service layer changes |
+| data-dev | Migrations, schema | Database schema work |
+```
+
+The implementing agent reads this, decides whether to spawn a sub-agent, and Claude Code loads the sub-agent's full instructions from `.claude/agents/` at spawn time.
 
 ## Troubleshooting
 
