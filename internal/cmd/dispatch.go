@@ -142,20 +142,49 @@ var dispatchCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
+		// Phase-aware instructions
 		promptBuilder.WriteString("## Instructions\n\n")
-		promptBuilder.WriteString("Implement this task following the acceptance criteria above.\n\n")
-		promptBuilder.WriteString("### On completion\n\n")
 
-		step := 1
-		if len(pCfg.Test) > 0 {
-			promptBuilder.WriteString(fmt.Sprintf("%d. Run tests: `%s`\n", step, strings.Join(pCfg.Test, " && ")))
-			step++
+		// Detect if this is a bug in investigate phase
+		currentPhase := ""
+		if cbStore != nil {
+			run, err := cbStore.GetRun(ctx, task.ID)
+			if err == nil {
+				currentPhase = run.CurrentPhase
+			}
 		}
-		if len(pCfg.Build) > 0 {
-			promptBuilder.WriteString(fmt.Sprintf("%d. Build: `%s`\n", step, strings.Join(pCfg.Build, " && ")))
-			step++
+
+		if currentPhase == "investigate" || task.Type == "bug" && currentPhase == "" {
+			// Investigation mode — read-only
+			promptBuilder.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
+			promptBuilder.WriteString("Follow the bug-investigation skill:\n")
+			promptBuilder.WriteString("1. Understand the bug report above\n")
+			promptBuilder.WriteString("2. Reproduce and verify the bug\n")
+			promptBuilder.WriteString("3. Trace the root cause — check code, git blame, database state\n")
+			promptBuilder.WriteString("4. Map all affected files and related patterns\n")
+			promptBuilder.WriteString("5. Assess fragility — why did this area break?\n")
+			promptBuilder.WriteString("6. Write an investigation report and append to the bug:\n")
+			promptBuilder.WriteString(fmt.Sprintf("   `cobuild wi append %s --body \"## Investigation Report\\n...\"`\n", task.ID))
+			promptBuilder.WriteString("7. Record the investigation gate:\n")
+			promptBuilder.WriteString(fmt.Sprintf("   `cobuild investigate %s --verdict pass --body \"<summary>\"`\n", task.ID))
+			promptBuilder.WriteString("8. Create a fix task with the exact changes needed:\n")
+			promptBuilder.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"Fix: ...\" --body \"...\" --parent %s`\n", task.ID))
+		} else {
+			// Implementation mode
+			promptBuilder.WriteString("Implement this task following the acceptance criteria above.\n\n")
+			promptBuilder.WriteString("### On completion\n\n")
+
+			step := 1
+			if len(pCfg.Test) > 0 {
+				promptBuilder.WriteString(fmt.Sprintf("%d. Run tests: `%s`\n", step, strings.Join(pCfg.Test, " && ")))
+				step++
+			}
+			if len(pCfg.Build) > 0 {
+				promptBuilder.WriteString(fmt.Sprintf("%d. Build: `%s`\n", step, strings.Join(pCfg.Build, " && ")))
+				step++
+			}
+			promptBuilder.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n", step, taskID))
 		}
-		promptBuilder.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n", step, taskID))
 
 		prompt := promptBuilder.String()
 
