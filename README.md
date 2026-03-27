@@ -11,11 +11,11 @@ CoBuild orchestrates AI agents through a structured pipeline — from design rev
 - [**Skills as markdown**](docs/guides/skills.md) — extend the pipeline by writing a `.md` file
 - [**Connectors**](#connectors) — pluggable work-item backends (Context Palace, Beads, future Jira)
 - [**Storage**](#storage) — pluggable data store for pipeline state (Postgres, future SQLite/files)
-- [**Context layers**](docs/guides/context-layers.md) — control exactly what each agent sees per session type
-- [**Per-phase model selection**](docs/guides/models.md) — haiku for judgment, sonnet for creation
-- [**Self-improving**](docs/guides/feedback-loop.md) — feedback loop learns from execution patterns
-- [**Multi-project**](docs/guides/multi-project.md) — one poller manages multiple repos
-- [**Audit trail**](docs/guides/audit-trail.md) — every decision recorded with structured data
+- [**Context layers**](docs/guides/context-layers.md) — control exactly what each agent sees per phase
+- [**Phase-aware dispatch**](#how-it-works) — `cobuild dispatch` auto-detects the phase and generates the right prompt
+- [**Self-improving**](docs/guides/feedback-loop.md) — retrospectives feed findings back into skills
+- [**Audit trail**](docs/guides/audit-trail.md) — every decision recorded in Postgres
+- [**Session analytics**](#session-tracking) — token usage, file changes, events per dispatch
 
 ## Quick Start
 
@@ -23,22 +23,52 @@ CoBuild orchestrates AI agents through a structured pipeline — from design rev
 # Install
 go install github.com/otherjamesbrown/cobuild/cmd/cobuild@latest
 
-# Register your repo
-cd your-project
-cobuild setup
+# In your project repo:
+cobuild setup                  # register the repo
+cobuild init-skills            # copy default skills
+cobuild update-agents          # generate AGENTS.md with pipeline instructions
+cobuild explain                # see your pipeline in human-readable form
 
-# Copy default skills
-cobuild init-skills
-
-# Initialize a pipeline on a design
-cobuild init <design-shard-id>
-
-# Check status
-cobuild audit <design-shard-id>
-
-# Run the poller (autonomous mode)
-cobuild poller --all-projects
+# Submit a design to the pipeline:
+cobuild init <design-id>       # initialise pipeline (auto-detects type)
+cobuild dispatch <design-id>   # spawn agent for the current phase
+cobuild wait <design-id>       # wait for agent to complete
+cobuild status                 # see all active pipelines
 ```
+
+For full interactive setup (connector, storage, context layers), read the [bootstrap guide](skills/shared/bootstrap.md) or ask your AI assistant to follow it.
+
+### Using Beads
+
+```yaml
+# .cobuild.yaml
+project: my-project
+prefix: mp-
+
+# .cobuild/pipeline.yaml
+connectors:
+    work_items:
+        type: beads
+```
+
+CoBuild uses the `bd` CLI to read/write work items. All `cobuild wi` commands work the same regardless of connector:
+
+```bash
+cobuild wi show mp-abc123      # works with Beads
+cobuild wi list --type design   # works with Beads
+cobuild wi create --type bug --title "..."  # works with Beads
+```
+
+### Using Context Palace
+
+```yaml
+# .cobuild/pipeline.yaml
+connectors:
+    work_items:
+        type: context-palace
+```
+
+Uses the `cxp` CLI with `-o json`.
 
 ## How It Works
 
@@ -47,225 +77,252 @@ cobuild poller --all-projects
 | Workflow | Phases | Use case |
 |----------|--------|----------|
 | `design` | design → decompose → implement → review → done | Full design-to-delivery |
-| `bug` | investigate → implement → review → done | Bug fixes |
+| `bug` | investigate → implement → review → done | Bug fixes (investigation before fixing) |
 | `task` | implement → review → done | Standalone tasks |
 
 ### Pipeline Phases
 
 1. **Design Review** — evaluate readiness + implementability against 5 criteria
-2. **Decomposition** — break design into tasks with dependency ordering + integration test
-3. **Implement** — dispatch agents in isolated worktrees with configurable context
-4. **Review** — external (Gemini) or agent-based, with CI mode (pr-only/all-pass/ignore)
-5. **Done** — retrospective, docs update, feedback loop
+2. **Decomposition** — break design into tasks with dependency ordering and wave assignment
+3. **Investigation** (bugs only) — read-only root cause analysis, fragility assessment, fix specification
+4. **Implement** — dispatch agents in isolated worktrees with phase-aware context
+5. **Review** — external (Gemini) or agent-based, with CI integration
+6. **Done** — retrospective captures lessons and feeds back into skills
 
-### Stage Gates
+### Phase-Aware Dispatch
 
-Every phase transition goes through a gate:
+`cobuild dispatch` reads the current pipeline phase and generates the right prompt automatically:
+
+| Phase | What the dispatched agent does |
+|-------|-------------------------------|
+| design | Evaluate readiness, check 5 criteria, record gate |
+| decompose | Break into tasks, assign waves, set dependencies |
+| investigate | Read-only root cause analysis, create fix task |
+| implement | Write code, run tests, create PR |
+| review | Check PR against spec, evaluate CI, record verdict |
+| done | Run retrospective, suggest improvements |
+
+### Manual vs Autonomous
+
+**Manual mode** (default) — you step through each phase:
 
 ```bash
-cobuild gate <shard-id> <gate-name> --verdict pass|fail --body "<findings>"
+cobuild init <id>              # start pipeline
+cobuild dispatch <id>          # spawn agent for current phase
+cobuild wait <id>              # wait for completion
+# repeat for each phase
 ```
 
-Gates create a review sub-shard (audit trail), update pipeline metadata, and auto-advance the phase on pass.
+**Autonomous mode** — the poller handles everything:
+
+```bash
+cobuild run <id>               # mark for autonomous processing
+cobuild poller                 # processes all autonomous pipelines
+```
+
+Or label-based: add the `cobuild` label to any work item and the poller picks it up automatically.
 
 ## Configuration
 
+Full example with comments: [`examples/pipeline.yaml`](examples/pipeline.yaml)
+Minimal example: [`examples/pipeline-minimal.yaml`](examples/pipeline-minimal.yaml)
+
 ```yaml
 # .cobuild/pipeline.yaml
+
+github:
+    owner_repo: your-org/your-repo
+
+build:
+    - go build ./...
+test:
+    - go test ./...
+
+connectors:
+    work_items:
+        type: beads                  # or context-palace
+
+storage:
+    backend: postgres
+
+phases:
+    design:
+        gate: readiness-review
+        skill: design/gate-readiness-review.md
+    decompose:
+        gate: decomposition-review
+    investigate:
+        gate: investigation
+        skill: investigate/bug-investigation.md
+    implement:
+        skill: implement/dispatch-task.md
+        stall_check: implement/stall-check.md
+    review:
+        gate: review
+        skill: review/gate-process-review.md
+    done:
+        gate: retrospective
+        skill: done/gate-retrospective.md
 
 workflows:
     design:
         phases: [design, decompose, implement, review, done]
     bug:
+        phases: [investigate, implement, review, done]
+    task:
         phases: [implement, review, done]
-
-phases:
-    design:
-        model: haiku
-        gates:
-            - name: readiness-review
-              skill: design/gate-readiness-review
-              fields:
-                  readiness: {type: int, min: 1, max: 5, required: true}
-    decompose:
-        model: sonnet
-        gates:
-            - name: decomposition-review
-              requires_label: integration-test
-    implement:
-        model: sonnet
-    review:
-        model: haiku
-    done:
-        gates:
-            - name: retrospective
-              skill: done/gate-retrospective
 
 dispatch:
     max_concurrent: 3
-    tmux_session: main
-    claude_flags: "--dangerously-skip-permissions"
     default_model: sonnet
-
-context:
-    layers:
-        - name: architecture
-          source: file:.cobuild/context/architecture.md
-          when: always
-        - name: task-prompt
-          source: dispatch-prompt
-          when: dispatch
-
-monitoring:
-    stall_timeout: 30m
-    crash_check: true
-    max_retries: 3
-    actions:
-        on_stall: skill:implement/stall-check
-        on_crash: redispatch
-        on_max_retries: escalate
+    # tmux_session auto-creates as cobuild-<project>
 
 review:
+    strategy: external
+    external_reviewers: [gemini]
     ci:
         mode: pr-only
         wait: true
-    strategy: external
-    external_reviewers: [gemini]
 
 deploy:
-    enabled: true
+    pre_deploy: "./scripts/migrate.sh"    # run before any service deploy
     services:
         - name: api
-          trigger_paths: [services/api/]
+          trigger_paths: [services/api/**]
           command: ./scripts/deploy.sh api
-```
+          smoke_test: curl -sf https://api.example.com/health
+          rollback: ./scripts/rollback.sh api
 
-## Connectors
-
-CoBuild reads and writes work items (designs, bugs, tasks) through **connectors** — pluggable backends for external systems. CoBuild's own orchestration data (pipeline runs, gates, audit trail) is stored separately.
-
-```yaml
-# .cobuild/pipeline.yaml
-connectors:
-    work_items:
-        type: context-palace    # default — uses cxp CLI
-```
-
-| Connector | Backend | Access via |
-|-----------|---------|-----------|
-| `context-palace` | Context Palace (Postgres) | `cxp` CLI with `-o json` |
-| `beads` | Beads (Dolt) | `bd` CLI with `--json` |
-
-The connector interface follows Claude Code/CoWork patterns. See `research/claude-patterns.md` for the design rationale.
-
-## Storage
-
-CoBuild stores its own orchestration data (pipeline runs, gate audit records, task tracking) separately from work items. The storage backend is pluggable:
-
-```yaml
-# .cobuild/pipeline.yaml
-storage:
-    backend: postgres           # default
-    dsn: "host=localhost dbname=cobuild user=cobuild sslmode=disable"
-```
-
-| Backend | Status | Use case |
-|---------|--------|----------|
-| `postgres` | Implemented | Teams, shared infrastructure |
-| `sqlite` | [Designed](research/design-sqlite-store.md) | Single-user, local dev |
-| `file` | [Designed](research/design-file-store.md) | Zero-dependency, git-trackable (YAML + JSONL) |
-
-When no storage config is present, CoBuild uses the existing database connection settings (backward compatible).
-
-## Skills
-
-Skills are markdown files that tell agents what to do. Drop them in `skills/`:
-
-| Skill | Phase | Purpose |
-|-------|-------|---------|
-| `shared/create-design.md` | — | How to author a design that passes readiness review |
-| `shared/playbook.md` | — | Orchestrator decision trees and phase rules |
-| `design/gate-readiness-review.md` | design | Gate: readiness evaluation criteria |
-| `design/implementability.md` | design | Implementability reference |
-| `implement/dispatch-task.md` | implement | Task dispatch procedure |
-| `implement/stall-check.md` | implement | Diagnose stuck agents |
-| `review/gate-review-pr.md` | review | Gate: PR review (agent strategy) |
-| `review/gate-process-review.md` | review | Gate: PR review (external strategy) |
-| `review/merge-and-verify.md` | review | Post-review merge procedure |
-| `done/gate-retrospective.md` | done | Gate: post-delivery lessons learned |
-
-Initialize defaults: `cobuild init-skills`
-
-## Context Layers
-
-Control what context each agent sees:
-
-```yaml
 context:
     layers:
         - name: architecture
           source: file:ARCHITECTURE.md
-          when: always                # loaded in all sessions
-        - name: principles
-          source: work-item:pf-eeb256
-          when: always                # fetch from connector (CP shard, Bead, etc.)
-        - name: ingest-docs
-          source: work-item:pf-c66536
-          when: phase:design          # only during design phase
-        - name: testing-standards
-          source: work-item:pf-129647
-          when: phase:implement       # only during implement phase
+          when: always
         - name: task-prompt
           source: dispatch-prompt
-          when: dispatch              # only when pipeline dispatches
-        - name: security-policy
-          source: file:SECURITY.md
-          when: gate:security-review  # only during security gate
+          when: dispatch
+        - name: design-context
+          source: parent-design
+          when: dispatch
 ```
 
-Sources: `file:<path>`, `work-item:<id>`, `skills:<name>`, `claude-md`, `dispatch-prompt`, `parent-design`
-When: `always`, `interactive`, `dispatch`, `phase:<name>`, `gate:<name>`
+Or use the zero-config directory convention:
 
-## Feedback Loop
+```
+.cobuild/context/
+    always/           # every agent
+    design/           # design phase agents
+    implement/        # implementing agents
+    investigate/      # bug investigation agents
+```
+
+## Connectors
+
+CoBuild reads and writes work items through **connectors** — pluggable backends for external systems. CoBuild's own orchestration data is stored separately.
+
+| Connector | Backend | CLI | Config |
+|-----------|---------|-----|--------|
+| `context-palace` | Context Palace (Postgres) | `cxp` | `type: context-palace` |
+| `beads` | Beads (Dolt) | `bd` | `type: beads` |
+
+All `cobuild wi` commands work identically regardless of connector.
+
+## Storage
+
+CoBuild stores its own data (pipeline runs, gate records, session analytics) in Postgres:
+
+| Table | What it stores |
+|-------|---------------|
+| `pipeline_runs` | One row per pipeline — phase, status, mode |
+| `pipeline_gates` | Gate audit records — verdicts, findings |
+| `pipeline_tasks` | Task tracking — wave assignments, status |
+| `pipeline_sessions` | Per-dispatch records — timing, model, prompt, results |
+| `pipeline_session_events` | Per-tool-call events — file reads, edits, commands |
+
+## Skills
+
+Skills are markdown files with YAML frontmatter that tell agents what to do:
+
+| Directory | Skills | Purpose |
+|-----------|--------|---------|
+| `design/` | gate-readiness-review, implementability | Design evaluation |
+| `decompose/` | decompose-design | Break designs into tasks |
+| `investigate/` | bug-investigation | Root cause analysis for bugs |
+| `implement/` | dispatch-task, stall-check | Task dispatch and monitoring |
+| `review/` | gate-review-pr, gate-process-review, merge-and-verify | Code review |
+| `done/` | gate-retrospective | Post-delivery retrospective |
+| `shared/` | playbook, create-design, design-review | Cross-phase reference |
 
 ```bash
-cobuild insights          # execution analysis: gate pass rates, friction points
-cobuild improve           # suggest changes to skills and config from patterns
-cobuild improve --apply   # auto-apply non-skill changes
+cobuild init-skills            # copy defaults to your repo
+cobuild init-skills --update   # refresh defaults, preserve your gotchas
 ```
+
+## Context Layers
+
+Control what context each agent sees per phase. See the full [context layers guide](docs/guides/context-layers.md).
+
+Sources: `file:<path>`, `work-item:<id>`, `skills:<name>`, `claude-md`, `dispatch-prompt`, `parent-design`
+
+When: `always`, `interactive`, `dispatch`, `phase:<name>`, `gate:<name>`
+
+## Session Tracking
+
+Every dispatched agent session is recorded in Postgres with:
+- Timing (start, end, duration)
+- Model used
+- Full prompt and assembled context
+- Files changed, lines added/removed, commits
+- PR URL
+- Session log (raw output)
+
+Claude Code hooks record per-event data (tool calls, compaction, errors) for detailed analytics.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
+| **Setup** | |
 | `cobuild setup` | Register repo, create config |
 | `cobuild init-skills` | Copy default skills into repo |
-| `cobuild init-skills --update` | Refresh skills from defaults, preserving gotchas |
-| `cobuild init <id>` | Start pipeline on a design |
-| `cobuild gate <id> <name>` | Record gate verdict |
-| `cobuild review <id>` | Phase 1 readiness review |
-| `cobuild decompose <id>` | Phase 2 decomposition gate |
-| `cobuild investigate <id>` | Bug investigation gate |
-| `cobuild dispatch <id>` | Dispatch agent to implement task |
+| `cobuild init-skills --update` | Refresh skills, preserving gotchas |
+| `cobuild update-agents` | Regenerate AGENTS.md from current skills/config |
+| `cobuild explain` | Show pipeline in human-readable form |
+| **Pipeline** | |
+| `cobuild init <id>` | Start pipeline (auto-detects type → start phase) |
+| `cobuild init <id> --autonomous` | Start in autonomous mode |
+| `cobuild run <id>` | Submit for autonomous processing by poller |
+| `cobuild dispatch <id>` | Spawn agent for current phase (phase-aware) |
 | `cobuild dispatch-wave <id>` | Dispatch all ready tasks for a design |
-| `cobuild wait <id> [id...]` | Wait for tasks to reach target status |
+| `cobuild wait <id> [id...]` | Wait for tasks to complete |
 | `cobuild complete <id>` | Post-agent completion (PR, evidence) |
+| `cobuild gate <id> <name>` | Record gate verdict |
+| `cobuild review <id>` | Readiness review gate |
+| `cobuild decompose <id>` | Decomposition gate |
+| `cobuild investigate <id>` | Bug investigation gate |
 | `cobuild merge <id>` | Merge approved PR, close task |
-| `cobuild merge-design <id>` | Merge all tasks for a design |
-| `cobuild deploy <id>` | Run deploy for a merged design |
-| `cobuild update-agents` | Regenerate AGENTS.md from current skills and config |
-| `cobuild explain` | Show the full pipeline in human-readable form |
+| `cobuild merge-design <id>` | Smart merge all PRs (conflict detection) |
+| `cobuild deploy <id>` | Deploy affected services |
 | `cobuild retro <id>` | Run pipeline retrospective |
+| **Status** | |
 | `cobuild status` | Show all active pipelines |
 | `cobuild audit <id>` | Show gate timeline |
-| `cobuild wi show <id>` | Show work item details |
+| **Work Items** | |
+| `cobuild wi show <id>` | Show work item |
 | `cobuild wi list` | List work items |
-| `cobuild wi links <id>` | Show work item relationships |
-| `cobuild wi status <id> <status>` | Update work item status |
-| `cobuild wi create` | Create a new work item |
-| `cobuild wi append <id>` | Append content to a work item |
-| `cobuild wi label add <id> <label>` | Add a label to a work item |
-| `cobuild poller` | Run trigger + health poller |
+| `cobuild wi links <id>` | Show relationships |
+| `cobuild wi status <id> <status>` | Update status |
+| `cobuild wi create` | Create work item |
+| `cobuild wi append <id>` | Append content |
+| `cobuild wi label add <id> <label>` | Add label |
+| **Admin** | |
+| `cobuild admin health` | System health check |
+| `cobuild admin cleanup` | Remove stale worktrees, branches, old data |
+| `cobuild admin db-stats` | Database usage |
+| `cobuild admin stuck` | Find stuck pipelines and orphan tasks |
+| **Autonomous** | |
+| `cobuild poller` | Process autonomous pipelines continuously |
+| `cobuild poller --once` | Single pass |
 | `cobuild insights` | Execution analysis |
 | `cobuild improve` | Suggest pipeline improvements |
 
@@ -276,31 +333,30 @@ cobuild improve --apply   # auto-apply non-skill changes
 Don't jump straight to `cobuild poller`. Step through the pipeline manually for your first few designs:
 
 ```bash
-/design-review <id>          # review and submit
-cobuild gate <id> ...        # step through gates
-cobuild dispatch <id>        # dispatch tasks one at a time
-cobuild wait <id>            # watch agents work
-cobuild merge <id>           # merge PRs yourself
-cobuild retro <id>           # review what happened
+cobuild init <id>                # start pipeline
+cobuild dispatch <id>            # spawn agent for current phase
+cobuild wait <id>                # wait for completion
+cobuild dispatch <id>            # next phase
+cobuild wait <id>                # ...
+cobuild merge-design <id>        # merge all PRs
+cobuild deploy <id>              # deploy affected services
+cobuild retro <id>               # review what happened
 ```
 
-Every project has quirks — migration numbering conventions, architectural principles, deploy procedures, test patterns — that the default skills don't know about. Manual runs surface these as concrete issues that you can feed back into the skills.
+Every project has quirks that the default skills don't know about. Manual runs surface these. Each retrospective finding becomes a skill gotcha, a decompose guideline, or a review rule.
 
 ### Use retrospectives to improve the pipeline
 
-After each design completes, `cobuild retro <id>` generates a retrospective. Read it. The most valuable sections are **What Failed** and **Suggested Changes** — they tell you exactly which skills to update.
+After each design completes, `cobuild retro <id>` generates a retrospective. The most valuable parts: **What Failed** and **Suggested Changes**. Common findings:
 
-Common patterns from early runs:
-- **Agents hardcode values** that should be configurable → add explicit "read from config" instructions to task specs during decomposition
-- **Migration number collisions** in parallel tasks → assign numbers explicitly in the decomposition, don't let agents pick
-- **Design review rates things too leniently** → strengthen severity rules in the design-reviewer for your project's constraints
-- **Agents produce empty PRs** → check dispatch flags (`claude_flags` in pipeline.yaml) and worktree configuration
-
-Each retrospective finding should become either a skill gotcha, a decompose guideline, or a project-specific review rule. After 3-4 manual runs, the skills will be tuned for your project and autonomous mode will work reliably.
+- **Agents hardcode values** → add "read from config" instructions to task specs
+- **Migration number collisions** → assign numbers explicitly during decomposition
+- **Review comments ignored** → agents must address critical review findings before merge
+- **Context missing** → add the missing document to the right phase directory
 
 ### Keep skills lean, add gotchas over time
 
-Don't try to write perfect skills upfront. Start with the defaults, run the pipeline, and add a gotcha line each time an agent trips on something. The Gotchas section is the highest-value part of any skill — it's the accumulated knowledge of what goes wrong.
+Start with defaults. Run the pipeline. Add a gotcha each time an agent trips. The Gotchas section is the highest-value part of any skill.
 
 ## License
 

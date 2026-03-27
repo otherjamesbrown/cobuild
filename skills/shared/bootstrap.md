@@ -24,7 +24,9 @@ Design  →  Decompose  →  Implement  →  Review  →  Done
 4. **Review** — PRs are reviewed by an external reviewer (e.g., Gemini) or by another agent. Approved PRs get merged.
 5. **Done** — A retrospective captures lessons learned and feeds them back into the pipeline configuration.
 
-Shorter workflows exist for **bugs** and **tasks** that skip the design and decompose phases.
+**Bugs** follow a shorter workflow: investigate → implement → review → done. The investigation phase analyses root cause before any code is changed.
+
+**Tasks** go straight to: implement → review → done.
 
 ### Architecture
 
