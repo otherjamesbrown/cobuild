@@ -30,6 +30,18 @@ func (c *BeadsConnector) Get(ctx context.Context, id string) (*WorkItem, error) 
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", id, err)
 	}
+	// bd show --json returns an array; unwrap to single item
+	trimmed := strings.TrimSpace(string(out))
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(out, &items); err != nil {
+			return nil, fmt.Errorf("parse beads show array: %w", err)
+		}
+		if len(items) == 0 {
+			return nil, fmt.Errorf("get %s: no results", id)
+		}
+		out = items[0]
+	}
 	return c.parseWorkItem(out)
 }
 
@@ -250,7 +262,7 @@ func (c *BeadsConnector) parseWorkItem(data json.RawMessage) (*WorkItem, error) 
 		Title       string          `json:"title"`
 		Description string          `json:"description"`
 		Notes       string          `json:"notes"`
-		IssueType   string          `json:"type"`
+		IssueType   string          `json:"issue_type"`
 		Status      string          `json:"status"`
 		Priority    int             `json:"priority"`
 		Assignee    string          `json:"assignee"`
