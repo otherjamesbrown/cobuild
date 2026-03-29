@@ -16,12 +16,12 @@ Full system reference: `docs/cobuild.md`
 
 ## Startup
 
-1. Read the pipeline shard: `cobuild pipeline show <id>`
+1. Read the pipeline shard: `cobuild show <id>`
 2. Read the shard itself: `cobuild show <id>`
 3. Determine the shard type (design, bug, task) and current phase
-4. Lock the pipeline: `cobuild pipeline lock <id>` — if locked, exit
+4. Lock the pipeline: `cobuild lock <id>` — if locked, exit
 5. Follow the decision tree for the current phase below
-6. Unlock when done: `cobuild pipeline unlock <id>`
+6. Unlock when done: `cobuild unlock <id>`
 
 ---
 
@@ -61,7 +61,7 @@ Does the design:
 1. Read the design and evaluate 5 readiness criteria + implementability check
 2. Record the verdict:
    ```bash
-   cobuild pipeline review <id> --verdict pass|fail --readiness <N> --body "<findings>"
+   cobuild review <id> --verdict pass|fail --readiness <N> --body "<findings>"
    ```
 3. If fail: `cobuild wi label add <id> blocked`. Unlock. Exit.
 4. If pass: phase auto-advances to `decompose`. Unlock. Exit.
@@ -90,10 +90,10 @@ Read the pipeline config for the agent roster. Route tasks to agents based on do
    cobuild wi create --type task --title "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
    cobuild wi links add <test-id> --blocked-by <all-other-task-ids>
    ```
-5. **Register tasks**: `cobuild pipeline update <id> --add-task <task-id>` for each
+5. **Register tasks**: `cobuild update <id> --add-task <task-id>` for each
 6. **Record verdict**:
    ```bash
-   cobuild pipeline decompose <id> --verdict pass --body "<rationale>"
+   cobuild decompose <id> --verdict pass --body "<rationale>"
    ```
 7. Unlock. Exit. Poller picks up Phase 3.
 
@@ -156,7 +156,7 @@ Configured in `monitoring:` section of pipeline.yaml. The poller detects:
 
 When all tasks are closed:
 ```bash
-cobuild pipeline update <id> --phase review
+cobuild update <id> --phase review
 ```
 
 ---
@@ -196,7 +196,7 @@ This squash-merges the PR, then cleans up the worktree and closes the task. Depl
 When all tasks merged:
 1. Check design success criteria against what was built
 2. Gaps → file new tasks, back to Phase 3
-3. Complete → `cobuild pipeline update <id> --phase done`
+3. Complete → `cobuild update <id> --phase done`
 
 ---
 
@@ -204,13 +204,13 @@ When all tasks merged:
 
 Run the retrospective gate (if configured):
 ```bash
-cobuild pipeline gate <id> retrospective --verdict pass --body "<findings>"
+cobuild gate <id> retrospective --verdict pass --body "<findings>"
 ```
 
 Follow `skills/done/gate-retrospective.md`:
-1. Review the audit trail: `cobuild pipeline audit <id>`
-2. Review insights: `cobuild pipeline insights`
-3. Generate improvements: `cobuild pipeline improve`
+1. Review the audit trail: `cobuild audit <id>`
+2. Review insights: `cobuild insights`
+3. Generate improvements: `cobuild improve`
 4. Record findings as a knowledge shard
 5. Close the design: `cobuild wi status <id> closed`
 
@@ -255,20 +255,20 @@ cobuild wi label add <id> blocked
 
 | Action | Command |
 |--------|---------|
-| Read pipeline state | `cobuild pipeline show <id>` |
-| Record Phase 1 review | `cobuild pipeline review <id> --verdict pass\|fail --readiness N --body "..."` |
-| Record Phase 2 decompose | `cobuild pipeline decompose <id> --verdict pass\|fail --body "..."` |
-| Record any gate | `cobuild pipeline gate <id> <gate-name> --verdict pass\|fail --body "..."` |
-| View audit trail | `cobuild pipeline audit <id>` |
-| Lock / unlock | `cobuild pipeline lock <id>` / `unlock <id>` |
+| Read pipeline state | `cobuild show <id>` |
+| Record Phase 1 review | `cobuild review <id> --verdict pass\|fail --readiness N --body "..."` |
+| Record Phase 2 decompose | `cobuild decompose <id> --verdict pass\|fail --body "..."` |
+| Record any gate | `cobuild gate <id> <gate-name> --verdict pass\|fail --body "..."` |
+| View audit trail | `cobuild audit <id>` |
+| Lock / unlock | `cobuild lock <id>` / `unlock <id>` |
 | View task deps | `cobuild deps <design-id>` |
 | Dispatch task | `cobuild task dispatch <task-id>` |
 | Complete task | `cobuild task complete <task-id>` |
 | Review verdict | `cobuild task review-verdict <task-id> approve\|request-changes\|escalate` |
 | Merge PR | `gh pr merge <pr-number> --squash` |
 | Dashboard | `cobuild dashboard` |
-| Pipeline insights | `cobuild pipeline insights` |
-| Suggest improvements | `cobuild pipeline improve` |
+| Pipeline insights | `cobuild insights` |
+| Suggest improvements | `cobuild improve` |
 | Set status | `cobuild wi status <id> <status>` |
 | Add label | `cobuild wi label add <id> <label>` |
 | Append to work item | `cobuild wi append <id> --body "..."` |
