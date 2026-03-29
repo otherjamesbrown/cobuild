@@ -121,10 +121,47 @@ cobuild wi append <design-id> --body "## Decomposition
 ..."
 ```
 
-Then record the decomposition gate:
+## Step 7: Verify context layers before dispatching
+
+Before recording the decomposition gate, check that dispatched agents will have the context they need. Agents in worktrees only see what's configured — they don't have your CLAUDE.md or conversation history.
+
+**Check always-on context:**
+```bash
+ls .cobuild/context/always/ 2>/dev/null
+```
+
+If this directory is empty or doesn't exist, dispatched agents will only see their task prompt and parent design — no architecture reference, no coding conventions, no project constraints.
+
+**Minimum context for most projects:**
+
+| File | What it contains | Lines |
+|------|-----------------|-------|
+| `.cobuild/context/always/architecture.md` | Core objects, relationships, data flow, hard constraints, project layout | ~200 |
+| `.cobuild/context/implement/coding-patterns.md` | DB patterns, CLI conventions, error handling, naming | ~80 |
+
+**Check for oversized context:**
+
+If the project has a large spec or architecture doc (500+ lines), do NOT point agents at it directly. Create a concise reference (~200-300 lines) that covers what an implementing agent needs. Full specs waste context window and degrade agent performance.
 
 ```bash
-cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of decomposition>"
+# Check if architecture doc exists and its size
+wc -l ARCHITECTURE.md .cobuild/context/always/*.md 2>/dev/null
+```
+
+**If context is missing, create it now** — before recording the decomposition gate. Tasks will be dispatched after decomposition passes, and agents need context to implement correctly.
+
+**Report in the gate verdict:**
+```
+Context check:
+  ✓ .cobuild/context/always/architecture.md (185 lines)
+  ✓ .cobuild/context/implement/coding-patterns.md (82 lines)
+  ⚠ No investigate-phase context — bug investigators won't have operational context
+```
+
+## Step 8: Record the decomposition gate
+
+```bash
+cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of decomposition + context check>"
 ```
 
 ## Gotchas
@@ -135,4 +172,5 @@ cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of
 - Prefer more smaller tasks over fewer larger ones — agent context is the constraint
 - **Migration number collisions:** Parallel tasks in the same wave all branch from the same main. If multiple tasks create database migrations, assign non-colliding migration numbers explicitly in the task spec. Don't let agents pick their own numbers — they'll collide.
 - **Hardcoded values:** If the project has a "config in DB" principle, task specs should explicitly state "read from config table" for any thresholds, limits, or timeouts. Agents default to hardcoding if the spec doesn't say otherwise.
-<!-- Add failure patterns here as they're discovered -->
+- **Missing context layers:** If `.cobuild/context/always/` is empty, stop and create an architecture reference before dispatching. Agents without context produce incorrect code that doesn't fit the project. A 200-line architecture doc saves hours of re-work.
+- **Oversized context:** If pointing at a 1000+ line spec, agents waste context window and produce shallow work. Create a concise reference. The full spec is for humans — the agent reference is for agents.
