@@ -51,9 +51,24 @@ Break the design into tasks. Each task should be:
 - A task that requires another task's PR to be merged first but doesn't declare the dependency
 - A task with no acceptance criteria
 
+### Mandatory: Test infrastructure task (Wave 1)
+
+If the project doesn't already have shared test infrastructure for the area being changed, create a **Wave 1 task** for it. This runs before any implementing agent starts writing tests.
+
+The test infrastructure task should create:
+- **Shared fixtures** (conftest.py, test helpers, factory functions)
+- **Test database setup/teardown** (if integration tests need a real DB)
+- **Mock vs live flags** (for tests that can run with or without external services)
+- **E2E test skeleton** (if the design's test strategy includes e2e tests)
+
+Check: `ls tests/ conftest.py test_*.py *_test.go` — if test infrastructure already exists for this area, skip this task.
+
+Without this: each agent independently invents its own mocks, fixtures, and patterns. The result is 8 test files that all mock differently and catch zero integration bugs.
+
 ## Step 3: Order by dependencies
 
 Determine which tasks depend on which. Common patterns:
+- **Test infrastructure** before any implementation tasks (Wave 1)
 - Schema changes before code that uses the schema
 - Types/interfaces before implementations
 - Backend before frontend

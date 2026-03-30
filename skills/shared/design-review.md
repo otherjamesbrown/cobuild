@@ -36,6 +36,7 @@ Evaluate each criterion. Be specific about what's present and what's missing.
 | 2 | **User identified** | Who benefits from this change? Could be a person, another system, or an agent. |
 | 3 | **Success criteria** | Measurable acceptance criteria that an agent could verify. "Works correctly" is not testable. "Returns 200 with valid JSON matching schema X" is. |
 | 4 | **Scope boundaries** | What's explicitly out of scope or deferred. Without this, implementing agents gold-plate. |
+| 5 | **Test strategy** | How will this be tested? Unit tests (what's mocked), integration tests (what hits real deps), e2e tests (full flow). If the project needs test infrastructure (fixtures, test DB setup), is that mentioned? |
 | 5 | **Links to parent** | Design should be linked to a parent outcome or initiative. Check edges. |
 
 ## Step 3: Check implementability
