@@ -168,6 +168,43 @@ Use --project to filter to one project. Use --json for structured output.`,
 			fmt.Println()
 		}
 
+		// Token usage
+		rows, err = conn.Query(ctx, `
+			SELECT project,
+				COUNT(*) as sessions,
+				COALESCE(SUM(output_tokens), 0) as total_output,
+				COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
+				COALESCE(SUM(estimated_cost_usd), 0)::numeric(10,2) as total_cost,
+				COALESCE(AVG(max_context_tokens) FILTER (WHERE max_context_tokens > 0), 0)::int as avg_context,
+				COALESCE(SUM(turns), 0) as total_turns
+			FROM pipeline_sessions
+			WHERE output_tokens IS NOT NULL
+			`+conditionalAnd(projectFilter, "project")+`
+			GROUP BY project
+			ORDER BY total_cost DESC
+		`, filterArgs...)
+		if err == nil {
+			fmt.Println("## Token Usage\n")
+			fmt.Printf("%-12s %6s %10s %12s %10s %10s %8s\n",
+				"PROJECT", "SESS", "OUTPUT", "CACHE READ", "AVG CTX", "TURNS", "COST")
+			fmt.Printf("%-12s %6s %10s %12s %10s %10s %8s\n",
+				"-------", "----", "------", "----------", "-------", "-----", "----")
+			for rows.Next() {
+				var proj string
+				var sessions, totalOutput, totalCacheRead, avgContext, totalTurns int
+				var cost float64
+				rows.Scan(&proj, &sessions, &totalOutput, &totalCacheRead, &cost, &avgContext, &totalTurns)
+				fmt.Printf("%-12s %6d %10s %12s %10s %10d $%7.2f\n",
+					proj, sessions,
+					formatTokens(totalOutput),
+					formatTokens(totalCacheRead),
+					formatTokens(avgContext),
+					totalTurns, cost)
+			}
+			rows.Close()
+			fmt.Println()
+		}
+
 		// Quick totals
 		var totalPipelines, totalGates, totalSessions int
 		conn.QueryRow(ctx, "SELECT COUNT(*) FROM pipeline_runs"+conditionalWhere(projectFilter, "project"), filterArgs...).Scan(&totalPipelines)
