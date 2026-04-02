@@ -1,0 +1,390 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "cobuild-overview",
+    "title": "CoBuild Pipeline Overview",
+    "tags": [
+      "cobuild"
+    ],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "refresh": "30s",
+    "templating": {
+      "list": [
+        {
+          "name": "project",
+          "type": "query",
+          "query": "SELECT DISTINCT project FROM pipeline_runs ORDER BY project",
+          "datasource": {
+            "type": "postgres",
+            "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+          },
+          "includeAll": true,
+          "multi": true,
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          }
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Pipelines",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COUNT(*) FROM pipeline_runs WHERE status = 'active' AND project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 10,
+                  "color": "yellow"
+                },
+                {
+                  "value": 20,
+                  "color": "red"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Completed Pipelines",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 4,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COUNT(*) FROM pipeline_runs WHERE status = 'completed' AND project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Total Gate Verdicts",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 8,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COUNT(*) FROM pipeline_gates pg JOIN pipeline_runs pr ON pg.pipeline_id = pr.id WHERE pr.project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Agent Sessions",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COUNT(*) FROM pipeline_sessions WHERE project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Estimated Cost (USD)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 16,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COALESCE(SUM(estimated_cost_usd), 0)::numeric(10,2) FROM pipeline_sessions WHERE project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Total Output Tokens",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 20,
+          "y": 0
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT COALESCE(SUM(output_tokens), 0) FROM pipeline_sessions WHERE project IN ('$project')",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Gate Pass Rates by Project",
+        "type": "barchart",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT pr.project, pg.gate_name, ROUND(COUNT(*) FILTER (WHERE pg.verdict='pass')::numeric / GREATEST(COUNT(*), 1) * 100) as pass_rate FROM pipeline_gates pg JOIN pipeline_runs pr ON pg.pipeline_id = pr.id WHERE pr.project IN ('$project') GROUP BY pr.project, pg.gate_name ORDER BY pr.project, pg.gate_name",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Session Duration by Phase",
+        "type": "barchart",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT project || ' / ' || phase as label, AVG(duration_seconds)::int as avg_seconds, MAX(duration_seconds) as max_seconds FROM pipeline_sessions WHERE duration_seconds > 0 AND project IN ('$project') GROUP BY project, phase ORDER BY avg_seconds DESC",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 20,
+        "title": "Sessions Over Time",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT started_at as time, project, estimated_cost_usd as cost FROM pipeline_sessions WHERE started_at IS NOT NULL AND project IN ('$project') ORDER BY started_at",
+            "format": "time_series",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 21,
+        "title": "Token Usage Over Time",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT started_at as time, project, output_tokens FROM pipeline_sessions WHERE started_at IS NOT NULL AND output_tokens IS NOT NULL AND project IN ('$project') ORDER BY started_at",
+            "format": "time_series",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 30,
+        "title": "Context Window Usage",
+        "type": "gauge",
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 28
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT project, AVG(max_context_tokens)::int as avg_context, MAX(max_context_tokens) as max_context FROM pipeline_sessions WHERE max_context_tokens > 0 AND project IN ('$project') GROUP BY project",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "max": 1000000,
+            "thresholds": {
+              "steps": [
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 500000,
+                  "color": "yellow"
+                },
+                {
+                  "value": 800000,
+                  "color": "red"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 31,
+        "title": "Cost per Session by Project",
+        "type": "barchart",
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 12,
+          "y": 28
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT project, AVG(estimated_cost_usd)::numeric(10,2) as avg_cost, MAX(estimated_cost_usd)::numeric(10,2) as max_cost, MIN(estimated_cost_usd)::numeric(10,2) as min_cost FROM pipeline_sessions WHERE estimated_cost_usd > 0 AND project IN ('$project') GROUP BY project",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 40,
+        "title": "Recent Pipelines",
+        "type": "table",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 34
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT pr.design_id as \"Design\", pr.project as \"Project\", pr.current_phase as \"Phase\", pr.status as \"Status\", COALESCE(pr.mode, 'manual') as \"Mode\", COALESCE(tc.done || '/' || tc.total, '-') as \"Tasks\", pr.updated_at as \"Last Activity\" FROM pipeline_runs pr LEFT JOIN (SELECT pipeline_id, COUNT(*) as total, COUNT(*) FILTER (WHERE status='completed') as done FROM pipeline_tasks GROUP BY pipeline_id) tc ON tc.pipeline_id = pr.id WHERE pr.project IN ('$project') ORDER BY pr.updated_at DESC LIMIT 20",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      },
+      {
+        "id": 41,
+        "title": "Recent Agent Sessions",
+        "type": "table",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 42
+        },
+        "targets": [
+          {
+            "rawSql": "SELECT task_id as \"Task\", project as \"Project\", phase as \"Phase\", status as \"Status\", duration_seconds as \"Duration (s)\", output_tokens as \"Output Tokens\", max_context_tokens as \"Max Context\", estimated_cost_usd as \"Cost (USD)\", turns as \"Turns\", files_changed as \"Files\", started_at as \"Started\" FROM pipeline_sessions WHERE project IN ('$project') ORDER BY started_at DESC LIMIT 30",
+            "format": "table",
+            "datasource": {
+              "type": "postgres",
+              "uid": "ac7824b5-0fd3-4efe-84ac-ab06fcdfc66c"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}
