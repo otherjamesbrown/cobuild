@@ -115,8 +115,9 @@ internal/config/context.go    # context layer assembly for CLAUDE.md
 internal/merge/               # smart merge: conflict analysis, supersession, wave-aware
 internal/worktree/            # git worktree lifecycle (create, verify, cleanup)
 hooks/                        # claude code hooks for session event tracking
-hooks/cobuild-event.sh        # records tool calls, compaction, errors to Postgres
+hooks/cobuild-event.sh        # repeated read detection, token tracking, event logging
 hooks/hooks.json              # hook registration for SessionStart, PreToolUse, etc.
+.cobuild/context/always/anatomy.md  # auto-generated file index (cobuild scan)
 skills/                       # default skill files (copied to repos via init-skills)
 examples/                     # example config files (pipeline.yaml, cobuild.yaml)
 migrations/                   # database migrations

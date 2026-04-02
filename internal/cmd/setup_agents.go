@@ -198,6 +198,8 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("| `cobuild retro <design-id>` | Run retrospective |\n")
 	sb.WriteString("| `cobuild status` | Show all active pipelines |\n")
 	sb.WriteString("| `cobuild audit <id>` | View gate history |\n")
+	sb.WriteString("| `cobuild scan` | Refresh project anatomy (file index for agents) |\n")
+	sb.WriteString("| `cobuild explain` | Show pipeline in human-readable form |\n")
 	sb.WriteString("\n")
 
 	sb.WriteString("### Work Items\n\n")

@@ -543,7 +543,10 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild status` | Show all active pipelines with phase, tasks, last activity |
 | `cobuild explain` | Show the full pipeline in human-readable markdown |
 | `cobuild update-agents` | Regenerate AGENTS.md from current skills and config |
+| `cobuild scan` | Generate project anatomy (file index with token estimates) |
 | `cobuild retro <id>` | Run pipeline retrospective, record gate |
+| `cobuild admin tokens` | Parse transcript for exact token usage and cost |
+| `cobuild admin waste` | Detect token waste patterns from session events |
 
 ### Shard pipeline commands
 

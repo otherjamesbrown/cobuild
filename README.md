@@ -26,6 +26,7 @@ go install github.com/otherjamesbrown/cobuild/cmd/cobuild@latest
 # In your project repo:
 cobuild setup                  # register the repo
 cobuild init-skills            # copy default skills
+cobuild scan                   # generate file index for agents
 cobuild update-agents          # generate AGENTS.md with pipeline instructions
 cobuild explain                # see your pipeline in human-readable form
 
@@ -266,6 +267,30 @@ Sources: `file:<path>`, `work-item:<id>`, `skills:<name>`, `claude-md`, `dispatc
 
 When: `always`, `interactive`, `dispatch`, `phase:<name>`, `gate:<name>`
 
+Or use the zero-config directory convention — drop `.md` files in `.cobuild/context/<phase>/`.
+
+## Project Anatomy
+
+`cobuild scan` generates a file index for the codebase — every file with its line count, estimated token cost, and auto-detected description:
+
+```bash
+cobuild scan              # generate .cobuild/context/always/anatomy.md
+cobuild scan --check      # check if stale
+```
+
+The anatomy loads automatically for all dispatched agents (it's in the `always/` context directory). Agents use it to understand the codebase structure without reading every file — saving significant tokens on exploration.
+
+Run `cobuild scan` during bootstrap, before each dispatch wave, and after merging significant changes.
+
+## Token Optimization
+
+CoBuild tracks token usage and detects waste patterns:
+
+- **Repeated read detection** — hooks warn when an agent re-reads a file it already has in context
+- **Project anatomy** — agents check the file index before reading large files
+- **Transcript analysis** — `cobuild admin tokens` extracts exact token counts and costs from session transcripts
+- **Waste detection** — `cobuild admin waste` identifies repeated reads, oversized reads, context overflow, and error loops
+
 ## Session Tracking
 
 Every dispatched agent session is recorded in Postgres with:
@@ -286,6 +311,7 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 | `cobuild setup` | Register repo, create config |
 | `cobuild init-skills` | Copy default skills into repo |
 | `cobuild init-skills --update` | Refresh skills, preserving gotchas |
+| `cobuild scan` | Generate project anatomy (file index for agents) |
 | `cobuild update-agents` | Regenerate AGENTS.md from current skills/config |
 | `cobuild explain` | Show pipeline in human-readable form |
 | **Pipeline** | |
@@ -316,10 +342,12 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 | `cobuild wi append <id>` | Append content |
 | `cobuild wi label add <id> <label>` | Add label |
 | **Admin** | |
-| `cobuild admin health` | System health check |
+| `cobuild admin health` | System health check (includes anatomy freshness) |
 | `cobuild admin cleanup` | Remove stale worktrees, branches, old data |
 | `cobuild admin db-stats` | Database usage |
 | `cobuild admin stuck` | Find stuck pipelines and orphan tasks |
+| `cobuild admin tokens` | Parse transcript for exact token usage and costs |
+| `cobuild admin waste` | Detect token waste patterns from session events |
 | **Autonomous** | |
 | `cobuild poller` | Process autonomous pipelines continuously |
 | `cobuild poller --once` | Single pass |

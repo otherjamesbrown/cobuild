@@ -78,6 +78,7 @@ The simplest way to manage context: put markdown files in phase-named directorie
 ```
 .cobuild/context/
     always/                        # every agent sees these
+        anatomy.md                 # auto-generated file index (cobuild scan)
         architecture.md            # system structure, patterns
         principles.md              # hard constraints, rules
         naming-conventions.md      # terminology, style

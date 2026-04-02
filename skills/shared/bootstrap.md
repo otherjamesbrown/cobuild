@@ -289,9 +289,10 @@ Files created/updated:
 
 Next steps:
   1. Review and customize skills for this project
-  2. Create a design: cxp shard create --type design --title "..."
-  3. Initialize pipeline: cobuild init <design-id>
-  4. Dry-run the poller: cobuild poller --once --dry-run
+  2. Generate project anatomy: cobuild scan
+  3. Create a design: cobuild wi create --type design --title "..."
+  4. Initialize pipeline: cobuild init <design-id>
+  5. Check your pipeline: cobuild explain
 ```
 
 ## Gotchas
