@@ -136,9 +136,15 @@ cobuild wi append <design-id> --body "## Decomposition
 ..."
 ```
 
-## Step 7: Verify context layers before dispatching
+## Step 7: Verify context layers and anatomy before dispatching
 
 Before recording the decomposition gate, check that dispatched agents will have the context they need. Agents in worktrees only see what's configured — they don't have your CLAUDE.md or conversation history.
+
+**Refresh the project anatomy:**
+```bash
+cobuild scan
+```
+This generates `.cobuild/context/always/anatomy.md` — a file index with descriptions and token estimates. Agents use it to understand the codebase structure without reading every file. Run this before dispatching so agents have a current map.
 
 **Check always-on context:**
 ```bash

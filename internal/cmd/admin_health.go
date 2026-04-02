@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
@@ -117,6 +118,21 @@ var adminHealthCmd = &cobra.Command{
 			}
 		} else {
 			fmt.Println("⚠ Hooks            No hooks directory (session events won't be tracked)")
+			warnings++
+		}
+
+		// Anatomy
+		anatomyPath := filepath.Join(repoRoot, ".cobuild", "context", "always", "anatomy.md")
+		if info, err := os.Stat(anatomyPath); err == nil {
+			daysOld := int(time.Since(info.ModTime()).Hours() / 24)
+			if daysOld > 7 {
+				fmt.Printf("⚠ Anatomy          %d days old — run cobuild scan to refresh\n", daysOld)
+				warnings++
+			} else {
+				fmt.Printf("✓ Anatomy          Current (%d days old)\n", daysOld)
+			}
+		} else {
+			fmt.Println("⚠ Anatomy          Not found — run cobuild scan to generate file index")
 			warnings++
 		}
 
