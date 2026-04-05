@@ -1,59 +1,49 @@
-# Task: Route bugs to fix phase, escalate on needs-investigation label
+# Task: Detect existing investigation content, skip read-only prompt
 
-**Task ID:** cb-b6a8e2
+**Task ID:** cb-c34085
 **Agent:** 
 
 ## Task Content
 
-## Task D: Route bugs to `fix` phase by default, escalate on label
+## Task E: Detect existing investigation content in bug body, skip investigate-phase prompts
 
 **Parent design:** cb-7aa91d
 **Wave:** 2
-**Depends on:** Task C (the `fix` phase must exist first)
+**Depends on:** Task C, Task D
 **Repo:** cobuild
 
 ## Scope
 
-Update `internal/cmd/dispatch.go` phase inference to route bugs to the new `fix` phase by default, with escalation to the read-only `investigate` phase when the bug is labeled `needs-investigation`.
+Belt-and-braces for RC1. Even if a bug is routed to the investigate phase (via the `needs-investigation` label), if its body already contains investigation content from a prior conversation, do not inject contradictory read-only instructions. Instead, transparently downgrade to the `fix` phase and log a notice.
 
 ## Changes
 
-1. `internal/cmd/dispatch.go` — replace the current bug phase inference:
+1. `internal/cmd/dispatch.go` — after phase inference, before writing the prompt:
    ```go
-   case "bug":
-       if hasLabel(task, "needs-investigation") {
-           currentPhase = "investigate"
-       } else {
-           currentPhase = "fix"
-       }
+   if currentPhase == "investigate" && hasInvestigationContent(task.Content) {
+       fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
+       currentPhase = "fix"
+   }
    ```
-2. Add helper `hasLabel(task *connector.WorkItem, label string) bool` if it does not exist — check `task.Labels` slice
-3. Add phase prompt handling for `fix` in `writePhasePrompt`:
-   ```go
-   case "fix":
-       b.WriteString("**Fix this bug.**\n\n")
-       b.WriteString("Follow the fix-bug skill:\n")
-       b.WriteString("1. Read the bug report\n")
-       b.WriteString("2. Check escalation criteria — if any apply, add `needs-investigation` label and stop\n")
-       b.WriteString("3. Reproduce, investigate lightly, append findings to the bug\n")
-       b.WriteString("4. Implement the fix, run tests, build\n")
-       b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
-   ```
+2. Add helper `hasInvestigationContent(content string) bool` in `internal/cmd/dispatch.go`:
+   - Returns true if the body contains any of: `## Investigation Report`, `## Root Cause`, `## Fix Applied`, `## Fix` (at heading level 2)
+   - Case-insensitive match
+   - Simple substring check is fine; does not need full markdown parsing
 
 ## Acceptance criteria
 
-- [ ] `hasLabel` helper exists and correctly detects labels on `WorkItem`
-- [ ] Bug with no `needs-investigation` label dispatches to `fix` phase
-- [ ] Bug with `needs-investigation` label dispatches to `investigate` phase (unchanged behavior for this case)
-- [ ] `writePhasePrompt` has a `fix` case producing the new prompt
-- [ ] Unit test or integration test verifies both routing paths
+- [ ] `hasInvestigationContent` helper detects all listed heading variants (case-insensitive)
+- [ ] A bug labeled `needs-investigation` with a `## Investigation Report` in its body dispatches to `fix` phase, not `investigate`
+- [ ] A notice is printed when this downgrade happens
+- [ ] A bug labeled `needs-investigation` without prior investigation content still dispatches to `investigate` phase
+- [ ] A bug without the label but with investigation content dispatches to `fix` phase (no change, default behavior)
+- [ ] Unit test covers all 4 combinations (label × investigation content)
 - [ ] `go build ./...` and `go vet ./...` pass
 
 ## Out of scope
 
-- Creating the `fix` skill (Task C)
-- Documentation of escalation criteria (Task I)
-- Prompt cleanup for pre-investigated bugs (Task E)
+- Changing the investigate skill behavior
+- Adding new heading formats beyond the 4 listed (can be extended later via gotchas)
 
 
 ## Design Context (from cb-7aa91d)
@@ -579,7 +569,7 @@ Implement this task following the acceptance criteria above.
 
 ### On completion
 
-1. **Run `cobuild complete cb-b6a8e2`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
+1. **Run `cobuild complete cb-c34085`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
 
 **IMPORTANT RULES:**
 - NEVER use raw `git merge` or `git push` to main — always use `cobuild complete` which creates a PR
