@@ -146,15 +146,26 @@ var dispatchCmd = &cobra.Command{
 		// Phase-aware instructions
 		promptBuilder.WriteString("## Instructions\n\n")
 
-		// Detect current phase from pipeline state
+		// Detect current phase from pipeline state; auto-create run if missing
 		currentPhase := ""
 		if cbStore != nil {
 			run, err := cbStore.GetRun(ctx, task.ID)
-			if err == nil {
+			if err == nil && run != nil {
 				currentPhase = run.CurrentPhase
+			} else {
+				// No pipeline run — create one on the fly
+				workflow := inferWorkflowFromType(task.Type)
+				firstPhase := firstPhaseOf(workflow, pCfg)
+				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, projectName, firstPhase, "manual")
+				if createErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to auto-create pipeline run: %v\n", createErr)
+				} else {
+					currentPhase = newRun.CurrentPhase
+					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, workflow, currentPhase)
+				}
 			}
 		}
-		// Infer phase from work item type if no pipeline run exists
+		// Fallback if store unavailable or run creation failed
 		if currentPhase == "" {
 			switch task.Type {
 			case "bug":
@@ -604,6 +615,34 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("- NEVER merge PRs yourself — the orchestrating agent handles merge via `cobuild merge` after review\n")
 		b.WriteString("- If a reviewer (Gemini, human) leaves a critical comment on your PR, you MUST address it before the PR can merge\n")
 		b.WriteString("- Check review comments: `gh pr view <pr-number> --comments`\n")
+	}
+}
+
+// inferWorkflowFromType maps a work item type to a workflow name.
+func inferWorkflowFromType(wiType string) string {
+	switch wiType {
+	case "bug", "design", "task":
+		return wiType
+	default:
+		return "task"
+	}
+}
+
+// firstPhaseOf returns the first phase of the named workflow from config.
+// Falls back to hardcoded defaults if the workflow is not defined in config.
+func firstPhaseOf(workflow string, cfg *config.Config) string {
+	if cfg != nil {
+		if wf, ok := cfg.Workflows[workflow]; ok && len(wf.Phases) > 0 {
+			return wf.Phases[0]
+		}
+	}
+	switch workflow {
+	case "bug":
+		return "investigate"
+	case "design":
+		return "design"
+	default:
+		return "implement"
 	}
 }
 

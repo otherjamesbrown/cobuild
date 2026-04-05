@@ -47,6 +47,18 @@ var initCmd = &cobra.Command{
 		}
 
 		if cbStore != nil {
+			// Idempotent: return existing run rather than duplicating
+			if existing, err := cbStore.GetRun(ctx, id); err == nil && existing != nil {
+				if outputFormat == "json" {
+					s, _ := client.FormatJSON(existing)
+					fmt.Println(s)
+					return nil
+				}
+				fmt.Printf("Pipeline run already exists for %s\n", id)
+				fmt.Printf("  Phase:    %s\n", existing.CurrentPhase)
+				fmt.Printf("  Mode:     %s\n", existing.Mode)
+				return nil
+			}
 			run, err := cbStore.CreateRunWithMode(ctx, id, projectName, startPhase, mode)
 			if err != nil {
 				return fmt.Errorf("init pipeline: %w", err)
