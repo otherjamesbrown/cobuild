@@ -14,6 +14,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
@@ -166,7 +167,7 @@ var dispatchCmd = &cobra.Command{
 				currentPhase = run.CurrentPhase
 			} else if errors.Is(err, store.ErrNotFound) {
 				// No pipeline run — create one on the fly
-				workflow := inferWorkflowFromType(task.Type)
+				workflow := inferWorkflowFromType(task)
 				firstPhase := firstPhaseOf(workflow, pCfg)
 				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, projectName, firstPhase, "manual")
 				if createErr != nil {
@@ -708,11 +709,16 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 	}
 }
 
-// inferWorkflowFromType maps a work item type to a workflow name.
-func inferWorkflowFromType(wiType string) string {
-	switch wiType {
+// inferWorkflowFromType maps a work item to a workflow name.
+// Bugs labeled needs-investigation use the bug-complex workflow (investigate → implement → review → done).
+// All other bugs use the default bug workflow (fix → review → done).
+func inferWorkflowFromType(task *connector.WorkItem) string {
+	if task.Type == "bug" && hasLabel(task.Labels, "needs-investigation") {
+		return "bug-complex"
+	}
+	switch task.Type {
 	case "bug", "design", "task":
-		return wiType
+		return task.Type
 	default:
 		return "task"
 	}
