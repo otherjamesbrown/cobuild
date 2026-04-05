@@ -60,11 +60,16 @@ Steps:
 			return fmt.Errorf("no worktree_path in task metadata")
 		}
 
-		// When triggered by Stop hook, verify the agent actually committed work before proceeding
+		// When triggered by Stop hook, verify the agent actually completed work before proceeding
 		if autoFlag {
 			commitOut, err := exec.Command("git", "-C", worktreePath, "log", "--oneline", "main..HEAD").Output()
 			if err != nil || len(strings.TrimSpace(string(commitOut))) == 0 {
 				fmt.Fprintf(os.Stderr, "Warning: --auto: no commits on branch for %s, skipping (agent may not be done)\n", taskID)
+				return nil
+			}
+			statusOut, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
+			if err == nil && len(strings.TrimSpace(string(statusOut))) > 0 {
+				fmt.Fprintf(os.Stderr, "Warning: --auto: dirty worktree for %s, skipping (uncommitted changes present)\n", taskID)
 				return nil
 			}
 			fmt.Printf("Stop hook triggered completion for %s\n", taskID)

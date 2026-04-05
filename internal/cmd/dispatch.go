@@ -208,7 +208,9 @@ var dispatchCmd = &cobra.Command{
 		// Write Stop hook settings so cobuild complete runs automatically when agent stops
 		if !dryRun {
 			settingsDir := filepath.Join(worktreePath, ".claude")
-			if mkErr := os.MkdirAll(settingsDir, 0755); mkErr == nil {
+			if mkErr := os.MkdirAll(settingsDir, 0755); mkErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not create .claude/ directory: %v\n", mkErr)
+			} else {
 				settingsContent := `{
   "hooks": {
     "Stop": [{
