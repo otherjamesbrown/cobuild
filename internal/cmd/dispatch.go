@@ -239,7 +239,9 @@ var dispatchCmd = &cobra.Command{
 				// means manual `git add .` in the worktree still won't pick them up.
 				gitignorePath := filepath.Join(contextDir, ".gitignore")
 				if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-					_ = os.WriteFile(gitignorePath, []byte("*\n"), 0644)
+					if err := os.WriteFile(gitignorePath, []byte("*\n"), 0644); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write .cobuild/.gitignore: %v\n", err)
+					}
 				}
 				contextPath := filepath.Join(contextDir, "dispatch-context.md")
 				if err := os.WriteFile(contextPath, []byte(assembledContext), 0644); err != nil {

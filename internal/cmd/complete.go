@@ -91,14 +91,22 @@ Steps:
 		// Restore original CLAUDE.md
 		exec.Command("git", "-C", worktreePath, "checkout", "main", "--", "CLAUDE.md").Run()
 
-		// Commit uncommitted changes
-		statusOut, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
+		// Commit uncommitted changes — exclude dispatch artifacts (.cobuild/, CLAUDE.md)
+		// from both the dirty check and staging so they never appear in task commits.
+		statusOut, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain", "--", ".", ":!.cobuild", ":!CLAUDE.md").Output()
 		if err == nil && len(strings.TrimSpace(string(statusOut))) > 0 {
 			fmt.Println("Committing uncommitted changes...")
-			exec.Command("git", "-C", worktreePath, "add", "--", ".", ":!.cobuild").Run()
-			exec.Command("git", "-C", worktreePath, "reset", "HEAD", "CLAUDE.md").Run()
-			exec.Command("git", "-C", worktreePath, "commit", "-m",
-				fmt.Sprintf("[%s] Auto-commit remaining changes", taskID)).Run()
+			exec.Command("git", "-C", worktreePath, "add", "--all", "--", ".", ":!.cobuild").Run()
+			// Unstage previously-tracked .cobuild/ and CLAUDE.md files (belt-and-braces
+			// for repos where these were committed by earlier buggy versions of cobuild).
+			exec.Command("git", "-C", worktreePath, "reset", "HEAD", "--", ".cobuild", "CLAUDE.md").Run()
+			// Re-check: if nothing is staged after exclusions, skip commit to avoid
+			// "nothing to commit" error (happens when only .cobuild/ files changed).
+			indexOut, err := exec.Command("git", "-C", worktreePath, "diff", "--cached", "--name-only").Output()
+			if err == nil && len(strings.TrimSpace(string(indexOut))) > 0 {
+				exec.Command("git", "-C", worktreePath, "commit", "-m",
+					fmt.Sprintf("[%s] Auto-commit remaining changes", taskID)).Run()
+			}
 		}
 
 		// Get branch name
