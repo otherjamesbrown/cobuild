@@ -118,6 +118,33 @@ If the answer is no, the design isn't ready. Common gaps:
 
 ---
 
+## Creating a Bug
+
+When reporting a bug, decide upfront whether it needs a dedicated investigation phase. Apply the `needs-investigation` label if **any** of the following are true:
+
+1. **Root cause unknown** — symptom is visible but the mechanism isn't obvious from the report
+2. **Cross-system** — bug spans multiple services, modules, or repos where the interaction is unclear
+3. **Data or security implications** — could have corrupted data, leaked information, or created a security hole; need to assess blast radius before fixing
+4. **Fragility concern** — this area has broken before, or the fix might affect unrelated behavior
+5. **Intermittent or environment-dependent** — reproduces inconsistently; needs investigation to find the trigger
+6. **Fix shape is non-obvious** — you can't describe the fix in 1-2 sentences when creating the bug
+7. **Requires stakeholder decision** — investigation will produce options and a human needs to choose
+
+If **none** apply, omit the label — the fix agent will investigate as it fixes in a single session.
+
+```bash
+# Simple bug — default fix flow
+cobuild wi create --type bug --title "<what's broken>" --body "<symptoms and reproduction>"
+
+# Complex bug — needs dedicated investigation phase
+cobuild wi create --type bug --title "<what's broken>" --body "<symptoms and reproduction>"
+cobuild wi label add <bug-id> needs-investigation
+```
+
+The `needs-investigation` label routes the bug through a read-only investigation phase (see `skills/investigate/bug-investigation.md`) before dispatching a fix agent.
+
+---
+
 ## Creating the Shard
 
 ```bash

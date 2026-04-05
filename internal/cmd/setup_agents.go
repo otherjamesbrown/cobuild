@@ -147,9 +147,10 @@ func detectSkills(repoRoot string, pCfg *config.Config) map[string][]string {
 
 func detectWorkflows(pCfg *config.Config) map[string]string {
 	workflows := map[string]string{
-		"design": "design → decompose → implement → review → done",
-		"bug":    "investigate → implement → review → done",
-		"task":   "implement → review → done",
+		"design":      "design → decompose → implement → review → done",
+		"bug":         "fix → review → done",
+		"bug-complex": "investigate → implement → review → done",
+		"task":        "implement → review → done",
 	}
 
 	if pCfg != nil && pCfg.Workflows != nil {
@@ -263,7 +264,29 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 
 	// Bug workflow
 	sb.WriteString("### Bug Workflow\n\n")
+	sb.WriteString("**Default (most bugs):** single `fix` session — agent investigates and fixes together.\n\n")
+	sb.WriteString("**Escalation path:** if the bug is complex, label it `needs-investigation` first — it routes to a read-only investigation phase that produces a fix spec before any code is changed.\n\n")
+	sb.WriteString("#### When to add `needs-investigation`\n\n")
+	sb.WriteString("Apply the label if **any** of these are true:\n\n")
+	sb.WriteString("1. Root cause unknown (symptom visible, mechanism unclear)\n")
+	sb.WriteString("2. Bug spans multiple services, modules, or repos\n")
+	sb.WriteString("3. Data or security implications — need blast radius assessment before fixing\n")
+	sb.WriteString("4. This area has broken before, or the fix might have unintended side effects\n")
+	sb.WriteString("5. Reproduces inconsistently — needs investigation to find the trigger\n")
+	sb.WriteString("6. Fix shape is non-obvious (can't describe it in 1-2 sentences)\n")
+	sb.WriteString("7. Investigation produces options that require a stakeholder decision\n\n")
+	sb.WriteString("If none apply → omit the label. The fix agent will investigate as it fixes.\n\n")
+	sb.WriteString("#### Default bug flow\n\n")
 	sb.WriteString("```bash\n")
+	sb.WriteString("cobuild init <bug-id>                        # enters fix phase\n")
+	sb.WriteString("cobuild dispatch <bug-id>                    # spawns fix agent (investigate + implement)\n")
+	sb.WriteString("cobuild wait <bug-id>                        # wait for fix\n")
+	sb.WriteString("cobuild merge <bug-id>                       # merge the fix PR\n")
+	sb.WriteString("cobuild deploy <bug-id>                      # deploy if needed\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("#### Complex bug flow (needs-investigation label)\n\n")
+	sb.WriteString("```bash\n")
+	sb.WriteString("cobuild wi label add <bug-id> needs-investigation\n")
 	sb.WriteString("cobuild init <bug-id>                        # enters investigate phase\n")
 	sb.WriteString("cobuild dispatch <bug-id>                    # spawns investigation agent (READ-ONLY)\n")
 	sb.WriteString("cobuild wait <bug-id>                        # wait for investigation\n")
@@ -316,14 +339,15 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	phaseDescriptions := map[string]string{
 		"design":      "Design evaluation",
 		"decompose":   "Break designs into tasks",
-		"investigate":  "Root cause analysis for bugs",
+		"fix":         "Single-session bug fix (investigate + implement)",
+		"investigate": "Root cause analysis for needs-investigation bugs",
 		"implement":   "Task dispatch and monitoring",
 		"review":      "Code review",
 		"done":        "Post-delivery retrospective",
 		"shared":      "Cross-phase reference",
 	}
 
-	phaseOrder := []string{"design", "decompose", "investigate", "implement", "review", "done", "shared"}
+	phaseOrder := []string{"design", "decompose", "fix", "investigate", "implement", "review", "done", "shared"}
 	for _, phase := range phaseOrder {
 		names, ok := skills[phase]
 		if !ok || len(names) == 0 {

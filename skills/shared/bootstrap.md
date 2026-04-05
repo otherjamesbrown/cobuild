@@ -26,7 +26,7 @@ Design  →  Decompose  →  Implement  →  Review  →  Done
 
 **Bugs** follow a short default workflow: fix → review → done. The `fix` phase combines investigation and implementation in a single session — the agent traces the cause and implements the fix together.
 
-For complex bugs where the root cause is unknown or the blast radius is unclear, label the bug `needs-investigation` before dispatching. This escalates to the `bug-complex` workflow: investigate → implement → review → done, with a read-only investigation phase first.
+For complex bugs where the root cause is unknown or the blast radius is unclear, label the bug `needs-investigation` before dispatching. This escalates to the `bug-complex` workflow: investigate → implement → review → done, with a read-only investigation phase first. See `skills/fix/fix-bug.md` for the 7 escalation criteria.
 
 **Tasks** go straight to: implement → review → done.
 
