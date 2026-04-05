@@ -778,18 +778,19 @@ func ensureClaudeTrust(worktreePath string) error {
 		projects[worktreePath] = entry
 	}
 
-	// Only write if not already trusted — avoids gratuitous file churn
-	if accepted, _ := entry["hasTrustDialogAccepted"].(bool); accepted {
+	// Only write if ALL required flags are already set — avoids gratuitous file
+	// churn but ensures a partially-populated entry (e.g. trust set but onboarding
+	// still pending) gets fully repaired before the agent sees it.
+	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
+	onboarded, _ := entry["hasCompletedProjectOnboarding"].(bool)
+	if trusted && onboarded {
 		return nil
 	}
 
 	entry["hasTrustDialogAccepted"] = true
-	// Provide reasonable defaults for a fresh entry so onboarding doesn't trigger either
+	entry["hasCompletedProjectOnboarding"] = true
 	if _, ok := entry["allowedTools"]; !ok {
 		entry["allowedTools"] = []any{}
-	}
-	if _, ok := entry["hasCompletedProjectOnboarding"]; !ok {
-		entry["hasCompletedProjectOnboarding"] = true
 	}
 	if _, ok := entry["projectOnboardingSeenCount"]; !ok {
 		entry["projectOnboardingSeenCount"] = 1
