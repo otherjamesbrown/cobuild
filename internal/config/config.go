@@ -204,7 +204,7 @@ type RepoEntry struct {
 
 // ValidPipelinePhases is the list of allowed pipeline phase values.
 var ValidPipelinePhases = []string{
-	"design", "decompose", "implement", "review", "deploy", "done",
+	"design", "decompose", "implement", "fix", "investigate", "review", "deploy", "done",
 }
 
 // ValidatePipelinePhase checks if a phase string is valid.
@@ -242,6 +242,25 @@ func DefaultConfig() *Config {
 			Model: "haiku",
 		},
 		SkillsDir: "skills",
+		Phases: map[string]PhaseConfig{
+			"fix": {
+				Skill: "fix/fix-bug.md",
+			},
+		},
+		Workflows: map[string]WorkflowConfig{
+			"design": {
+				Phases: []string{"design", "decompose", "implement", "review", "done"},
+			},
+			"bug": {
+				Phases: []string{"fix", "review", "done"},
+			},
+			"bug-complex": {
+				Phases: []string{"investigate", "implement", "review", "done"},
+			},
+			"task": {
+				Phases: []string{"implement", "review", "done"},
+			},
+		},
 	}
 }
 
