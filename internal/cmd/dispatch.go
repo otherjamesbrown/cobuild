@@ -824,6 +824,13 @@ func ensureClaudeTrust(worktreePath string) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("chmod temp: %w", err)
 	}
+	// fsync before rename so a crash between the rename and OS flush cannot
+	// leave an empty or truncated ~/.claude.json.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("sync temp: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("close temp: %w", err)
