@@ -35,7 +35,8 @@ This project uses CoBuild for pipeline automation. If you are an agent working o
 - **Connector:** <context-palace|beads>
 - **Workflows:**
   - design: design → decompose → implement → review → done
-  - bug: investigate → implement → review → done
+  - bug: fix → review → done (default; single-session investigate+implement)
+  - bug-complex: investigate → implement → review → done (label `needs-investigation` to escalate)
   - task: implement → review → done
 
 <if multi-repo>
@@ -100,7 +101,8 @@ Pipeline skills are in `skills/` organized by phase:
 |-----------|--------|---------|
 | `design/` | gate-readiness-review, implementability | Design evaluation |
 | `decompose/` | decompose-design | Break designs into tasks |
-| `investigate/` | bug-investigation | Root cause analysis for bugs |
+| `fix/` | fix-bug | Single-session bug fix (default bug workflow) |
+| `investigate/` | bug-investigation | Root cause analysis (needs-investigation escalation) |
 | `implement/` | dispatch-task, stall-check | Task dispatch and monitoring |
 | `review/` | gate-review-pr, gate-process-review, merge-and-verify | Code review |
 | `done/` | gate-retrospective | Post-delivery retrospective |

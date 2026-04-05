@@ -78,17 +78,31 @@ Uses the `cxp` CLI with `-o json`.
 | Workflow | Phases | Use case |
 |----------|--------|----------|
 | `design` | design → decompose → implement → review → done | Full design-to-delivery |
-| `bug` | investigate → implement → review → done | Bug fixes (investigation before fixing) |
+| `bug` | fix → review → done | Bug fixes (default — investigate+implement in one session) |
+| `bug-complex` | investigate → implement → review → done | Complex bugs (label `needs-investigation` to escalate) |
 | `task` | implement → review → done | Standalone tasks |
+
+### Bug Workflow
+
+By default, bugs go straight to a `fix` phase — the agent investigates as it fixes, in one session:
+1. Read the bug report
+2. If cause isn't obvious, trace the code
+3. Append findings to the bug body
+4. Implement the fix, run tests
+
+For bugs where the root cause is unknown, the fix spans multiple systems, or there are data/security implications, label the bug `needs-investigation`. This routes it through the `bug-complex` workflow: a read-only investigation phase first, then a separate implement phase.
+
+**When to use `needs-investigation`:** root cause unknown · cross-system interaction · data or security impact · intermittent/environment-dependent · fix shape non-obvious · requires stakeholder decision
 
 ### Pipeline Phases
 
 1. **Design Review** — evaluate readiness + implementability against 5 criteria
 2. **Decomposition** — break design into tasks with dependency ordering and wave assignment
-3. **Investigation** (bugs only) — read-only root cause analysis, fragility assessment, fix specification
-4. **Implement** — dispatch agents in isolated worktrees with phase-aware context
-5. **Review** — external (Gemini) or agent-based, with CI integration
-6. **Done** — retrospective captures lessons and feeds back into skills
+3. **Fix** (bugs, default) — single-session investigate+implement; agent traces cause then fixes
+4. **Investigation** (bugs with `needs-investigation` label) — read-only root cause analysis, fix specification
+5. **Implement** — dispatch agents in isolated worktrees with phase-aware context
+6. **Review** — external (Gemini) or agent-based, with CI integration
+7. **Done** — retrospective captures lessons and feeds back into skills
 
 ### Phase-Aware Dispatch
 
@@ -98,7 +112,8 @@ Uses the `cxp` CLI with `-o json`.
 |-------|-------------------------------|
 | design | Evaluate readiness, check 5 criteria, record gate |
 | decompose | Break into tasks, assign waves, set dependencies |
-| investigate | Read-only root cause analysis, create fix task |
+| fix | Investigate cause and implement fix in one session (default for bugs) |
+| investigate | Read-only root cause analysis, create fix task (bugs with `needs-investigation`) |
 | implement | Write code, run tests, create PR |
 | review | Check PR against spec, evaluate CI, record verdict |
 | done | Run retrospective, suggest improvements |
@@ -152,6 +167,8 @@ phases:
         skill: design/gate-readiness-review.md
     decompose:
         gate: decomposition-review
+    fix:
+        skill: fix/fix-bug.md             # single-session investigate+implement
     investigate:
         gate: investigation
         skill: investigate/bug-investigation.md
@@ -169,7 +186,9 @@ workflows:
     design:
         phases: [design, decompose, implement, review, done]
     bug:
-        phases: [investigate, implement, review, done]
+        phases: [fix, review, done]             # default: single-session fix
+    bug-complex:
+        phases: [investigate, implement, review, done]  # escalation: label needs-investigation
     task:
         phases: [implement, review, done]
 
@@ -213,8 +232,9 @@ Or use the zero-config directory convention:
 .cobuild/context/
     always/           # every agent
     design/           # design phase agents
+    fix/              # bug fix agents (default)
     implement/        # implementing agents
-    investigate/      # bug investigation agents
+    investigate/      # bug investigation agents (needs-investigation escalation)
 ```
 
 ## Connectors
@@ -248,7 +268,8 @@ Skills are markdown files with YAML frontmatter that tell agents what to do:
 |-----------|--------|---------|
 | `design/` | gate-readiness-review, implementability | Design evaluation |
 | `decompose/` | decompose-design | Break designs into tasks |
-| `investigate/` | bug-investigation | Root cause analysis for bugs |
+| `fix/` | fix-bug | Single-session bug fix (default bug workflow) |
+| `investigate/` | bug-investigation | Root cause analysis (needs-investigation escalation) |
 | `implement/` | dispatch-task, stall-check | Task dispatch and monitoring |
 | `review/` | gate-review-pr, gate-process-review, merge-and-verify | Code review |
 | `done/` | gate-retrospective | Post-delivery retrospective |

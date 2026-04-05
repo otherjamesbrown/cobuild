@@ -57,7 +57,8 @@ Workflows define which phases a shard goes through. Configured in `pipeline.yaml
 | Workflow | Phases | Use case |
 |----------|--------|----------|
 | `design` | design, decompose, implement, review, done | Full design-to-delivery |
-| `bug` | investigate, implement, review, done | Bug fixes (skip design/decompose) |
+| `bug` | fix, review, done | Bug fixes — default single-session investigate+implement |
+| `bug-complex` | investigate, implement, review, done | Complex bugs (label `needs-investigation` to use this) |
 | `task` | implement, review, done | Standalone tasks (skip design/decompose) |
 
 The pipeline resolves the workflow from the shard type. If no match, falls back to `design`, then the full phase list.

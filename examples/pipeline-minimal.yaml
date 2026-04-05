@@ -1,5 +1,11 @@
 # Minimal CoBuild pipeline config — just the essentials.
 # Everything not specified uses sensible defaults.
+#
+# Default workflows (no config needed):
+#   bug:         fix → review → done           (single-session investigate+implement)
+#   bug-complex: investigate → implement → review → done  (label needs-investigation to use)
+#   design:      design → decompose → implement → review → done
+#   task:        implement → review → done
 
 github:
     owner_repo: your-org/your-repo

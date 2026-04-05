@@ -24,7 +24,9 @@ Design  →  Decompose  →  Implement  →  Review  →  Done
 4. **Review** — PRs are reviewed by an external reviewer (e.g., Gemini) or by another agent. Approved PRs get merged.
 5. **Done** — A retrospective captures lessons learned and feeds them back into the pipeline configuration.
 
-**Bugs** follow a shorter workflow: investigate → implement → review → done. The investigation phase analyses root cause before any code is changed.
+**Bugs** follow a short default workflow: fix → review → done. The `fix` phase combines investigation and implementation in a single session — the agent traces the cause and implements the fix together.
+
+For complex bugs where the root cause is unknown or the blast radius is unclear, label the bug `needs-investigation` before dispatching. This escalates to the `bug-complex` workflow: investigate → implement → review → done, with a read-only investigation phase first.
 
 **Tasks** go straight to: implement → review → done.
 
@@ -134,6 +136,14 @@ Present what you detected, then ask the following questions. Present them with f
 >
 > Are these correct? Are there additional checks (e.g., `go vet`, linting) that should run?
 
+### Note: Bug Workflow and Escalation
+
+When the developer creates a bug work item, remind them that:
+- **Default path:** most bugs go straight to `fix` (investigate + implement in one session). No special labeling needed.
+- **Escalation path:** if the bug's root cause is unknown, it spans multiple systems, or there are data/security implications, label it `needs-investigation`. This routes it through `bug-complex` (investigate → implement → review → done) so investigation happens in a read-only phase before any code changes.
+
+Common escalation signals: root cause unknown · cross-system interaction · data or security impact · intermittent or environment-dependent · fix shape non-obvious in 1–2 sentences · requires a stakeholder decision.
+
 ### Question 4: Work-Item System
 
 > **Where do designs, tasks, and bugs live?**
@@ -193,8 +203,8 @@ Using all the gathered information, create `.cobuild/pipeline.yaml`. Include eve
 - `dispatch` settings (concurrent, model)
 - `connectors.work_items` (from step 3)
 - `storage` (from step 4)
-- `phases` with gates and skills
-- `workflows` for design/bug/task
+- `phases` with gates and skills (including `fix` for bugs)
+- `workflows` for design/bug/bug-complex/task
 - `review` strategy and settings
 - `monitoring` settings
 - `deploy` if applicable
