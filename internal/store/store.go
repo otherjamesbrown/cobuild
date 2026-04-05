@@ -10,7 +10,13 @@
 //   - (future) FileStore: YAML + JSONL files for zero-dependency mode
 package store
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound is returned by Get* methods when the requested record does not exist.
+var ErrNotFound = errors.New("not found")
 
 // Store abstracts CoBuild's internal data persistence.
 type Store interface {
