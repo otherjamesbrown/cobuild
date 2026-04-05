@@ -195,6 +195,18 @@ Steps:
 			}
 		}
 
+		// Transition the pipeline run to the review phase so `cobuild status`
+		// reflects where the work actually is (cb-2e5044). Best-effort — a missing
+		// run is fine (direct dispatches without auto-create).
+		if cbStore != nil {
+			if err := cbStore.UpdateRunPhase(ctx, taskID, "review"); err != nil {
+				// Silent on "no pipeline run" — happens for tasks with no tracked run
+				if !strings.Contains(err.Error(), "no pipeline run") {
+					fmt.Printf("Warning: failed to update pipeline run phase: %v\n", err)
+				}
+			}
+		}
+
 		// End session record in store
 		if cbStore != nil && conn != nil {
 			sessionID, _ := conn.GetMetadata(ctx, taskID, "session_id")
