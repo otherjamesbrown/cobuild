@@ -196,6 +196,13 @@ var dispatchCmd = &cobra.Command{
 			}
 		}
 
+		// Belt-and-braces: if the bug body already contains investigation content,
+		// downgrade from investigate to fix regardless of phase inference.
+		if currentPhase == "investigate" && hasInvestigationContent(task.Content) {
+			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
+			currentPhase = "fix"
+		}
+
 		writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
 
 		prompt := promptBuilder.String()
@@ -740,6 +747,25 @@ func firstPhaseOf(workflow string, cfg *config.Config) string {
 	default:
 		return "implement"
 	}
+}
+
+// hasInvestigationContent returns true if the content already contains
+// investigation findings — indicating an investigate phase has already run
+// (or investigation happened in a prior conversation). The check is
+// case-insensitive and looks for any of the standard section headings.
+func hasInvestigationContent(content string) bool {
+	lower := strings.ToLower(content)
+	for _, heading := range []string{
+		"## investigation report",
+		"## root cause",
+		"## fix applied",
+		"## fix",
+	} {
+		if strings.Contains(lower, heading) {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureClaudeTrust pre-accepts Claude Code's workspace trust dialog for a
