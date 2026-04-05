@@ -30,6 +30,7 @@ Steps:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		taskID := args[0]
+		autoFlag, _ := cmd.Flags().GetBool("auto")
 
 		task, err := conn.Get(ctx, taskID)
 		if err != nil {
@@ -42,12 +43,46 @@ Steps:
 		}
 
 		if task.Status == "needs-review" {
+			if autoFlag {
+				// Idempotent: Stop hook fired after dispatch script already completed it
+				fmt.Printf("Task %s already needs-review, skipping (--auto)\n", taskID)
+				return nil
+			}
 			return validateCompletionViaConnector(ctx, taskID, task)
 		}
 
 		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 		if worktreePath == "" {
+			if autoFlag {
+				fmt.Fprintf(os.Stderr, "Warning: --auto: no worktree_path for %s, skipping\n", taskID)
+				return nil
+			}
 			return fmt.Errorf("no worktree_path in task metadata")
+		}
+
+		// When triggered by Stop hook, verify the agent actually completed work before proceeding
+		if autoFlag {
+			baseBranch := "main"
+			if refOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
+				// returns "refs/remotes/origin/main" — strip prefix
+				ref := strings.TrimSpace(string(refOut))
+				if idx := strings.LastIndex(ref, "/"); idx >= 0 {
+					baseBranch = ref[idx+1:]
+				}
+			}
+			commitOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "log", "--oneline", baseBranch+"..HEAD").Output()
+			if err != nil || len(strings.TrimSpace(string(commitOut))) == 0 {
+				fmt.Fprintf(os.Stderr, "Warning: --auto: no commits on branch for %s, skipping (agent may not be done)\n", taskID)
+				return nil
+			}
+			// Exclude dispatch-injected files (CLAUDE.md, .cobuild/) — they are always modified
+			// by dispatch and do not represent uncommitted agent work
+			statusOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain", "--", ".", ":!CLAUDE.md", ":!.cobuild").Output()
+			if err == nil && len(strings.TrimSpace(string(statusOut))) > 0 {
+				fmt.Fprintf(os.Stderr, "Warning: --auto: dirty worktree for %s, skipping (uncommitted changes present)\n", taskID)
+				return nil
+			}
+			fmt.Printf("Stop hook triggered completion for %s\n", taskID)
 		}
 
 		repoRoot, _ := config.RepoForProject(projectName)
@@ -237,5 +272,6 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 }
 
 func init() {
+	completeCmd.Flags().Bool("auto", false, "Triggered by Stop hook — warn and skip if no commits exist")
 	rootCmd.AddCommand(completeCmd)
 }

@@ -205,6 +205,29 @@ var dispatchCmd = &cobra.Command{
 			}
 		}
 
+		// Write Stop hook settings so cobuild complete runs automatically when agent stops
+		if !dryRun {
+			settingsDir := filepath.Join(worktreePath, ".claude")
+			if mkErr := os.MkdirAll(settingsDir, 0755); mkErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not create .claude/ directory: %v\n", mkErr)
+			} else {
+				settingsContent := `{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "cobuild complete \"$COBUILD_TASK_ID\" --auto"
+      }]
+    }]
+  }
+}`
+				if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(settingsContent), 0644); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write .claude/settings.local.json: %v\n", err)
+				}
+			}
+		}
+
 		// Write prompt to temp file
 		promptFile, err := os.CreateTemp("", fmt.Sprintf("cobuild-dispatch-%s-*.md", taskID))
 		if err != nil {
@@ -256,6 +279,7 @@ cd '%s'
 export COBUILD_DISPATCH=true
 export COBUILD_SESSION_ID='%s'
 export COBUILD_HOOKS_DIR='%s'
+export COBUILD_TASK_ID='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
 echo "$COBUILD_SESSION_ID" > .cobuild/session_id
@@ -292,6 +316,7 @@ fi`,
 			strings.ReplaceAll(worktreePath, "'", "'\\''"),
 			sessionID,
 			filepath.Join(findRepoRoot(), "hooks"),
+			strings.ReplaceAll(taskID, "'", "'\\''"),
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			claudeFlags,
 		)
