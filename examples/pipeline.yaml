@@ -52,6 +52,10 @@ phases:
     implement:
         skill: implement/dispatch-task.md
         stall_check: implement/stall-check.md
+    fix:
+        skill: fix/fix-bug.md                   # single-session investigate+implement for bugs
+    investigate:
+        skill: investigate/bug-investigation.md  # read-only investigation for needs-investigation bugs
     review:
         gate: review
         skill: review/gate-process-review.md    # for external review (Gemini)
@@ -66,7 +70,9 @@ workflows:
     design:
         phases: [design, decompose, implement, review, done]
     bug:
-        phases: [implement, review, done]
+        phases: [fix, review, done]             # default: single-session fix
+    bug-complex:
+        phases: [investigate, implement, review, done]   # escalation path: label bug needs-investigation
     task:
         phases: [implement, review, done]
 
