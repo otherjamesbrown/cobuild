@@ -164,7 +164,7 @@ func (s *PostgresStore) GetRun(ctx context.Context, designID string) (*PipelineR
 	`, designID).Scan(&run.ID, &run.DesignID, &run.Project, &run.CurrentPhase, &run.Status, &run.Mode, &run.CreatedAt, &run.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("no pipeline run for design %s", designID)
+			return nil, fmt.Errorf("no pipeline run for design %s: %w", designID, ErrNotFound)
 		}
 		return nil, fmt.Errorf("get pipeline run: %w", err)
 	}

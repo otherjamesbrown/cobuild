@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -152,7 +153,7 @@ var dispatchCmd = &cobra.Command{
 			run, err := cbStore.GetRun(ctx, task.ID)
 			if err == nil && run != nil {
 				currentPhase = run.CurrentPhase
-			} else {
+			} else if errors.Is(err, store.ErrNotFound) {
 				// No pipeline run — create one on the fly
 				workflow := inferWorkflowFromType(task.Type)
 				firstPhase := firstPhaseOf(workflow, pCfg)
@@ -163,6 +164,8 @@ var dispatchCmd = &cobra.Command{
 					currentPhase = newRun.CurrentPhase
 					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, workflow, currentPhase)
 				}
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to look up pipeline run: %v\n", err)
 			}
 		}
 		// Fallback if store unavailable or run creation failed
