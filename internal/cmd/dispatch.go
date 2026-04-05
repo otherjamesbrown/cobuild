@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
@@ -212,24 +213,36 @@ var dispatchCmd = &cobra.Command{
 		// with assembled context confuses agents into thinking the context dump IS the
 		// project instructions. Instead, write to .cobuild/dispatch-context.md and
 		// append a pointer to the worktree's CLAUDE.md.
+		//
+		// Skip entirely in dry-run mode: worktreePath is a literal "~/..." string
+		// in dry-run and MkdirAll would create a directory literally named "~".
 		assembledContext, _ := config.AssembleContext(pCfg, repoRoot, "dispatch", currentPhase, extras, workItemFetcher)
-		if assembledContext != "" {
+		if !dryRun && assembledContext != "" {
 			contextDir := filepath.Join(worktreePath, ".cobuild")
-			os.MkdirAll(contextDir, 0755)
-			contextPath := filepath.Join(contextDir, "dispatch-context.md")
-			if err := os.WriteFile(contextPath, []byte(assembledContext), 0644); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write dispatch context: %v\n", err)
+			if err := os.MkdirAll(contextDir, 0755); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not create %s: %v\n", contextDir, err)
+			} else {
+				contextPath := filepath.Join(contextDir, "dispatch-context.md")
+				if err := os.WriteFile(contextPath, []byte(assembledContext), 0644); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write dispatch context: %v\n", err)
+				}
 			}
 
-			// Append a CoBuild dispatch section to the worktree CLAUDE.md (preserving original)
+			// Append a CoBuild dispatch section to the worktree CLAUDE.md (preserving original).
+			// Distinguish "file does not exist" (fine, start from empty) from real read errors
+			// (e.g., permission denied) — the latter must NOT silently overwrite the file.
 			claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
-			existing, _ := os.ReadFile(claudeMDPath)
-			dispatchSection := "\n\n## CoBuild Dispatch Context\n\n" +
-				"You are a dispatched CoBuild agent. Your task prompt was passed as the initial message.\n" +
-				"Additional context is in `.cobuild/dispatch-context.md` — read it if you need architecture, " +
-				"design context, or project anatomy.\n"
-			if err := os.WriteFile(claudeMDPath, append(existing, []byte(dispatchSection)...), 0644); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update worktree CLAUDE.md: %v\n", err)
+			existing, readErr := os.ReadFile(claudeMDPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read %s (%v) — leaving untouched to avoid data loss\n", claudeMDPath, readErr)
+			} else {
+				dispatchSection := "\n\n## CoBuild Dispatch Context\n\n" +
+					"You are a dispatched CoBuild agent. Your task prompt was passed as the initial message.\n" +
+					"Additional context is in `.cobuild/dispatch-context.md` — read it if you need architecture, " +
+					"design context, or project anatomy.\n"
+				if err := os.WriteFile(claudeMDPath, append(existing, []byte(dispatchSection)...), 0644); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update worktree CLAUDE.md: %v\n", err)
+				}
 			}
 		}
 
@@ -706,16 +719,35 @@ func firstPhaseOf(workflow string, cfg *config.Config) string {
 // directory by editing ~/.claude.json. This avoids dispatched agents blocking
 // on "Is this a project you created or one you trust?" in fresh worktrees.
 //
-// The file is read, the specific project entry is added/updated, and the whole
-// file is written back atomically (temp file + rename). If the file doesn't
-// exist or can't be parsed, we return an error rather than creating one from
-// scratch — that's Claude Code's job.
+// Concurrency: read-modify-write is guarded by an flock on a sibling lock
+// file so concurrent `cobuild dispatch` processes (e.g. from dispatch-wave)
+// cannot clobber each other's updates. The lock is released automatically
+// when the function returns (file close).
+//
+// The file is read, the specific project entry is added/updated, and the
+// whole file is written back atomically (temp file + rename). If the file
+// doesn't exist or can't be parsed, we return an error rather than creating
+// one from scratch — that's Claude Code's job.
 func ensureClaudeTrust(worktreePath string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
 	}
 	configPath := filepath.Join(home, ".claude.json")
+	lockPath := configPath + ".cobuild-lock"
+
+	// Acquire exclusive advisory lock for the whole read-modify-write cycle.
+	// Using a sibling .cobuild-lock file (not the config itself) avoids any
+	// interaction with Claude Code's own file handles on .claude.json.
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("open lock %s: %w", lockPath, err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("flock: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
