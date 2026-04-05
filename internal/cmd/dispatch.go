@@ -281,10 +281,19 @@ var dispatchCmd = &cobra.Command{
         "command": "cobuild complete \"$COBUILD_TASK_ID\" --auto"
       }]
     }]
+  },
+  "permissions": {
+    "deny": [
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "MultiEdit(.claude/**)"
+    ]
   }
 }`
 				if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(settingsContent), 0644); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write .claude/settings.local.json: %v\n", err)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Worktree permissions: .claude/** edits denied\n")
 				}
 			}
 		}
