@@ -198,9 +198,16 @@ var dispatchCmd = &cobra.Command{
 
 		// Belt-and-braces: if the bug body already contains investigation content,
 		// downgrade from investigate to fix regardless of phase inference.
+		// Also persist the override to pipeline_runs so `cobuild status` reflects
+		// the phase the agent actually ran (cb-eab697).
 		if currentPhase == "investigate" && hasInvestigationContent(task.Content) {
 			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
 			currentPhase = "fix"
+			if cbStore != nil {
+				if err := cbStore.UpdateRunPhase(ctx, task.ID, "fix"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
+				}
+			}
 		}
 
 		writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
