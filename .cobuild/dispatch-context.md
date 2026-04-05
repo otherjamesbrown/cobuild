@@ -1,49 +1,51 @@
-# Task: Detect existing investigation content, skip read-only prompt
+# Task: Deny .claude/** edits in dispatched worktrees
 
-**Task ID:** cb-c34085
+**Task ID:** cb-ec5858
 **Agent:** 
 
 ## Task Content
 
-## Task E: Detect existing investigation content in bug body, skip investigate-phase prompts
+## Task F: Deny `.claude/**` edits in dispatched worktrees
 
 **Parent design:** cb-7aa91d
-**Wave:** 2
-**Depends on:** Task C, Task D
+**Wave:** 3
+**Depends on:** Task A (the settings.local.json file is already being written by Task A — this extends it)
 **Repo:** cobuild
 
 ## Scope
 
-Belt-and-braces for RC1. Even if a bug is routed to the investigate phase (via the `needs-investigation` label), if its body already contains investigation content from a prior conversation, do not inject contradictory read-only instructions. Instead, transparently downgrade to the `fix` phase and log a notice.
+Prevent dispatched agents from stalling on permission prompts for editing Claude Code's own config files. Add a deny list to the worktree `.claude/settings.local.json` that blocks Edit and Write on `.claude/**` paths.
 
 ## Changes
 
-1. `internal/cmd/dispatch.go` — after phase inference, before writing the prompt:
-   ```go
-   if currentPhase == "investigate" && hasInvestigationContent(task.Content) {
-       fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
-       currentPhase = "fix"
+1. `internal/cmd/dispatch.go` — when writing the settings.local.json in Task A, include a `permissions.deny` section:
+   ```json
+   {
+     "hooks": { ... },
+     "permissions": {
+       "deny": [
+         "Edit(.claude/**)",
+         "Write(.claude/**)",
+         "MultiEdit(.claude/**)"
+       ]
+     }
    }
    ```
-2. Add helper `hasInvestigationContent(content string) bool` in `internal/cmd/dispatch.go`:
-   - Returns true if the body contains any of: `## Investigation Report`, `## Root Cause`, `## Fix Applied`, `## Fix` (at heading level 2)
-   - Case-insensitive match
-   - Simple substring check is fine; does not need full markdown parsing
+2. Log a line in the dispatch output: `Worktree permissions: .claude/** edits denied`
 
 ## Acceptance criteria
 
-- [ ] `hasInvestigationContent` helper detects all listed heading variants (case-insensitive)
-- [ ] A bug labeled `needs-investigation` with a `## Investigation Report` in its body dispatches to `fix` phase, not `investigate`
-- [ ] A notice is printed when this downgrade happens
-- [ ] A bug labeled `needs-investigation` without prior investigation content still dispatches to `investigate` phase
-- [ ] A bug without the label but with investigation content dispatches to `fix` phase (no change, default behavior)
-- [ ] Unit test covers all 4 combinations (label × investigation content)
-- [ ] `go build ./...` and `go vet ./...` pass
+- [ ] Settings file in worktree has the deny list alongside the Stop hook
+- [ ] An agent attempting to Edit `.claude/commands/foo.md` in a dispatched session is silently denied (no permission prompt)
+- [ ] Agents can still edit other files freely
+- [ ] The existing Stop hook from Task A still works (the settings file is merged correctly, not overwritten)
+- [ ] Manual test: dispatch a task, try to edit `.claude/commands/foo.md` from inside the session, confirm it's blocked
+- [ ] `go build ./...` passes
 
 ## Out of scope
 
-- Changing the investigate skill behavior
-- Adding new heading formats beyond the 4 listed (can be extended later via gotchas)
+- Changing the global `~/.claude/settings.json` — this is scoped to worktrees only
+- Other permission categories (Bash, etc.) — the single known failure mode is `.claude/` edits
 
 
 ## Design Context (from cb-7aa91d)
@@ -569,7 +571,7 @@ Implement this task following the acceptance criteria above.
 
 ### On completion
 
-1. **Run `cobuild complete cb-c34085`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
+1. **Run `cobuild complete cb-ec5858`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
 
 **IMPORTANT RULES:**
 - NEVER use raw `git merge` or `git push` to main — always use `cobuild complete` which creates a PR
