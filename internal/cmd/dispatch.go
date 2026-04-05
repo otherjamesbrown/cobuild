@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
@@ -231,12 +230,14 @@ var dispatchCmd = &cobra.Command{
 			// Append a CoBuild dispatch section to the worktree CLAUDE.md (preserving original).
 			// Distinguish "file does not exist" (fine, start from empty) from real read errors
 			// (e.g., permission denied) — the latter must NOT silently overwrite the file.
+			// Idempotent: skip append if the section already exists (worktree re-dispatch).
 			claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
 			existing, readErr := os.ReadFile(claudeMDPath)
+			const dispatchSectionHeader = "## CoBuild Dispatch Context"
 			if readErr != nil && !os.IsNotExist(readErr) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read %s (%v) — leaving untouched to avoid data loss\n", claudeMDPath, readErr)
-			} else {
-				dispatchSection := "\n\n## CoBuild Dispatch Context\n\n" +
+			} else if !strings.Contains(string(existing), dispatchSectionHeader) {
+				dispatchSection := "\n\n" + dispatchSectionHeader + "\n\n" +
 					"You are a dispatched CoBuild agent. Your task prompt was passed as the initial message.\n" +
 					"Additional context is in `.cobuild/dispatch-context.md` — read it if you need architecture, " +
 					"design context, or project anatomy.\n"
@@ -744,10 +745,10 @@ func ensureClaudeTrust(worktreePath string) error {
 		return fmt.Errorf("open lock %s: %w", lockPath, err)
 	}
 	defer lockFile.Close()
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockExclusive(lockFile.Fd()); err != nil {
 		return fmt.Errorf("flock: %w", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	defer flockUnlock(lockFile.Fd())
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -758,6 +759,11 @@ func ensureClaudeTrust(worktreePath string) error {
 	var cfg map[string]any
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	// Guard against the file containing literal "null" or being empty-object,
+	// either of which would leave cfg nil and panic on the map assignment below.
+	if cfg == nil {
+		cfg = make(map[string]any)
 	}
 
 	projects, _ := cfg["projects"].(map[string]any)
