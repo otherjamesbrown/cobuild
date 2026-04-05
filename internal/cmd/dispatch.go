@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -233,11 +234,17 @@ var dispatchCmd = &cobra.Command{
 			// Idempotent: skip append if the section already exists (worktree re-dispatch).
 			claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
 			existing, readErr := os.ReadFile(claudeMDPath)
-			const dispatchSectionHeader = "## CoBuild Dispatch Context"
+			dispatchSectionHeader := []byte("## CoBuild Dispatch Context")
 			if readErr != nil && !os.IsNotExist(readErr) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read %s (%v) — leaving untouched to avoid data loss\n", claudeMDPath, readErr)
-			} else if !strings.Contains(string(existing), dispatchSectionHeader) {
-				dispatchSection := "\n\n" + dispatchSectionHeader + "\n\n" +
+			} else if !bytes.Contains(existing, dispatchSectionHeader) {
+				// Only prefix newlines if the file already has content; avoids leading
+				// blank lines in a fresh CLAUDE.md.
+				prefix := ""
+				if len(existing) > 0 {
+					prefix = "\n\n"
+				}
+				dispatchSection := prefix + "## CoBuild Dispatch Context\n\n" +
 					"You are a dispatched CoBuild agent. Your task prompt was passed as the initial message.\n" +
 					"Additional context is in `.cobuild/dispatch-context.md` — read it if you need architecture, " +
 					"design context, or project anatomy.\n"
