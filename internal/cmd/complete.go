@@ -95,7 +95,7 @@ Steps:
 		statusOut, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
 		if err == nil && len(strings.TrimSpace(string(statusOut))) > 0 {
 			fmt.Println("Committing uncommitted changes...")
-			exec.Command("git", "-C", worktreePath, "add", "-A").Run()
+			exec.Command("git", "-C", worktreePath, "add", "--", ".", ":!.cobuild").Run()
 			exec.Command("git", "-C", worktreePath, "reset", "HEAD", "CLAUDE.md").Run()
 			exec.Command("git", "-C", worktreePath, "commit", "-m",
 				fmt.Sprintf("[%s] Auto-commit remaining changes", taskID)).Run()

@@ -234,6 +234,13 @@ var dispatchCmd = &cobra.Command{
 			if err := os.MkdirAll(contextDir, 0755); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not create %s: %v\n", contextDir, err)
 			} else {
+				// Belt-and-braces: prevent git from tracking any dispatch artifacts.
+				// complete.go also excludes .cobuild/ via pathspec, but this gitignore
+				// means manual `git add .` in the worktree still won't pick them up.
+				gitignorePath := filepath.Join(contextDir, ".gitignore")
+				if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+					_ = os.WriteFile(gitignorePath, []byte("*\n"), 0644)
+				}
 				contextPath := filepath.Join(contextDir, "dispatch-context.md")
 				if err := os.WriteFile(contextPath, []byte(assembledContext), 0644); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write dispatch context: %v\n", err)
