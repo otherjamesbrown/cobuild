@@ -8,6 +8,8 @@ summary: >-
 
 # Skill: Bug Investigation
 
+> **When to use this skill:** Only for bugs explicitly labeled `needs-investigation`. For the default bug flow — where investigation and implementation happen in one session — see `skills/fix/fix-bug.md`.
+
 Investigate a bug report to understand the root cause, identify all affected areas, and produce a fix specification that an implementing agent can work from.
 
 **This is a read-only investigation. Do not fix the bug — document findings and create a fix task.**
