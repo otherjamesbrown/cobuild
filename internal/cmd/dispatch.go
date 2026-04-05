@@ -183,7 +183,11 @@ var dispatchCmd = &cobra.Command{
 		if currentPhase == "" {
 			switch task.Type {
 			case "bug":
-				currentPhase = "investigate"
+				if hasLabel(task.Labels, "needs-investigation") {
+					currentPhase = "investigate"
+				} else {
+					currentPhase = "fix"
+				}
 			case "design":
 				currentPhase = "design"
 			default:
@@ -636,6 +640,15 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary>\"`\n", workItemID))
 		b.WriteString("\n**Important:** Assign migration numbers explicitly if multiple tasks create DB migrations. Set `repo` metadata on tasks for multi-repo projects.\n")
 
+	case "fix":
+		b.WriteString("**Fix this bug.**\n\n")
+		b.WriteString("Follow the fix-bug skill:\n")
+		b.WriteString("1. Read the bug report\n")
+		b.WriteString("2. Check escalation criteria — if any apply, add `needs-investigation` label and stop\n")
+		b.WriteString("3. Reproduce, investigate lightly, append findings to the bug\n")
+		b.WriteString("4. Implement the fix, run tests, build\n")
+		b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
+
 	case "investigate":
 		b.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
 		b.WriteString("Follow the bug-investigation skill:\n")
@@ -715,7 +728,7 @@ func firstPhaseOf(workflow string, cfg *config.Config) string {
 	}
 	switch workflow {
 	case "bug":
-		return "investigate"
+		return "fix"
 	case "design":
 		return "design"
 	default:

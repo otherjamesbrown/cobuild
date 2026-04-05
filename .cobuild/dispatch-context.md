@@ -1,64 +1,59 @@
-# Task: Add fix phase and fix-bug skill
+# Task: Route bugs to fix phase, escalate on needs-investigation label
 
-**Task ID:** cb-12dd55
+**Task ID:** cb-b6a8e2
 **Agent:** 
 
 ## Task Content
 
-## Task C: Add `fix` phase and `fix/fix-bug.md` skill
+## Task D: Route bugs to `fix` phase by default, escalate on label
 
 **Parent design:** cb-7aa91d
 **Wave:** 2
-**Depends on:** Task A (Stop hook must exist so the fix flow completes reliably)
+**Depends on:** Task C (the `fix` phase must exist first)
 **Repo:** cobuild
 
 ## Scope
 
-Create the new `fix` phase for bugs. This is the single-session replacement for the two-phase investigate+implement flow. The agent does lightweight investigation as part of fixing, in one tmux window, with the Stop hook handling completion.
+Update `internal/cmd/dispatch.go` phase inference to route bugs to the new `fix` phase by default, with escalation to the read-only `investigate` phase when the bug is labeled `needs-investigation`.
 
 ## Changes
 
-1. Create `skills/fix/fix-bug.md` with YAML frontmatter (name, description, summary, version) and the following structure:
-   - **What this is** — one-session bug fix
-   - **Escalation check** — read the escalation criteria, if any apply, STOP and add `needs-investigation` label instead of proceeding
-   - **Procedure**:
-     1. Read the bug report and any linked context
-     2. Reproduce if possible
-     3. Light investigation — check code, git blame, recent changes, related tests
-     4. Append findings to the bug body: `cobuild wi append <bug-id> --body "## Findings\n..."`
-     5. Implement the fix
-     6. Run tests and build
-     7. Commit (Stop hook will run `cobuild complete`)
-   - **Self-escalation protocol** — when to stop mid-session and escalate
-   - **Gotchas section** (empty, populated over time)
-2. Add `fix` phase to `examples/pipeline.yaml`:
-   ```yaml
-   phases:
-     fix:
-       skill: fix/fix-bug.md
-   workflows:
-     bug:
-       phases: [fix, review, done]
-     bug-complex:
-       phases: [investigate, implement, review, done]
+1. `internal/cmd/dispatch.go` — replace the current bug phase inference:
+   ```go
+   case "bug":
+       if hasLabel(task, "needs-investigation") {
+           currentPhase = "investigate"
+       } else {
+           currentPhase = "fix"
+       }
    ```
-3. Add `fix` to the default config in `internal/config/config.go` (DefaultConfig) so it works zero-config
+2. Add helper `hasLabel(task *connector.WorkItem, label string) bool` if it does not exist — check `task.Labels` slice
+3. Add phase prompt handling for `fix` in `writePhasePrompt`:
+   ```go
+   case "fix":
+       b.WriteString("**Fix this bug.**\n\n")
+       b.WriteString("Follow the fix-bug skill:\n")
+       b.WriteString("1. Read the bug report\n")
+       b.WriteString("2. Check escalation criteria — if any apply, add `needs-investigation` label and stop\n")
+       b.WriteString("3. Reproduce, investigate lightly, append findings to the bug\n")
+       b.WriteString("4. Implement the fix, run tests, build\n")
+       b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
+   ```
 
 ## Acceptance criteria
 
-- [ ] `skills/fix/fix-bug.md` exists with correct frontmatter and all required sections
-- [ ] `examples/pipeline.yaml` has the `fix` phase and the new `bug` / `bug-complex` workflows
-- [ ] Default config includes the `fix` phase
-- [ ] `cobuild init-skills` copies the new skill to a fresh repo correctly
-- [ ] `cobuild explain` renders the new workflows without errors
-- [ ] The existing `investigate` skill at `skills/investigate/bug-investigation.md` is untouched (Task I handles its header update)
+- [ ] `hasLabel` helper exists and correctly detects labels on `WorkItem`
+- [ ] Bug with no `needs-investigation` label dispatches to `fix` phase
+- [ ] Bug with `needs-investigation` label dispatches to `investigate` phase (unchanged behavior for this case)
+- [ ] `writePhasePrompt` has a `fix` case producing the new prompt
+- [ ] Unit test or integration test verifies both routing paths
 - [ ] `go build ./...` and `go vet ./...` pass
 
 ## Out of scope
 
-- Changing phase inference in dispatch.go (Task D)
-- Updating docs beyond `examples/pipeline.yaml` (Task G, I)
-- Prompt cleanup for investigation content (Task E)
+- Creating the `fix` skill (Task C)
+- Documentation of escalation criteria (Task I)
+- Prompt cleanup for pre-investigated bugs (Task E)
 
 
 ## Design Context (from cb-7aa91d)
@@ -584,7 +579,7 @@ Implement this task following the acceptance criteria above.
 
 ### On completion
 
-1. **Run `cobuild complete cb-12dd55`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
+1. **Run `cobuild complete cb-b6a8e2`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.
 
 **IMPORTANT RULES:**
 - NEVER use raw `git merge` or `git push` to main — always use `cobuild complete` which creates a PR
