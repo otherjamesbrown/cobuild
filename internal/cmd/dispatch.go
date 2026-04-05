@@ -14,6 +14,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
@@ -166,7 +167,7 @@ var dispatchCmd = &cobra.Command{
 				currentPhase = run.CurrentPhase
 			} else if errors.Is(err, store.ErrNotFound) {
 				// No pipeline run — create one on the fly
-				workflow := inferWorkflowFromType(task.Type)
+				workflow := inferWorkflowFromType(task)
 				firstPhase := firstPhaseOf(workflow, pCfg)
 				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, projectName, firstPhase, "manual")
 				if createErr != nil {
@@ -183,7 +184,11 @@ var dispatchCmd = &cobra.Command{
 		if currentPhase == "" {
 			switch task.Type {
 			case "bug":
-				currentPhase = "investigate"
+				if hasLabel(task.Labels, "needs-investigation") {
+					currentPhase = "investigate"
+				} else {
+					currentPhase = "fix"
+				}
 			case "design":
 				currentPhase = "design"
 			default:
@@ -636,6 +641,15 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary>\"`\n", workItemID))
 		b.WriteString("\n**Important:** Assign migration numbers explicitly if multiple tasks create DB migrations. Set `repo` metadata on tasks for multi-repo projects.\n")
 
+	case "fix":
+		b.WriteString("**Fix this bug.**\n\n")
+		b.WriteString("Follow the fix-bug skill:\n")
+		b.WriteString("1. Read the bug report\n")
+		b.WriteString("2. Check escalation criteria — if any apply, add `needs-investigation` label and stop\n")
+		b.WriteString("3. Reproduce, investigate lightly, append findings to the bug\n")
+		b.WriteString("4. Implement the fix, run tests, build\n")
+		b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
+
 	case "investigate":
 		b.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
 		b.WriteString("Follow the bug-investigation skill:\n")
@@ -695,11 +709,16 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 	}
 }
 
-// inferWorkflowFromType maps a work item type to a workflow name.
-func inferWorkflowFromType(wiType string) string {
-	switch wiType {
+// inferWorkflowFromType maps a work item to a workflow name.
+// Bugs labeled needs-investigation use the bug-complex workflow (investigate → implement → review → done).
+// All other bugs use the default bug workflow (fix → review → done).
+func inferWorkflowFromType(task *connector.WorkItem) string {
+	if task.Type == "bug" && hasLabel(task.Labels, "needs-investigation") {
+		return "bug-complex"
+	}
+	switch task.Type {
 	case "bug", "design", "task":
-		return wiType
+		return task.Type
 	default:
 		return "task"
 	}
@@ -715,7 +734,7 @@ func firstPhaseOf(workflow string, cfg *config.Config) string {
 	}
 	switch workflow {
 	case "bug":
-		return "investigate"
+		return "fix"
 	case "design":
 		return "design"
 	default:
