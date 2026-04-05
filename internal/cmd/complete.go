@@ -62,7 +62,15 @@ Steps:
 
 		// When triggered by Stop hook, verify the agent actually completed work before proceeding
 		if autoFlag {
-			commitOut, err := exec.Command("git", "-C", worktreePath, "log", "--oneline", "main..HEAD").Output()
+			baseBranch := "main"
+			if refOut, err := exec.Command("git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
+				// returns "refs/remotes/origin/main" — strip prefix
+				ref := strings.TrimSpace(string(refOut))
+				if idx := strings.LastIndex(ref, "/"); idx >= 0 {
+					baseBranch = ref[idx+1:]
+				}
+			}
+			commitOut, err := exec.Command("git", "-C", worktreePath, "log", "--oneline", baseBranch+"..HEAD").Output()
 			if err != nil || len(strings.TrimSpace(string(commitOut))) == 0 {
 				fmt.Fprintf(os.Stderr, "Warning: --auto: no commits on branch for %s, skipping (agent may not be done)\n", taskID)
 				return nil

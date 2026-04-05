@@ -217,7 +217,7 @@ var dispatchCmd = &cobra.Command{
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "cobuild complete $COBUILD_TASK_ID --auto"
+        "command": "cobuild complete \"$COBUILD_TASK_ID\" --auto"
       }]
     }]
   }
