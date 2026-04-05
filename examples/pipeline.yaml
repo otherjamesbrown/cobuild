@@ -54,6 +54,8 @@ phases:
         stall_check: implement/stall-check.md
     fix:
         skill: fix/fix-bug.md                   # single-session investigate+implement for bugs
+    investigate:
+        skill: investigate/bug-investigation.md  # read-only investigation for needs-investigation bugs
     review:
         gate: review
         skill: review/gate-process-review.md    # for external review (Gemini)
