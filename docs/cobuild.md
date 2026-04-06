@@ -368,16 +368,23 @@ Each service has a name, a list of path globs that trigger it (`trigger_paths`),
 
 ## Post-Agent Completion
 
-`cobuild complete <task-id>` runs automatically after the agent exits (appended to the tmux shell command). Steps:
+`cobuild complete <task-id>` runs automatically via two mechanisms:
 
-1. Restore the original `CLAUDE.md` from main (undoes dispatch context injection)
-2. Commit any uncommitted changes (excluding `CLAUDE.md`)
-3. Push the branch
-4. Create a PR via `gh pr create` if one does not exist (stores `pr_url` in metadata)
-5. Append evidence to the shard (commit hash, files changed, PR URL)
+1. **Stop hook** (primary) — dispatch writes `.claude/settings.local.json` into the worktree with a `Stop` hook that fires `cobuild complete $COBUILD_TASK_ID --auto` when the agent terminates. The `--auto` flag verifies the worktree has commits and isn't dirty (excluding `.cobuild/` and `CLAUDE.md` — dispatch artifacts) before proceeding.
+2. **Script fallback** — the dispatch shell script also calls `cobuild complete` after `claude` exits, as a safety net. The command is idempotent.
+
+Steps when complete runs:
+
+1. Commit any uncommitted changes (excluding `.cobuild/` and `CLAUDE.md` via pathspec)
+2. Push the branch
+3. Create a PR via `gh pr create` if one does not exist (stores `pr_url` in metadata)
+4. Append evidence to the shard (commit hash, files changed, PR URL)
+5. Transition the pipeline run to the `review` phase
 6. Mark the task `needs-review`
 
 If the task is already `needs-review`, it runs validation instead: checks for commits on the branch and a PR, auto-creating the PR if missing.
+
+Note: `cobuild dispatch` no longer requires a prior `cobuild init` call. If no pipeline run exists, dispatch auto-creates one based on the work item type (bug → `bug` workflow, design → `design`, task → `task`).
 
 ---
 

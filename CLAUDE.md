@@ -72,19 +72,27 @@ CoBuild still depends on Context Palace's database for storage. It should work i
 ### 2. ~~Rename `.cxp/` to `.cobuild/`~~ **DONE**
 Config directory, registry file, env vars, and all references updated. Legacy `.cxp/` paths are still supported as fallback.
 
-### 3. Fix known bugs
-- Squash merge + dependent branches causes conflicts on every merge — need auto-rebase or regular merges (see cb-7dd0d4)
-- `COBUILD_DISPATCH=true` env var is a hack — context layers should handle this fully
-- Agent sometimes doesn't exit (interactive mode) — `cobuild complete` appended to tmux but doesn't run
+### 3. ~~Dispatch reliability~~ **DONE** (cb-7aa91d)
+Major rework of the dispatch → completion flow, driven by dogfooding on penfold:
+- ~~Agent sometimes doesn't exit~~ → **Stop hook** writes `.claude/settings.local.json` into worktrees; `cobuild complete` runs automatically on agent termination
+- ~~CLAUDE.md overwritten with context dump~~ → Context now goes to `.cobuild/dispatch-context.md`; CLAUDE.md gets a small pointer section appended (idempotent)
+- ~~Dispatch artifacts leak into commits~~ → `cobuild complete` excludes `.cobuild/` and `CLAUDE.md` from auto-commit via pathspec; dispatch writes `.cobuild/.gitignore`
+- ~~Workspace trust dialog blocks dispatch~~ → `ensureClaudeTrust()` pre-registers worktrees in `~/.claude.json`
+- ~~Direct dispatch fails without `cobuild init`~~ → Auto-creates pipeline run on first dispatch
+- ~~Bug workflow forced read-only investigation~~ → Default bug workflow is now `fix → review → done`; label `needs-investigation` escalates to `investigate → implement → review → done`
+- ~~`.claude/` edits stall agents~~ → Worktree `.claude/settings.local.json` includes deny list for `.claude/**` edits
 
-### 4. Build the deploy agent
+### 4. Fix remaining known bugs
+- Squash merge + dependent branches causes conflicts on every merge — need auto-rebase or regular merges (see cb-7dd0d4)
+
+### 5. Build the deploy agent
 Deploy is currently a shell command. Should be a sub-agent with:
 - Smoke test (health check + version verification)
 - Auto-rollback on failure
 - Post-deploy integration test
 - Configurable per-repo in pipeline.yaml
 
-### 5. Documentation agent
+### 6. Documentation agent
 Auto-update docs after designs complete. Runs as a gate on the `done` phase.
 
 ## Building

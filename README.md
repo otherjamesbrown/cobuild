@@ -118,14 +118,24 @@ For bugs where the root cause is unknown, the fix spans multiple systems, or the
 | review | Check PR against spec, evaluate CI, record verdict |
 | done | Run retrospective, suggest improvements |
 
+### Dispatch Reliability
+
+Dispatched agents complete reliably without manual intervention:
+
+- **Stop hook** — `.claude/settings.local.json` is written into each worktree with a `Stop` hook that runs `cobuild complete` when the agent finishes. Agents don't need to remember to call it.
+- **Auto-create pipeline run** — `cobuild dispatch <id>` works without `cobuild init`. A pipeline run is created on the fly if one doesn't exist.
+- **Workspace trust** — Claude Code's "trust this folder" dialog is pre-accepted for worktrees so agents start immediately.
+- **Artifact guard** — `.cobuild/` dispatch artifacts and the injected `CLAUDE.md` section are excluded from auto-commits and protected by `.gitignore`.
+- **Permission deny list** — agents cannot edit `.claude/**` files in worktrees, preventing permission-prompt stalls.
+
 ### Manual vs Autonomous
 
 **Manual mode** (default) — you step through each phase:
 
 ```bash
-cobuild init <id>              # start pipeline
+cobuild init <id>              # start pipeline (optional — dispatch auto-creates)
 cobuild dispatch <id>          # spawn agent for current phase
-cobuild wait <id>              # wait for completion
+cobuild wait <id>              # wait for completion (Stop hook handles `cobuild complete`)
 # repeat for each phase
 ```
 
@@ -311,6 +321,16 @@ CoBuild tracks token usage and detects waste patterns:
 - **Project anatomy** — agents check the file index before reading large files
 - **Transcript analysis** — `cobuild admin tokens` extracts exact token counts and costs from session transcripts
 - **Waste detection** — `cobuild admin waste` identifies repeated reads, oversized reads, context overflow, and error loops
+
+### Token Reduction in Practice — Penfold
+
+CoBuild's dispatch reliability rework (cb-7aa91d) was specifically designed to reduce wasted tokens in dispatched sessions. Key changes, validated on the [penfold](https://github.com/otherjamesbrown/penfold) project:
+
+- **Context isolation** — assembled context (anatomy, design, layers) goes to `.cobuild/dispatch-context.md` instead of being injected into `CLAUDE.md`. Agents read it on demand rather than having it forced into every prompt turn. This reduced the base context size from ~2900 lines per session to ~5 lines (the pointer section).
+- **Stop hook completion** — agents no longer need to read AGENTS.md to learn the completion protocol. The Stop hook fires `cobuild complete` automatically, eliminating the "forgot to complete" failure mode that wasted full sessions (~$5-15 per stalled dispatch).
+- **Fix-phase collapse** — bugs go straight to a single `fix` session instead of separate `investigate` + `implement` dispatches. For penfold's bug backlog (5 bugs), this halved the number of dispatched sessions and the associated context-setup overhead.
+- **Errcheck cleanup** — 103 unchecked error returns fixed across penfold's codebase in a single dispatch (PR #98, 107 files). This prevents agents from hitting silent failures that trigger error-recovery loops, a major source of wasted tokens.
+- **Workflow determinism** — 7+1 Temporal workflows fixed for map-iteration and json.Marshal non-determinism. Non-deterministic replays cause cascading failures that agents often try to debug, burning tokens on infrastructure issues rather than feature work.
 
 ## Session Tracking
 
