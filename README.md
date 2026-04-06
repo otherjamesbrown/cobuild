@@ -397,16 +397,26 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 
 ## Tips
 
+### Check status with `audit`, not `wait`
+
+`cobuild wait` is a blocking command with a 2-hour timeout. **Do not run it as a background task and expect it to report back** — it's designed for fully automated pipelines, not interactive sessions.
+
+When you want to know "is it done?", use:
+
+```bash
+cobuild audit <id>     # instant — shows gate timeline, verdicts, current phase
+cobuild status         # instant — shows all active pipelines
+```
+
 ### Run manually before going autonomous
 
 Don't jump straight to `cobuild poller`. Step through the pipeline manually for your first few designs:
 
 ```bash
-cobuild init <id>                # start pipeline
+cobuild init <id>                # start pipeline (optional — dispatch auto-creates)
 cobuild dispatch <id>            # spawn agent for current phase
-cobuild wait <id>                # wait for completion
+cobuild audit <id>               # check if the gate passed (instant, no waiting)
 cobuild dispatch <id>            # next phase
-cobuild wait <id>                # ...
 cobuild merge-design <id>        # merge all PRs
 cobuild deploy <id>              # deploy affected services
 cobuild retro <id>               # review what happened
