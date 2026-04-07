@@ -162,7 +162,19 @@ func (c *BeadsConnector) Create(ctx context.Context, req CreateRequest) (string,
 	return result.ID, nil
 }
 
+// beadsStatusMap maps CoBuild's internal statuses to Beads-valid statuses.
+// Beads supports: open, in_progress, blocked, deferred, closed, pinned, hooked.
+// CoBuild uses "needs-review" (from Context Palace) which Beads doesn't have.
+var beadsStatusMap = map[string]string{
+	"needs-review": "hooked", // awaiting external action (review)
+	"ready":        "open",   // Beads has no "ready" status
+}
+
 func (c *BeadsConnector) UpdateStatus(ctx context.Context, id string, status string) error {
+	// Map CoBuild statuses to Beads equivalents
+	if mapped, ok := beadsStatusMap[status]; ok {
+		status = mapped
+	}
 	if status == "closed" {
 		_, err := c.run(ctx, "close", id)
 		return err
