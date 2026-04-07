@@ -294,7 +294,7 @@ var dispatchCmd = &cobra.Command{
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "cobuild complete \"$COBUILD_TASK_ID\" --auto"
+        "command": "cd \"$COBUILD_REPO_ROOT\" && cobuild complete \"$COBUILD_TASK_ID\" --auto"
       }]
     }]
   },
@@ -366,6 +366,7 @@ export COBUILD_DISPATCH=true
 export COBUILD_SESSION_ID='%s'
 export COBUILD_HOOKS_DIR='%s'
 export COBUILD_TASK_ID='%s'
+export COBUILD_REPO_ROOT='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
 echo "$COBUILD_SESSION_ID" > .cobuild/session_id
@@ -403,6 +404,7 @@ fi`,
 			sessionID,
 			filepath.Join(findRepoRoot(), "hooks"),
 			strings.ReplaceAll(taskID, "'", "'\\''"),
+			strings.ReplaceAll(repoRootForWT, "'", "'\\''"),
 			strings.ReplaceAll(promptPath, "'", "'\\''"),
 			claudeFlags,
 		)
@@ -411,7 +413,10 @@ fi`,
 # Cleanup script
 rm -f '%s'
 
-# Run completion (commit, push, create PR, mark needs-review)
+# Run completion from the main repo root (not worktree) so the connector
+# can find the Beads/Dolt database or CP config. The Stop hook does the
+# same via $COBUILD_REPO_ROOT.
+cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
 %s
 `,
 			strings.ReplaceAll(scriptPath, "'", "'\\''"),
