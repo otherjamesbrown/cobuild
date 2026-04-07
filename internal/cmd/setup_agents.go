@@ -322,7 +322,21 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 		step++
 	}
 	sb.WriteString(fmt.Sprintf("%d. **Run `cobuild complete <task-id>`**\n\n", step))
-	sb.WriteString("**Do this as your LAST action. Do not skip it.**\n\n")
+	sb.WriteString("The Stop hook will run `cobuild complete` automatically when you finish.\n")
+	sb.WriteString("If it fails, run it manually as your last action.\n\n")
+
+	// Orchestrator lifecycle
+	sb.WriteString("## Orchestrator Protocol\n\n")
+	sb.WriteString("If you are the orchestrating agent (dispatching tasks, not implementing them),\n")
+	sb.WriteString("**follow through the full lifecycle. Do not stop after dispatch.**\n\n")
+	sb.WriteString("After dispatching tasks:\n\n")
+	sb.WriteString("1. **Monitor** — use `cobuild audit <id>` or `cobuild status` for instant checks (do NOT use `cobuild wait` as a background task — it's a 2-hour blocking command)\n")
+	sb.WriteString("2. **Review** — when tasks reach `review` phase (PRs created), check Gemini review findings via `gh api repos/<owner>/<repo>/pulls/<pr>/comments`\n")
+	sb.WriteString("3. **Address blockers** — send HIGH findings back to the agent (via tmux send-keys) or fix directly\n")
+	sb.WriteString("4. **Merge** — `cobuild merge <task-id>` (or `gh pr merge <pr> --admin --squash` if cobuild merge fails)\n")
+	sb.WriteString("5. **Close** — update work item status to closed\n")
+	sb.WriteString("6. **Report** — tell the user what shipped, not \"want me to review?\"\n\n")
+	sb.WriteString("Only pause for user input if there is an actual blocker: merge conflict, critical Gemini finding you can't resolve, or a design decision needed.\n\n")
 
 	// Agent clarity
 	sb.WriteString("## What CoBuild manages vs what you do directly\n\n")
