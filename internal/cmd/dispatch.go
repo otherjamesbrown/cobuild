@@ -77,6 +77,22 @@ var dispatchCmd = &cobra.Command{
 			}
 			fmt.Printf("Target repo: %s (from task metadata: repo=%s)\n", repoRootForWT, targetRepo)
 		} else {
+			// Check if this is a multi-repo project — warn loudly if repo metadata is missing
+			if reg, err := config.LoadRepoRegistry(); err == nil {
+				var reposForProject []string
+				for name, entry := range reg.Repos {
+					projYAML := readProjectConfigFromYAML(entry.Path)
+					if projYAML.Project == projectName {
+						reposForProject = append(reposForProject, name)
+					}
+				}
+				if len(reposForProject) > 1 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "\n⚠️  WARNING: Multi-repo project (%s) but task %s has no `repo` metadata!\n", projectName, taskID)
+					fmt.Fprintf(cmd.ErrOrStderr(), "   Repos in this project: %s\n", strings.Join(reposForProject, ", "))
+					fmt.Fprintf(cmd.ErrOrStderr(), "   Defaulting to %s — this may be WRONG.\n", projectName)
+					fmt.Fprintf(cmd.ErrOrStderr(), "   Fix: `cxp shard metadata set %s repo <correct-repo>`\n\n", taskID)
+				}
+			}
 			repoRootForWT, _ = config.RepoForProject(projectName)
 			if repoRootForWT == "" {
 				repoRootForWT = findRepoRoot()
@@ -677,8 +693,13 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
 		b.WriteString("6. Record the decomposition gate:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary>\"`\n", workItemID))
-		b.WriteString("7. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch tasks yourself.\n")
-		b.WriteString("\n**Important:** Assign migration numbers explicitly if multiple tasks create DB migrations. Set `repo` metadata on tasks for multi-repo projects.\n")
+		b.WriteString("7. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch tasks yourself.\n\n")
+		b.WriteString("**IMPORTANT — multi-repo projects:**\n")
+		b.WriteString("If this project spans multiple repos, you MUST set `repo` metadata on EVERY task:\n")
+		b.WriteString("   `cobuild wi create --type task --title \"...\" --body \"...\" --parent <id>`\n")
+		b.WriteString("   `cxp shard metadata set <task-id> repo <repo-name>`\n")
+		b.WriteString("Without `repo` metadata, dispatch will create the worktree in the WRONG repo and the agent will be unable to make the correct changes.\n\n")
+		b.WriteString("**Also:** Assign migration numbers explicitly if multiple tasks create DB migrations.\n")
 
 	case "fix":
 		b.WriteString("**Fix this bug.**\n\n")
