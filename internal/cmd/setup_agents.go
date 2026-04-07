@@ -335,8 +335,9 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("3. **Address blockers** — send HIGH findings back to the agent (via tmux send-keys) or fix directly\n")
 	sb.WriteString("4. **Merge** — `cobuild merge <task-id>` (or `gh pr merge <pr> --admin --squash` if cobuild merge fails)\n")
 	sb.WriteString("5. **Close** — update work item status to closed\n")
-	sb.WriteString("6. **Report** — tell the user what shipped, not \"want me to review?\"\n\n")
-	sb.WriteString("Only pause for user input if there is an actual blocker: merge conflict, critical Gemini finding you can't resolve, or a design decision needed.\n\n")
+	sb.WriteString("6. **Report** — tell the user what shipped, not \"want me to review?\"\n")
+	sb.WriteString("7. **Deploy** — do NOT deploy automatically. Report which services need deploying and **ask the user** whether to proceed. Deploy touches production and is always a human decision.\n\n")
+	sb.WriteString("Only pause for user input if there is an actual blocker: merge conflict, critical Gemini finding you can't resolve, a design decision, or deploy approval.\n\n")
 
 	// Agent clarity
 	sb.WriteString("## What CoBuild manages vs what you do directly\n\n")
