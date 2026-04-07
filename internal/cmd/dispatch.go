@@ -663,6 +663,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("4. Score readiness (1-5) and determine verdict\n")
 		b.WriteString("5. Record the review:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild review %s --verdict pass|fail --readiness <N> --body \"<findings>\"`\n", workItemID))
+		b.WriteString("6. **Type `/exit` to end your session.** The orchestrating agent will dispatch the next phase. Do NOT dispatch it yourself.\n")
 
 	case "decompose":
 		b.WriteString("**Break this design into implementable tasks.**\n\n")
@@ -676,6 +677,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
 		b.WriteString("6. Record the decomposition gate:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary>\"`\n", workItemID))
+		b.WriteString("7. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch tasks yourself.\n")
 		b.WriteString("\n**Important:** Assign migration numbers explicitly if multiple tasks create DB migrations. Set `repo` metadata on tasks for multi-repo projects.\n")
 
 	case "fix":
@@ -701,6 +703,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString(fmt.Sprintf("   `cobuild investigate %s --verdict pass --body \"<summary>\"`\n", workItemID))
 		b.WriteString("8. Create a fix task with the exact changes needed:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"Fix: ...\" --body \"...\" --parent %s`\n", workItemID))
+		b.WriteString("9. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch it yourself.\n")
 
 	case "review":
 		b.WriteString("**Review this PR against its task spec and parent design.**\n\n")
@@ -712,6 +715,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("5. Check for hardcoded values that should be configurable (project-specific constraints)\n")
 		b.WriteString("6. Record the verdict:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild gate %s review --verdict pass|fail --body \"<findings>\"`\n", workItemID))
+		b.WriteString("7. **Type `/exit` to end your session.** The orchestrating agent handles merge. Do NOT merge PRs yourself.\n")
 
 	case "done":
 		b.WriteString("**Run a pipeline retrospective.**\n\n")
@@ -722,6 +726,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("4. Identify patterns — repeated failures, agent gaps, process friction\n")
 		b.WriteString("5. Record the retrospective:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild retro %s --body \"<findings>\"`\n", workItemID))
+		b.WriteString("6. **Type `/exit` to end your session.**\n")
 
 	default:
 		// Implementation (default for tasks and unknown phases)
