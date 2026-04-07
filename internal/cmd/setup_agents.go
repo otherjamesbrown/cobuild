@@ -442,8 +442,17 @@ This project uses [CoBuild](https://github.com/otherjamesbrown/cobuild) for pipe
 	}
 
 	content := string(data)
+
+	// Fix stale references: .cobuild/AGENTS.md → AGENTS.md (root)
 	if strings.Contains(content, ".cobuild/AGENTS.md") {
-		return nil // already has pointer
+		content = strings.ReplaceAll(content, "`.cobuild/AGENTS.md`", "`AGENTS.md`")
+		content = strings.ReplaceAll(content, ".cobuild/AGENTS.md", "AGENTS.md")
+		return os.WriteFile(claudePath, []byte(content), 0644)
+	}
+
+	// Already has the correct pointer
+	if strings.Contains(content, "`AGENTS.md`") {
+		return nil
 	}
 
 	// Append pointer
