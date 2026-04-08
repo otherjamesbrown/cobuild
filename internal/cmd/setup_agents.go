@@ -331,12 +331,9 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("**follow through the full lifecycle. Do not stop after dispatch.**\n\n")
 	sb.WriteString("After dispatching tasks:\n\n")
 	sb.WriteString("1. **Monitor** — use `cobuild audit <id>` or `cobuild status` for instant checks (do NOT use `cobuild wait` as a background task — it's a 2-hour blocking command)\n")
-	sb.WriteString("2. **Wait for Gemini review** — check `gh api repos/<owner>/<repo>/pulls/<pr>/reviews` for at least 1 review. If 0 reviews, **wait** (trigger with `/gemini review` comment if needed). Do NOT treat 0 comments as \"clean\" — it means Gemini hasn't reviewed yet.\n")
-	sb.WriteString("3. **Address findings** — read inline comments via `gh api repos/<owner>/<repo>/pulls/<pr>/comments`. Send HIGH/CRITICAL findings back to the agent or fix directly. MEDIUM findings: use judgement.\n")
-	sb.WriteString("4. **Merge** — only after Gemini has reviewed and HIGH findings are addressed. `cobuild merge <task-id>` (or `gh pr merge <pr> --admin --squash` if cobuild merge fails)\n")
-	sb.WriteString("5. **Close** — update work item status to closed\n")
-	sb.WriteString("6. **Report** — tell the user what shipped, not \"want me to review?\"\n")
-	sb.WriteString("7. **Deploy** — do NOT deploy automatically. Run `cobuild deploy <id> --dry-run` to show which services would be affected, then **ask the user** for approval. On approval, run `cobuild deploy <id>` (triggers deploy commands from pipeline config with smoke tests and auto-rollback). Deploy touches production and is always a human decision.\n\n")
+	sb.WriteString("2. **Process reviews** — run `cobuild process-review <task-id>` for each needs-review task. This automatically: waits for Gemini review, classifies findings, merges clean PRs, or re-dispatches agents for fixes. If it says \"Waiting\" — Gemini hasn't reviewed yet, retry after a few minutes.\n")
+	sb.WriteString("3. **Report** — tell the user what shipped, not \"want me to review?\"\n")
+	sb.WriteString("4. **Deploy** — do NOT deploy automatically. Run `cobuild deploy <id> --dry-run` to show which services would be affected, then **ask the user** for approval. On approval, run `cobuild deploy <id>` (triggers deploy commands from pipeline config with smoke tests and auto-rollback). Deploy touches production and is always a human decision.\n\n")
 	sb.WriteString("Only pause for user input if there is an actual blocker: merge conflict, critical Gemini finding you can't resolve, a design decision, or deploy approval.\n\n")
 
 	// Agent clarity
