@@ -204,6 +204,9 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 		if failed == 0 && err == nil && cbStore != nil {
 			if advErr := cbStore.UpdateRunPhase(ctx, designID, "done"); advErr == nil {
 				fmt.Println("Pipeline advanced to done phase.")
+				if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+					fmt.Printf("  Warning: failed to mark completed: %v\n", err)
+				}
 			}
 		}
 

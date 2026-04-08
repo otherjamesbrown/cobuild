@@ -114,10 +114,13 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 				}
 				if allDone {
 					fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-					if cbClient != nil {
-						if cbStore != nil {
-						_ = cbStore.UpdateRunPhase(ctx, designID, "done")
-					}
+					if cbStore != nil {
+						if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
+							fmt.Printf("  Warning: failed to advance phase: %v\n", err)
+						}
+						if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+							fmt.Printf("  Warning: failed to mark completed: %v\n", err)
+						}
 					}
 				}
 			}
