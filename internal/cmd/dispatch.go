@@ -45,10 +45,23 @@ var dispatchCmd = &cobra.Command{
 		}
 
 		if task.Status == "in_progress" {
-			return fmt.Errorf("task already dispatched (status: in_progress)")
-		}
-		if task.Status != "open" && task.Status != "ready" {
-			return fmt.Errorf("task not dispatchable (status: %s, must be open or ready)", task.Status)
+			// Allow re-dispatch if --force or if there's no active tmux session
+			// (review feedback sets status back to in_progress for re-dispatch)
+			tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").Output()
+			hasWindow := false
+			for _, line := range strings.Split(string(windowOut), "\n") {
+				if strings.TrimSpace(line) == taskID {
+					hasWindow = true
+					break
+				}
+			}
+			if hasWindow {
+				return fmt.Errorf("task already dispatched with active session (status: in_progress)")
+			}
+			fmt.Printf("Re-dispatching %s (review feedback cycle).\n", taskID)
+		} else if task.Status != "open" && task.Status != "ready" {
+			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, or in_progress)", task.Status)
 		}
 
 		// Check blocked-by edges

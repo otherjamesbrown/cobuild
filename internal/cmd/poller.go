@@ -66,6 +66,7 @@ Also runs health checks for stalled agents.`,
 			// Process autonomous pipelines (Mode 2)
 			pollActivePipelines(ctx, repoRoot, pCfg, dryRun)
 			pollNeedsReviewTasks(ctx, repoRoot, pCfg, dryRun)
+			pollTaskReviews(ctx, dryRun)
 
 			if once {
 				break
@@ -324,6 +325,48 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 	if total > 0 {
 		fmt.Printf("  [implement] %s — %d/%d done, %d in-progress, %d ready\n",
 			designID, done, total, inProgress, ready)
+	}
+}
+
+// pollTaskReviews finds needs-review tasks with PRs and processes Gemini reviews.
+func pollTaskReviews(ctx context.Context, dryRun bool) {
+	if conn == nil {
+		return
+	}
+
+	result, err := conn.List(ctx, connectorListFilters("task", "needs-review"))
+	if err != nil {
+		return
+	}
+
+	for _, item := range result.Items {
+		prURL, _ := conn.GetMetadata(ctx, item.ID, "pr_url")
+		if prURL == "" {
+			continue
+		}
+
+		// Check if Gemini has reviewed
+		repo, prNumber, err := parsePRURL(prURL)
+		if err != nil {
+			continue
+		}
+		reviews, err := getGeminiReviews(ctx, repo, prNumber)
+		if err != nil || len(reviews) == 0 {
+			continue // no review yet, skip
+		}
+
+		if dryRun {
+			fmt.Printf("  [review] %s — Gemini review found, would process\n", item.ID)
+			continue
+		}
+
+		fmt.Printf("  [review] %s — processing Gemini review...\n", item.ID)
+		out, err := exec.CommandContext(ctx, "cobuild", "process-review", item.ID).CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  [review] %s failed: %v\n%s\n", item.ID, err, string(out))
+		} else {
+			fmt.Printf("  [review] %s — %s\n", item.ID, strings.TrimSpace(string(out)))
+		}
 	}
 }
 
