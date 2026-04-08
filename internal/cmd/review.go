@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
@@ -22,7 +23,9 @@ var processReviewCmd = &cobra.Command{
 	Long: `Checks if a Gemini review exists on the task's PR, classifies findings
 by priority, and decides whether to merge or send the task back for fixes.
 
-If no review exists yet, exits cleanly (the poller will retry).
+If no review exists yet and the PR is younger than --review-timeout, exits cleanly
+(the poller will retry). If the timeout is exceeded (e.g. Gemini quota exhausted),
+falls back to CI-based review: approve if CI passes, request-changes if CI has new failures.
 
 On approve: records gate verdict, squash-merges PR, closes task, cleans up worktree.
 On request-changes: records verdict, appends feedback to task, re-dispatches agent.`,
@@ -74,21 +77,46 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			}
 		}
 
+		reviewTimeout, _ := cmd.Flags().GetInt("review-timeout")
+
 		// Step 1: Check for Gemini review
 		reviews, err := getGeminiReviews(ctx, repo, prNumber)
 		if err != nil {
 			return fmt.Errorf("check reviews: %w", err)
 		}
-		if len(reviews) == 0 {
-			fmt.Printf("No Gemini review yet for %s (PR #%d). Waiting.\n", taskID, prNumber)
-			return nil
-		}
 
-		// Step 2: Get inline comments from Gemini
-		findings := getGeminiFindings(ctx, repo, prNumber)
+		var findings []reviewFinding
+		reviewSource := "gemini"
+
+		if len(reviews) == 0 {
+			// Check PR age to decide: wait or fallback
+			prAge := getPRAge(ctx, prURL)
+			timeoutDuration := time.Duration(reviewTimeout) * time.Minute
+
+			if prAge < timeoutDuration {
+				remaining := timeoutDuration - prAge
+				fmt.Printf("No Gemini review yet for %s (PR #%d, %s old, timeout %dm). Waiting %s.\n",
+					taskID, prNumber, formatDuration(prAge), reviewTimeout, formatDuration(remaining))
+				return nil
+			}
+
+			// Timeout exceeded — fall back to orchestrator review (CI-based)
+			fmt.Printf("No Gemini review after %s for %s (PR #%d). Falling back to CI-based review.\n",
+				formatDuration(prAge), taskID, prNumber)
+			reviewSource = "ci-fallback"
+		} else {
+			// Step 2: Get inline comments from Gemini
+			findings = getGeminiFindings(ctx, repo, prNumber)
+		}
 
 		// Step 3: Check CI
 		ciResult := checkCI(ctx, repo, prNumber)
+
+		// CI still pending — wait regardless of review source
+		if ciResult.summary == "pending" {
+			fmt.Printf("CI checks still pending for %s (PR #%d). Waiting.\n", taskID, prNumber)
+			return nil
+		}
 
 		// Step 4: Decide verdict
 		mustFix := 0
@@ -112,8 +140,13 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		// Build summary
-		summary := fmt.Sprintf("Gemini review: %d high, %d medium, %d low finding(s). CI: %s",
-			mustFix, medium, low, ciResult.summary)
+		var summary string
+		if reviewSource == "gemini" {
+			summary = fmt.Sprintf("Gemini review: %d high, %d medium, %d low finding(s). CI: %s",
+				mustFix, medium, low, ciResult.summary)
+		} else {
+			summary = fmt.Sprintf("CI-based review (Gemini unavailable): CI: %s", ciResult.summary)
+		}
 
 		fmt.Printf("Review for %s (PR #%d): %s → %s\n", taskID, prNumber, summary, verdict)
 
@@ -243,26 +276,39 @@ func getGeminiFindings(ctx context.Context, repo string, prNumber int) []reviewF
 }
 
 func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
-	// Get PR checks
-	out, err := exec.CommandContext(ctx, "gh", "pr", "checks",
-		strconv.Itoa(prNumber), "--repo", repo, "--json", "name,state,conclusion").Output()
+	// Get check runs via API (gh pr checks doesn't support all fields)
+	headOut, err := exec.CommandContext(ctx, "gh", "pr", "view",
+		strconv.Itoa(prNumber), "--repo", repo,
+		"--json", "headRefOid", "--jq", ".headRefOid").Output()
 	if err != nil {
-		return ciCheckResult{summary: "unknown (could not fetch)"}
+		return ciCheckResult{summary: "no checks (could not get commit)"}
+	}
+	commitSHA := strings.TrimSpace(string(headOut))
+
+	out, err := exec.CommandContext(ctx, "gh", "api",
+		fmt.Sprintf("repos/%s/commits/%s/check-runs", repo, commitSHA),
+		"--jq", ".check_runs").Output()
+	if err != nil {
+		return ciCheckResult{summary: "no checks (API error)"}
 	}
 
 	type check struct {
 		Name       string `json:"name"`
-		State      string `json:"state"`
-		Conclusion string `json:"conclusion"`
+		Status     string `json:"status"`     // queued, in_progress, completed
+		Conclusion string `json:"conclusion"` // success, failure, neutral, etc.
 	}
 	var checks []check
 	if err := json.Unmarshal(out, &checks); err != nil {
-		return ciCheckResult{summary: "unknown (parse error)"}
+		return ciCheckResult{summary: "no checks (parse error)"}
+	}
+
+	if len(checks) == 0 {
+		return ciCheckResult{summary: "no CI checks configured"}
 	}
 
 	// Check for pending
 	for _, c := range checks {
-		if c.State == "PENDING" || c.State == "IN_PROGRESS" || c.State == "QUEUED" {
+		if c.Status == "queued" || c.Status == "in_progress" {
 			return ciCheckResult{summary: "pending"}
 		}
 	}
@@ -270,7 +316,7 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	// Find failures
 	var prFailures []string
 	for _, c := range checks {
-		if c.Conclusion == "FAILURE" || c.Conclusion == "ERROR" {
+		if c.Conclusion == "failure" || c.Conclusion == "error" {
 			prFailures = append(prFailures, c.Name)
 		}
 	}
@@ -493,7 +539,31 @@ func truncate(s string, n int) string {
 	return s
 }
 
+func getPRAge(ctx context.Context, prURL string) time.Duration {
+	out, err := exec.CommandContext(ctx, "gh", "pr", "view", prURL,
+		"--json", "createdAt", "--jq", ".createdAt").Output()
+	if err != nil {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return time.Since(t)
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
 func init() {
 	processReviewCmd.Flags().Bool("dry-run", false, "Show verdict without merging or re-dispatching")
+	processReviewCmd.Flags().Int("review-timeout", 30, "Minutes to wait for Gemini review before falling back to CI-based review")
 	rootCmd.AddCommand(processReviewCmd)
 }
