@@ -564,6 +564,6 @@ func formatDuration(d time.Duration) string {
 
 func init() {
 	processReviewCmd.Flags().Bool("dry-run", false, "Show verdict without merging or re-dispatching")
-	processReviewCmd.Flags().Int("review-timeout", 30, "Minutes to wait for Gemini review before falling back to CI-based review")
+	processReviewCmd.Flags().Int("review-timeout", 10, "Minutes to wait for Gemini review before falling back to CI-based review")
 	rootCmd.AddCommand(processReviewCmd)
 }
