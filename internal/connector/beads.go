@@ -248,11 +248,12 @@ func (c *BeadsConnector) CreateEdge(ctx context.Context, fromID string, toID str
 // --- Helpers ---
 
 func (c *BeadsConnector) run(ctx context.Context, args ...string) (json.RawMessage, error) {
-	if c.Repo != "" {
-		args = append([]string{"--repo", c.Repo}, args...)
-	}
-
 	cmd := exec.CommandContext(ctx, "bd", args...)
+
+	// Set working directory to the project repo so bd auto-discovers .beads/
+	if c.Repo != "" {
+		cmd.Dir = c.Repo
+	}
 	if c.Debug {
 		fmt.Printf("[connector:beads] bd %s\n", strings.Join(args, " "))
 	}
@@ -290,6 +291,14 @@ func (c *BeadsConnector) parseWorkItem(data json.RawMessage) (*WorkItem, error) 
 			ToID   string `json:"to_id"`
 			Type   string `json:"type"` // depends-on, blocks, relates-to
 		} `json:"dependencies"`
+		// Dependents are child items returned inline by bd show on parent items
+		Dependents []struct {
+			ID             string `json:"id"`
+			Title          string `json:"title"`
+			Status         string `json:"status"`
+			IssueType      string `json:"issue_type"`
+			DependencyType string `json:"dependency_type"` // parent-child
+		} `json:"dependents"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse beads item: %w", err)
@@ -309,7 +318,7 @@ func (c *BeadsConnector) parseWorkItem(data json.RawMessage) (*WorkItem, error) 
 		Title:     raw.Title,
 		Content:   content,
 		Type:      mapTypeFromBead(raw.IssueType),
-		Status:    raw.Status,
+		Status:    mapStatusFromBead(raw.Status),
 		Creator:   raw.Assignee,
 		Labels:    raw.Labels,
 		CreatedAt: raw.CreatedAt,
@@ -344,6 +353,20 @@ func (c *BeadsConnector) parseWorkItem(data json.RawMessage) (*WorkItem, error) 
 			EdgeType:  "child-of",
 			ItemID:    raw.ParentID,
 		})
+	}
+
+	// Dependents as incoming child-of edges (children of this item)
+	for _, dep := range raw.Dependents {
+		if dep.DependencyType == "parent-child" {
+			item.Edges = append(item.Edges, Edge{
+				Direction: "incoming",
+				EdgeType:  "child-of",
+				ItemID:    dep.ID,
+				Status:    mapStatusFromBead(dep.Status),
+				Title:     dep.Title,
+				Type:      mapTypeFromBead(dep.IssueType),
+			})
+		}
 	}
 
 	return item, nil
@@ -384,6 +407,18 @@ func mapTypeFromBead(t string) string {
 		return "task"
 	default:
 		return t
+	}
+}
+
+// mapStatusFromBead maps Beads statuses back to CoBuild equivalents.
+// This is the reverse of beadsStatusMap and ensures CoBuild code that checks
+// for "needs-review", "open", etc. works correctly with Beads data.
+func mapStatusFromBead(status string) string {
+	switch status {
+	case "hooked":
+		return "needs-review"
+	default:
+		return status
 	}
 }
 

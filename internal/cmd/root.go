@@ -84,8 +84,15 @@ CONFIGURATION:
 			projectName = projectFlag
 		}
 
-		// Load pipeline config
-		pCfg, _ := config.LoadConfig(repoRoot)
+		// Load pipeline config — when --project targets a different project,
+		// load that project's config so the correct connector is used.
+		configRoot := repoRoot
+		if projectFlag != "" && projectFlag != projYAML.Project {
+			if projRoot, err := config.RepoForProject(projectFlag); err == nil {
+				configRoot = projRoot
+			}
+		}
+		pCfg, _ := config.LoadConfig(configRoot)
 
 		// Initialize connector (always — needed for wi commands)
 		agent := agentFlag

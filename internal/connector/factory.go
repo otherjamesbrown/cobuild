@@ -32,6 +32,12 @@ func New(cfg *config.Config, project, agent string, debug bool) (Connector, erro
 				repo = r
 			}
 		}
+		// Default repo path from the registry if not explicitly configured
+		if repo == "" {
+			if repoPath, err := config.RepoForProject(project); err == nil {
+				repo = repoPath
+			}
+		}
 		return NewBeadsConnector(prefix, repo, debug), nil
 
 	default:
