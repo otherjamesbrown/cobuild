@@ -62,13 +62,65 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			return fmt.Errorf("parse PR URL: %w", err)
 		}
 
-		// Check PR state — skip if already merged
+		// Check PR state — if the PR is already merged, a previous
+		// process-review run probably got halfway (merged on GitHub but
+		// failed to clean up local state due to the branch/worktree
+		// ordering bug, or similar). Reconcile local state to match:
+		// close the shard, clean up the worktree, advance the pipeline
+		// phase if appropriate. Previously this branch silently returned
+		// nil, which left cp-64af0f wedged with status=needs-review even
+		// though PR #3 was already merged on GitHub.
 		stateOut, err := exec.CommandContext(ctx, "gh", "pr", "view", prURL,
 			"--json", "state", "--jq", ".state").Output()
 		if err == nil {
 			state := strings.TrimSpace(string(stateOut))
 			if state == "MERGED" {
-				fmt.Printf("PR already merged for %s, skipping review.\n", taskID)
+				fmt.Printf("PR already merged for %s. Reconciling local state.\n", taskID)
+
+				// Close the task shard if it isn't already
+				item, _ := conn.Get(ctx, taskID)
+				if item != nil && item.Status != "closed" {
+					if err := conn.UpdateStatus(ctx, taskID, "closed"); err != nil {
+						fmt.Printf("  Warning: failed to close task: %v\n", err)
+					} else {
+						fmt.Printf("  Task %s → closed.\n", taskID)
+					}
+				}
+
+				// Clean up the worktree if it still exists
+				wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+				if wtPath != "" {
+					archiveSessionLogs(wtPath, taskID)
+					repoForCleanup, _ := config.RepoForProject(projectName)
+					if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
+						fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
+					} else {
+						fmt.Println("  Worktree cleaned up.")
+					}
+				}
+
+				// Advance the pipeline phase if all siblings are now closed
+				edges, _ := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+				if len(edges) > 0 {
+					designID := edges[0].ItemID
+					siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+					if err == nil {
+						allDone := true
+						for _, s := range siblings {
+							if s.Status != "closed" {
+								allDone = false
+								break
+							}
+						}
+						if allDone && cbStore != nil {
+							fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
+							if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
+								fmt.Printf("  Warning: failed to advance phase: %v\n", err)
+							}
+						}
+					}
+				}
+
 				printNextStep(taskID, "merged", "process-review")
 				return nil
 			}
@@ -170,12 +222,20 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			return nil
 		}
 
-		// Record gate verdict
+		// Record gate verdict. process-review uses "approve"/"request-changes"
+		// as its internal verdict vocabulary, but pipeline_gates.verdict has
+		// a CHECK constraint of IN ('pass','fail'). Normalise before storing
+		// so we don't hit "violates check constraint" on every review that
+		// reaches this path (observed on cp-64af0f, 2026-04-11).
+		gateVerdict := "fail"
+		if verdict == "approve" {
+			gateVerdict = "pass"
+		}
 		if cbStore != nil {
 			repoRoot := findRepoRoot()
 			pCfg, _ := config.LoadConfig(repoRoot)
 			body := buildVerdictBody(verdict, findings, ciResult)
-			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", verdict, body, 0, pCfg)
+			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", gateVerdict, body, 0, pCfg)
 			if gateErr != nil {
 				fmt.Printf("Warning: failed to record gate verdict: %v\n", gateErr)
 			}
@@ -398,6 +458,23 @@ func buildVerdictBody(verdict string, findings []reviewFinding, ci ciCheckResult
 }
 
 func doMerge(ctx context.Context, taskID, prURL string) error {
+	// Clean up the worktree FIRST, before calling `gh pr merge --delete-branch`.
+	// Otherwise the local branch deletion fails with "cannot delete branch X
+	// used by worktree at Y" (observed on cp-64af0f, 2026-04-11) because the
+	// worktree still has the branch checked out at merge time. Remove the
+	// worktree, which frees the branch, then merge-and-delete succeeds.
+	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	if wtPath != "" {
+		archiveSessionLogs(wtPath, taskID)
+		repoForCleanup, _ := config.RepoForProject(projectName)
+		if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
+			fmt.Printf("  Warning: failed to remove worktree pre-merge: %v\n", err)
+			// Continue anyway — merge without --delete-branch if needed below
+		} else {
+			fmt.Println("  Worktree cleaned up.")
+		}
+	}
+
 	fmt.Printf("Merging %s...\n", prURL)
 	mergeOut, err := exec.CommandContext(ctx, "gh", "pr", "merge", prURL,
 		"--squash", "--delete-branch").CombinedOutput()
@@ -411,18 +488,6 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		fmt.Printf("  Warning: failed to close task: %v\n", err)
 	} else {
 		fmt.Printf("  Task %s → closed.\n", taskID)
-	}
-
-	// Clean up worktree
-	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
-	if wtPath != "" {
-		archiveSessionLogs(wtPath, taskID)
-		repoForCleanup, _ := config.RepoForProject(projectName)
-		if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
-			fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
-		} else {
-			fmt.Println("  Worktree cleaned up.")
-		}
 	}
 
 	// Check if all sibling tasks are done → advance pipeline
