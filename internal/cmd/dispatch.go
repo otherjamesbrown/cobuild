@@ -543,7 +543,13 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		designID := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-		// Get all child tasks
+		// Get all children of the design — includes tasks AND gate review
+		// sub-shards (type=review) AND any other child types. We must filter
+		// to only tasks; dispatching a gate record as if it were
+		// implementation work wastes tokens at best and corrupts the gate
+		// audit trail at worst (observed during cp-c2ec47's wave 1 — a
+		// readiness-review gate record got dispatched as a task because the
+		// filter wasn't here).
 		edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
 		if err != nil {
 			return fmt.Errorf("get child tasks: %w", err)
@@ -557,6 +563,19 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			if e.Status == "closed" || e.Status == "needs-review" {
 				continue // already done or in review
 			}
+
+			// Filter by work-item type: only dispatch tasks, not review
+			// sub-shards, investigation reports, or anything else that might
+			// be child-of the design. Skip the edge on any lookup error
+			// rather than fail the whole wave.
+			item, err := conn.Get(ctx, e.ItemID)
+			if err != nil || item == nil {
+				continue
+			}
+			if item.Type != "task" {
+				continue
+			}
+
 			if e.Status == "in_progress" {
 				inProgress = append(inProgress, e.ItemID)
 				continue
