@@ -1,6 +1,6 @@
 //go:build windows
 
-package cmd
+package claudecode
 
 // flockExclusive is a best-effort no-op on Windows. CoBuild's dispatch path
 // is inherently Unix-centric (tmux, bash worktree setup) so Windows support

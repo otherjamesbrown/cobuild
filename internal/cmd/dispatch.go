@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +14,9 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	cobuildruntime "github.com/otherjamesbrown/cobuild/internal/runtime"
+	_ "github.com/otherjamesbrown/cobuild/internal/runtime/claudecode" // register claude-code runtime
+	_ "github.com/otherjamesbrown/cobuild/internal/runtime/codex"      // register codex runtime
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
@@ -23,10 +25,14 @@ import (
 var dispatchCmd = &cobra.Command{
 	Use:   "dispatch <task-id>",
 	Short: "Dispatch a task to an agent via tmux",
-	Long:  `Spawns a Claude Code session in a tmux window with full context from the task and its parent design shard.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Spawns an agent session (Claude Code or OpenAI Codex) in a tmux window
+with full context from the task and its parent design shard. The runtime
+is chosen by --runtime flag > task metadata "dispatch_runtime" > pipeline
+config "dispatch.default_runtime" > "claude-code".`,
+	Args: cobra.ExactArgs(1),
 	Example: `  cobuild dispatch pf-abc123
   cobuild dispatch pf-abc123 --agent mycroft
+  cobuild dispatch pf-abc123 --runtime codex
   cobuild dispatch pf-abc123 --dry-run`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -142,14 +148,8 @@ var dispatchCmd = &cobra.Command{
 			}
 		}
 
-		// Pre-accept Claude Code's workspace trust dialog for the worktree.
-		// Otherwise the agent blocks on "Is this a project you created or one you trust?"
-		// See ~/.claude.json → projects → <path> → hasTrustDialogAccepted
-		if !dryRun && worktreePath != "" {
-			if err := ensureClaudeTrust(worktreePath); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not pre-accept workspace trust for %s: %v\n", worktreePath, err)
-			}
-		}
+		// Runtime-specific pre-dispatch hook runs later, after we've resolved
+		// which runtime to use (needs pCfg). See rt.PreDispatch below.
 
 		// Get parent design context
 		var designContext string
@@ -183,6 +183,30 @@ var dispatchCmd = &cobra.Command{
 		}
 		if pCfg == nil {
 			pCfg = config.DefaultConfig()
+		}
+
+		// Resolve which runtime will handle this dispatch.
+		// Priority: --runtime flag > task metadata > pCfg.Dispatch.DefaultRuntime > "claude-code".
+		runtimeFlag, _ := cmd.Flags().GetString("runtime")
+		runtimeMeta := ""
+		if conn != nil {
+			runtimeMeta, _ = conn.GetMetadata(ctx, taskID, "dispatch_runtime")
+		}
+		rtName := pCfg.ResolveRuntime(runtimeFlag, runtimeMeta)
+		rt, err := cobuildruntime.Get(rtName)
+		if err != nil {
+			return fmt.Errorf("invalid runtime %q: %v", rtName, err)
+		}
+		fmt.Printf("Runtime: %s\n", rt.Name())
+
+		// Runtime-specific pre-dispatch: for claude-code this pre-accepts
+		// the workspace trust dialog in ~/.claude.json; for codex it's a
+		// no-op. Failures are logged as warnings — the dispatch still
+		// proceeds so the operator can see the agent-side behavior.
+		if !dryRun && worktreePath != "" {
+			if err := rt.PreDispatch(ctx, worktreePath); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s pre-dispatch failed for %s: %v\n", rt.Name(), worktreePath, err)
+			}
 		}
 
 		// Phase-aware instructions
@@ -285,18 +309,20 @@ var dispatchCmd = &cobra.Command{
 				}
 			}
 
-			// Append a CoBuild dispatch section to the worktree CLAUDE.md (preserving original).
-			// Distinguish "file does not exist" (fine, start from empty) from real read errors
-			// (e.g., permission denied) — the latter must NOT silently overwrite the file.
-			// Idempotent: skip append if the section already exists (worktree re-dispatch).
-			claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
-			existing, readErr := os.ReadFile(claudeMDPath)
+			// Append a CoBuild dispatch section to the worktree's runtime-specific
+			// context file (CLAUDE.md for claude-code, AGENTS.md for codex).
+			// Distinguish "file does not exist" (fine, start from empty) from real
+			// read errors (e.g., permission denied) — the latter must NOT silently
+			// overwrite the file. Idempotent: skip append if the section already
+			// exists (worktree re-dispatch).
+			contextFilePath := filepath.Join(worktreePath, rt.ContextFile())
+			existing, readErr := os.ReadFile(contextFilePath)
 			dispatchSectionHeader := []byte("## CoBuild Dispatch Context")
 			if readErr != nil && !os.IsNotExist(readErr) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read %s (%v) — leaving untouched to avoid data loss\n", claudeMDPath, readErr)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read %s (%v) — leaving untouched to avoid data loss\n", contextFilePath, readErr)
 			} else if !bytes.Contains(existing, dispatchSectionHeader) {
-				// Only prefix newlines if the file already has content; avoids leading
-				// blank lines in a fresh CLAUDE.md.
+				// Only prefix newlines if the file already has content; avoids
+				// leading blank lines in a fresh context file.
 				prefix := ""
 				if len(existing) > 0 {
 					prefix = "\n\n"
@@ -305,41 +331,18 @@ var dispatchCmd = &cobra.Command{
 					"You are a dispatched CoBuild agent. Your task prompt was passed as the initial message.\n" +
 					"Additional context is in `.cobuild/dispatch-context.md` — read it if you need architecture, " +
 					"design context, or project anatomy.\n"
-				if err := os.WriteFile(claudeMDPath, append(existing, []byte(dispatchSection)...), 0644); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update worktree CLAUDE.md: %v\n", err)
+				if err := os.WriteFile(contextFilePath, append(existing, []byte(dispatchSection)...), 0644); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update worktree %s: %v\n", rt.ContextFile(), err)
 				}
 			}
 		}
 
-		// Write Stop hook settings so cobuild complete runs automatically when agent stops
+		// Write runtime-specific agent-settings files into the worktree (if any).
+		// claude-code writes .claude/settings.local.json with Stop hook + deny list;
+		// codex is a no-op.
 		if !dryRun {
-			settingsDir := filepath.Join(worktreePath, ".claude")
-			if mkErr := os.MkdirAll(settingsDir, 0755); mkErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not create .claude/ directory: %v\n", mkErr)
-			} else {
-				settingsContent := `{
-  "hooks": {
-    "Stop": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "cd \"$COBUILD_REPO_ROOT\" && cobuild complete \"$COBUILD_TASK_ID\" --auto"
-      }]
-    }]
-  },
-  "permissions": {
-    "deny": [
-      "Edit(.claude/**)",
-      "Write(.claude/**)",
-      "MultiEdit(.claude/**)"
-    ]
-  }
-}`
-				if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(settingsContent), 0644); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write .claude/settings.local.json: %v\n", err)
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "Worktree permissions: .claude/** edits denied\n")
-				}
+			if err := rt.WriteSettings(worktreePath); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not write %s settings: %v\n", rt.Name(), err)
 			}
 		}
 
@@ -366,92 +369,40 @@ var dispatchCmd = &cobra.Command{
 				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
 			}
 		}
-		// Use interactive mode by default — proven to work for multi-turn implementation.
-		// -p mode works but was unreliable earlier. Keep interactive as the safe default.
-		claudeFlags := "--dangerously-skip-permissions"
-		if pCfg.Dispatch.ClaudeFlags != "" {
-			claudeFlags = pCfg.Dispatch.ClaudeFlags
-		}
-		if model := pCfg.ModelForPhase("implement", ""); model != "" {
-			claudeFlags += " --model " + model
-		} else if pCfg.Dispatch.DefaultModel != "" {
-			claudeFlags += " --model " + pCfg.Dispatch.DefaultModel
-		}
+		// Resolve the model for the current phase, runtime-aware. Phase/gate
+		// overrides still take precedence; the runtime-specific default is
+		// used as a fallback so claude-code gets "sonnet" and codex gets
+		// "gpt-5.4" without any phase-level override.
+		resolvedModel := pCfg.ModelForPhaseRuntime(currentPhase, "", rtName)
 
-		completeCmd := fmt.Sprintf("cobuild complete '%s'", strings.ReplaceAll(taskID, "'", "'\\''"))
-
-		// Write a dispatch script — tmux new-window can't handle pipes/stdin
-		// The prompt must be a positional argument, not piped via stdin
-		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
-		// Get session ID if it was stored
+		// Get session ID if it was stored in metadata (used for event tracking).
 		sessionID := ""
 		if conn != nil {
 			sessionID, _ = conn.GetMetadata(ctx, taskID, "session_id")
 		}
 
-		scriptContent := fmt.Sprintf(`#!/bin/bash
-cd '%s'
-export COBUILD_DISPATCH=true
-export COBUILD_SESSION_ID='%s'
-export COBUILD_HOOKS_DIR='%s'
-export COBUILD_TASK_ID='%s'
-export COBUILD_REPO_ROOT='%s'
-LOGFILE=".cobuild/dispatch.log"
-mkdir -p .cobuild
-echo "$COBUILD_SESSION_ID" > .cobuild/session_id
-echo "[$(date)] Dispatch starting (session: $COBUILD_SESSION_ID)" >> "$LOGFILE"
+		// Build the tmux runner script via the runtime. Each runtime owns the
+		// CLI-specific bash template for spawning the agent and running
+		// cobuild complete on exit.
+		scriptBody, err := rt.BuildRunnerScript(cobuildruntime.RunnerInput{
+			WorktreePath: worktreePath,
+			RepoRoot:     repoRootForWT,
+			TaskID:       taskID,
+			PromptFile:   promptPath,
+			Model:        resolvedModel,
+			ExtraFlags:   pCfg.FlagsForRuntime(rtName),
+			SessionID:    sessionID,
+			HooksDir:     filepath.Join(findRepoRoot(), "hooks"),
+		})
+		if err != nil {
+			return fmt.Errorf("build runner script: %v", err)
+		}
 
-# Load prompt from temp file
-PROMPT_FILE='%s'
-if [ ! -f "$PROMPT_FILE" ]; then
-    echo "[$(date)] ERROR: Prompt file not found: $PROMPT_FILE" >> "$LOGFILE"
-    exit 1
-fi
-
-# Save a copy for debugging
-cp "$PROMPT_FILE" .cobuild/last-prompt.md
-PROMPT=$(cat "$PROMPT_FILE")
-echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
-rm -f "$PROMPT_FILE"
-
-# Run claude in interactive mode (proven reliable for multi-turn work)
-claude %s "$PROMPT"
-echo "[$(date)] Claude session ended" >> "$LOGFILE"
-
-# Parse transcript for token/cost data after session ends
-# The transcript JSONL has usage data in each API response
-TRANSCRIPT_DIR="$HOME/.claude/projects"
-TRANSCRIPT=$(find "$TRANSCRIPT_DIR" -name "*.jsonl" -newer "$LOGFILE" -type f 2>/dev/null | head -1)
-if [ -n "$TRANSCRIPT" ] && command -v jq &>/dev/null; then
-    # Extract usage from the last result message in the transcript
-    USAGE=$(tail -100 "$TRANSCRIPT" | grep '"usage"' | tail -1 | jq -c '.usage // empty' 2>/dev/null)
-    if [ -n "$USAGE" ]; then
-        echo "[$(date)] Transcript usage: $USAGE" >> "$LOGFILE"
-    fi
-fi`,
-			strings.ReplaceAll(worktreePath, "'", "'\\''"),
-			sessionID,
-			filepath.Join(findRepoRoot(), "hooks"),
-			strings.ReplaceAll(taskID, "'", "'\\''"),
-			strings.ReplaceAll(repoRootForWT, "'", "'\\''"),
-			strings.ReplaceAll(promptPath, "'", "'\\''"),
-			claudeFlags,
-		)
-		scriptContent += fmt.Sprintf(`
-
-# Cleanup script
-rm -f '%s'
-
-# Run completion from the main repo root (not worktree) so the connector
-# can find the Beads/Dolt database or CP config. The Stop hook does the
-# same via $COBUILD_REPO_ROOT.
-cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
-%s
-`,
-			strings.ReplaceAll(scriptPath, "'", "'\\''"),
-			completeCmd,
-		)
-		if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		// Write the script to a temp file; the script self-deletes via $0
+		// after the agent session ends, so we don't need to track the path
+		// for cleanup here.
+		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
+		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0755); err != nil {
 			return fmt.Errorf("failed to write dispatch script: %v", err)
 		}
 		tmuxArgs := []string{"new-window", "-n", taskID, "-t", tmuxSession, "bash", scriptPath}
@@ -520,7 +471,8 @@ cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
 				TaskID:           taskID,
 				Phase:            currentPhase,
 				Project:          projectName,
-				Model:            pCfg.Dispatch.DefaultModel,
+				Runtime:          rt.Name(),
+				Model:            resolvedModel,
 				PromptChars:      len(prompt),
 				Prompt:           prompt,
 				AssembledContext: assembledContext,
@@ -538,10 +490,11 @@ cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
 
 		// Record dispatch metadata
 		dispatchInfo := map[string]any{
-			"dispatched_at": time.Now().UTC().Format(time.RFC3339),
-			"agent":         agent,
-			"tmux_window":   taskID,
-			"log_file":      logFile,
+			"dispatched_at":    time.Now().UTC().Format(time.RFC3339),
+			"agent":            agent,
+			"dispatch_runtime": rt.Name(),
+			"tmux_window":      taskID,
+			"log_file":         logFile,
 		}
 		if err := conn.UpdateMetadataMap(ctx, taskID, dispatchInfo); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched but failed to update metadata: %v\n", err)
@@ -551,6 +504,8 @@ cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
 			out := map[string]any{
 				"task_id":       taskID,
 				"agent":         agent,
+				"runtime":       rt.Name(),
+				"model":         resolvedModel,
 				"tmux_session":  tmuxSession,
 				"worktree_path": worktreePath,
 				"tmux_window":   taskID,
@@ -561,7 +516,7 @@ cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
 			return nil
 		}
 
-		fmt.Printf("Dispatched %s to %s\n", taskID, agent)
+		fmt.Printf("Dispatched %s to %s (runtime: %s, model: %s)\n", taskID, agent, rt.Name(), resolvedModel)
 		fmt.Printf("  Session:  %s\n", tmuxSession)
 		fmt.Printf("  Worktree: %s\n", worktreePath)
 		fmt.Printf("  Window:   %s\n", taskID)
@@ -837,127 +792,9 @@ func hasInvestigationContent(content string) bool {
 	return false
 }
 
-// ensureClaudeTrust pre-accepts Claude Code's workspace trust dialog for a
-// directory by editing ~/.claude.json. This avoids dispatched agents blocking
-// on "Is this a project you created or one you trust?" in fresh worktrees.
-//
-// Concurrency: read-modify-write is guarded by an flock on a sibling lock
-// file so concurrent `cobuild dispatch` processes (e.g. from dispatch-wave)
-// cannot clobber each other's updates. The lock is released automatically
-// when the function returns (file close).
-//
-// The file is read, the specific project entry is added/updated, and the
-// whole file is written back atomically (temp file + rename). If the file
-// doesn't exist or can't be parsed, we return an error rather than creating
-// one from scratch — that's Claude Code's job.
-func ensureClaudeTrust(worktreePath string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("home dir: %w", err)
-	}
-	configPath := filepath.Join(home, ".claude.json")
-	lockPath := configPath + ".cobuild-lock"
-
-	// Acquire exclusive advisory lock for the whole read-modify-write cycle.
-	// Using a sibling .cobuild-lock file (not the config itself) avoids any
-	// interaction with Claude Code's own file handles on .claude.json.
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return fmt.Errorf("open lock %s: %w", lockPath, err)
-	}
-	defer lockFile.Close()
-	if err := flockExclusive(lockFile.Fd()); err != nil {
-		return fmt.Errorf("flock: %w", err)
-	}
-	defer flockUnlock(lockFile.Fd())
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", configPath, err)
-	}
-
-	// Decode into a generic map so we preserve unknown fields on write-back.
-	var cfg map[string]any
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("parse %s: %w", configPath, err)
-	}
-	// Guard against the file containing literal "null" or being empty-object,
-	// either of which would leave cfg nil and panic on the map assignment below.
-	if cfg == nil {
-		cfg = make(map[string]any)
-	}
-
-	projects, _ := cfg["projects"].(map[string]any)
-	if projects == nil {
-		projects = make(map[string]any)
-		cfg["projects"] = projects
-	}
-
-	entry, _ := projects[worktreePath].(map[string]any)
-	if entry == nil {
-		entry = make(map[string]any)
-		projects[worktreePath] = entry
-	}
-
-	// Only write if ALL required flags are already set — avoids gratuitous file
-	// churn but ensures a partially-populated entry (e.g. trust set but onboarding
-	// still pending) gets fully repaired before the agent sees it.
-	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
-	onboarded, _ := entry["hasCompletedProjectOnboarding"].(bool)
-	if trusted && onboarded {
-		return nil
-	}
-
-	entry["hasTrustDialogAccepted"] = true
-	entry["hasCompletedProjectOnboarding"] = true
-	if _, ok := entry["allowedTools"]; !ok {
-		entry["allowedTools"] = []any{}
-	}
-	if _, ok := entry["projectOnboardingSeenCount"]; !ok {
-		entry["projectOnboardingSeenCount"] = 1
-	}
-
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-
-	// Atomic write: temp file in the same directory, then rename
-	tmp, err := os.CreateTemp(filepath.Dir(configPath), ".claude.json.tmp.*")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(out); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("chmod temp: %w", err)
-	}
-	// fsync before rename so a crash between the rename and OS flush cannot
-	// leave an empty or truncated ~/.claude.json.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close temp: %w", err)
-	}
-	if err := os.Rename(tmpName, configPath); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
-}
-
 func init() {
 	dispatchCmd.Flags().String("agent", "", "Override agent (default: from config)")
+	dispatchCmd.Flags().String("runtime", "", "Agent runtime to use (claude-code, codex). Defaults to task metadata, then pipeline.yaml dispatch.default_runtime, then claude-code.")
 	dispatchCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
 	dispatchWaveCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
 	rootCmd.AddCommand(dispatchCmd)

@@ -80,6 +80,10 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_pipeline_gates_design ON pipeline_gates(design_id, phase, round);
 	CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_pipeline ON pipeline_tasks(pipeline_id);
 	CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_design ON pipeline_tasks(design_id);
+	-- Runtime column for pipeline_sessions (added alongside codex runtime support).
+	-- Idempotent ADD COLUMN IF NOT EXISTS; defaults to claude-code for historical rows.
+	ALTER TABLE IF EXISTS pipeline_sessions
+		ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'claude-code';
 	`
 	_, err := s.pool.Exec(ctx, ddl)
 	return err
@@ -369,6 +373,13 @@ func (s *PostgresStore) UpdateTaskStatus(ctx context.Context, taskShardID, statu
 // --- Pipeline Sessions ---
 
 func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (*SessionRecord, error) {
+	// Default runtime to claude-code for callers that predate the runtime
+	// abstraction — matches the pipeline_sessions column default, keeps
+	// old analytics queries working unchanged.
+	runtime := input.Runtime
+	if runtime == "" {
+		runtime = "claude-code"
+	}
 	rec := &SessionRecord{
 		ID:         newID("ps"),
 		PipelineID: input.PipelineID,
@@ -376,6 +387,7 @@ func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (
 		TaskID:     input.TaskID,
 		Phase:      input.Phase,
 		Project:    input.Project,
+		Runtime:    runtime,
 		Status:     "running",
 	}
 
@@ -408,11 +420,11 @@ func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (
 
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO pipeline_sessions (
-			id, pipeline_id, design_id, task_id, phase, project,
+			id, pipeline_id, design_id, task_id, phase, project, runtime,
 			model, prompt_chars, prompt, assembled_context, worktree_path, tmux_session, tmux_window
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING started_at
-	`, rec.ID, rec.PipelineID, rec.DesignID, rec.TaskID, rec.Phase, rec.Project,
+	`, rec.ID, rec.PipelineID, rec.DesignID, rec.TaskID, rec.Phase, rec.Project, rec.Runtime,
 		model, promptChars, prompt, assembledCtx, wtPath, tmuxSess, tmuxWin,
 	).Scan(&rec.StartedAt)
 	if err != nil {
@@ -460,14 +472,14 @@ func (s *PostgresStore) EndSession(ctx context.Context, id string, result Sessio
 func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*SessionRecord, error) {
 	var r SessionRecord
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, pipeline_id, design_id, task_id, phase, project,
+		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
 			status, error, worktree_path
 		FROM pipeline_sessions WHERE task_id = $1
 		ORDER BY started_at DESC LIMIT 1
 	`, taskID).Scan(
-		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project,
+		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
 		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
 		&r.Status, &r.Error, &r.WorktreePath,
@@ -480,7 +492,7 @@ func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*Session
 
 func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]SessionRecord, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, pipeline_id, design_id, task_id, phase, project,
+		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
 			status, error, worktree_path
@@ -496,7 +508,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 	for rows.Next() {
 		var r SessionRecord
 		if err := rows.Scan(
-			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project,
+			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
 			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
 			&r.Status, &r.Error, &r.WorktreePath,

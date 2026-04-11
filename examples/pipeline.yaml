@@ -86,11 +86,31 @@ review:
 
 # --- Dispatch ---
 # How agents are spawned for implementation tasks.
+#
+# CoBuild supports pluggable agent runtimes. Each runtime wraps a specific
+# CLI (Claude Code, OpenAI Codex, ...) with its own trust handling, settings,
+# and runner script. Per-runtime model and flags are configured under
+# `runtimes`. Selection priority at dispatch time:
+#   1. `cobuild dispatch --runtime <name>` flag
+#   2. task metadata `dispatch_runtime`
+#   3. `dispatch.default_runtime` from this file
+#   4. hardcoded "claude-code"
 dispatch:
     max_concurrent: 3                     # max agents running at once
-    default_model: sonnet                 # model for implementing agents
-    # claude_flags: ""                    # override claude CLI flags (default: interactive + skip permissions)
+    default_runtime: claude-code          # runtime used when task has no override
     # tmux_session: ""                    # override tmux session name (default: cobuild-<project>)
+
+    runtimes:
+        claude-code:
+            model: sonnet                 # claude model for this runtime
+            # flags: ""                   # override claude CLI flags (default: --dangerously-skip-permissions)
+        codex:
+            model: gpt-5.4                # codex model for this runtime
+            # flags: ""                   # override codex exec flags (default: --json --full-auto)
+
+    # Legacy fields (still honoured, but prefer the runtimes map above):
+    # default_model: sonnet               # last-resort model fallback
+    # claude_flags: ""                    # legacy claude flags override
 
 # --- Monitoring ---
 monitoring:

@@ -105,16 +105,59 @@ type AgentCfg struct {
 }
 
 // DispatchCfg controls how work is dispatched to agents.
+//
+// DefaultRuntime and Runtimes were added alongside pluggable agent runtimes
+// (claude-code vs codex). ClaudeFlags and DefaultModel are legacy fields
+// retained for back-compat with older configs — DefaultModel is still used
+// as a final fallback by ModelForPhase[Runtime] when no runtime-specific
+// model is configured.
 type DispatchCfg struct {
-	MaxConcurrent int    `yaml:"max_concurrent,omitempty"`
-	TmuxSession   string `yaml:"tmux_session,omitempty"`
-	ClaudeFlags   string `yaml:"claude_flags,omitempty"`
-	DefaultModel  string `yaml:"default_model,omitempty"`
+	MaxConcurrent  int                  `yaml:"max_concurrent,omitempty"`
+	TmuxSession    string               `yaml:"tmux_session,omitempty"`
+	DefaultRuntime string               `yaml:"default_runtime,omitempty"`
+	Runtimes       map[string]RuntimeCfg `yaml:"runtimes,omitempty"`
+
+	// Legacy / back-compat fields ----------------------------------------
+	ClaudeFlags  string `yaml:"claude_flags,omitempty"`
+	DefaultModel string `yaml:"default_model,omitempty"`
 }
 
-// ModelForPhase resolves the model to use for a given phase.
-// Priority: gate model -> phase model -> dispatch default_model -> ""
+// RuntimeCfg holds per-runtime dispatch settings. Keyed by runtime name
+// ("claude-code", "codex") inside DispatchCfg.Runtimes.
+type RuntimeCfg struct {
+	// Model is the default model identifier for this runtime (e.g. "sonnet"
+	// for claude-code, "gpt-5.4" for codex). Overrides DispatchCfg.DefaultModel
+	// when set; overridden by phase.model / gate.model from the workflow.
+	Model string `yaml:"model,omitempty"`
+	// Flags is additional CLI flags passed to the runtime binary. When set
+	// this REPLACES the runtime's built-in default flags (e.g. for claude-code
+	// this replaces "--dangerously-skip-permissions"; for codex it replaces
+	// "--json --full-auto").
+	Flags string `yaml:"flags,omitempty"`
+}
+
+// ModelForPhase resolves the model to use for a given phase, falling back
+// through the legacy (runtime-unaware) chain. Kept for call sites that
+// have not yet been migrated to ModelForPhaseRuntime.
+// Priority: gate model -> phase model -> dispatch.default_model -> ""
 func (c *Config) ModelForPhase(phaseName, gateName string) string {
+	return c.ModelForPhaseRuntime(phaseName, gateName, "")
+}
+
+// ModelForPhaseRuntime resolves the model to use for a given phase,
+// taking the active runtime into account so runtime-specific defaults
+// (e.g. "sonnet" for claude-code, "gpt-5.4" for codex) are picked up
+// when no phase/gate override is set.
+//
+// Priority (first non-empty wins):
+//  1. gate-specific model (phase.gates[gateName].model)
+//  2. phase-specific model (phase.model)
+//  3. review.model when phaseName == "review"
+//  4. monitoring.model when phaseName == "monitoring" or gate == "stall-check"
+//  5. dispatch.runtimes[runtime].model
+//  6. dispatch.default_model (legacy, runtime-unaware)
+//  7. ""
+func (c *Config) ModelForPhaseRuntime(phaseName, gateName, runtime string) string {
 	if c == nil {
 		return ""
 	}
@@ -126,13 +169,55 @@ func (c *Config) ModelForPhase(phaseName, gateName string) string {
 	if phase := c.FindPhase(phaseName); phase != nil && phase.Model != "" {
 		return phase.Model
 	}
-	if c.Review.Model != "" && (phaseName == "review") {
+	if c.Review.Model != "" && phaseName == "review" {
 		return c.Review.Model
 	}
 	if c.Monitoring.Model != "" && (phaseName == "monitoring" || gateName == "stall-check") {
 		return c.Monitoring.Model
 	}
+	if runtime != "" {
+		if rc, ok := c.Dispatch.Runtimes[runtime]; ok && rc.Model != "" {
+			return rc.Model
+		}
+	}
 	return c.Dispatch.DefaultModel
+}
+
+// FlagsForRuntime returns runtime-specific extra flags from config, falling
+// back to the legacy ClaudeFlags field when runtime is "claude-code" and no
+// runtime-specific flags are set. Empty return means "use the runtime's own
+// built-in default flags".
+func (c *Config) FlagsForRuntime(runtime string) string {
+	if c == nil {
+		return ""
+	}
+	if runtime != "" {
+		if rc, ok := c.Dispatch.Runtimes[runtime]; ok && rc.Flags != "" {
+			return rc.Flags
+		}
+	}
+	// Back-compat: honour the legacy claude_flags field for the claude-code runtime.
+	if runtime == "claude-code" && c.Dispatch.ClaudeFlags != "" {
+		return c.Dispatch.ClaudeFlags
+	}
+	return ""
+}
+
+// ResolveRuntime picks the dispatch runtime for a task, applying the
+// priority chain (caller-supplied override > task metadata > config default
+// > hardcoded "claude-code"). The caller passes the flag override and
+// task-metadata value — this function doesn't touch connectors itself.
+func (c *Config) ResolveRuntime(flagOverride, metadataValue string) string {
+	if flagOverride != "" {
+		return flagOverride
+	}
+	if metadataValue != "" {
+		return metadataValue
+	}
+	if c != nil && c.Dispatch.DefaultRuntime != "" {
+		return c.Dispatch.DefaultRuntime
+	}
+	return "claude-code"
 }
 
 // GitHubCfg holds GitHub repository information.
@@ -221,10 +306,16 @@ func ValidatePipelinePhase(phase string) error {
 func DefaultConfig() *Config {
 	return &Config{
 		Dispatch: DispatchCfg{
-			MaxConcurrent: 3,
-			TmuxSession:   "",  // empty = auto: cobuild-<project>
-			ClaudeFlags:   "",  // empty = use dispatch.go defaults (interactive + skip permissions)
-			DefaultModel:  "sonnet",
+			MaxConcurrent:  3,
+			TmuxSession:    "", // empty = auto: cobuild-<project>
+			DefaultRuntime: "claude-code",
+			Runtimes: map[string]RuntimeCfg{
+				"claude-code": {Model: "sonnet"},
+				"codex":       {Model: "gpt-5.4"},
+			},
+			// Legacy fields retained for back-compat
+			ClaudeFlags:  "", // empty = use runtime's built-in default
+			DefaultModel: "sonnet",
 		},
 		Monitoring: MonitoringCfg{
 			StallTimeout: "30m",
@@ -362,11 +453,32 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Dispatch.TmuxSession != "" {
 		out.Dispatch.TmuxSession = override.Dispatch.TmuxSession
 	}
+	if override.Dispatch.DefaultRuntime != "" {
+		out.Dispatch.DefaultRuntime = override.Dispatch.DefaultRuntime
+	}
 	if override.Dispatch.ClaudeFlags != "" {
 		out.Dispatch.ClaudeFlags = override.Dispatch.ClaudeFlags
 	}
 	if override.Dispatch.DefaultModel != "" {
 		out.Dispatch.DefaultModel = override.Dispatch.DefaultModel
+	}
+	// Merge per-runtime configs field-by-field so a repo config can override
+	// just the model or just the flags for a single runtime without wiping
+	// out the rest of the base runtimes map.
+	if len(override.Dispatch.Runtimes) > 0 {
+		if out.Dispatch.Runtimes == nil {
+			out.Dispatch.Runtimes = make(map[string]RuntimeCfg, len(override.Dispatch.Runtimes))
+		}
+		for name, oc := range override.Dispatch.Runtimes {
+			base := out.Dispatch.Runtimes[name]
+			if oc.Model != "" {
+				base.Model = oc.Model
+			}
+			if oc.Flags != "" {
+				base.Flags = oc.Flags
+			}
+			out.Dispatch.Runtimes[name] = base
+		}
 	}
 	if override.Review.Model != "" {
 		out.Review.Model = override.Review.Model

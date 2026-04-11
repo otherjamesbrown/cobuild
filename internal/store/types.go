@@ -75,10 +75,11 @@ type SessionInput struct {
 	TaskID           string
 	Phase            string
 	Project          string
+	Runtime          string // agent runtime that will handle this dispatch ("claude-code", "codex")
 	Model            string
 	PromptChars      int
 	Prompt           string
-	AssembledContext string // full CLAUDE.md content the agent sees
+	AssembledContext string // full CLAUDE.md / AGENTS.md content the agent sees
 	WorktreePath     string
 	TmuxSession      string
 	TmuxWindow       string
@@ -99,26 +100,27 @@ type SessionResult struct {
 
 // SessionRecord is a row from pipeline_sessions.
 type SessionRecord struct {
-	ID             string     `json:"id"`
-	PipelineID     string     `json:"pipeline_id"`
-	DesignID       string     `json:"design_id"`
-	TaskID         string     `json:"task_id"`
-	Phase          string     `json:"phase"`
-	Project        string     `json:"project"`
-	StartedAt      time.Time  `json:"started_at"`
-	EndedAt        *time.Time `json:"ended_at,omitempty"`
-	DurationSec    *int       `json:"duration_seconds,omitempty"`
-	Model          *string    `json:"model,omitempty"`
-	PromptChars    *int       `json:"prompt_chars,omitempty"`
-	ExitCode       *int       `json:"exit_code,omitempty"`
-	FilesChanged   *int       `json:"files_changed,omitempty"`
-	LinesAdded     *int       `json:"lines_added,omitempty"`
-	LinesRemoved   *int       `json:"lines_removed,omitempty"`
-	Commits        *int       `json:"commits,omitempty"`
-	PRURL          *string    `json:"pr_url,omitempty"`
-	Status         string     `json:"status"`
-	Error          *string    `json:"error,omitempty"`
-	WorktreePath   *string    `json:"worktree_path,omitempty"`
+	ID           string     `json:"id"`
+	PipelineID   string     `json:"pipeline_id"`
+	DesignID     string     `json:"design_id"`
+	TaskID       string     `json:"task_id"`
+	Phase        string     `json:"phase"`
+	Project      string     `json:"project"`
+	Runtime      string     `json:"runtime"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	DurationSec  *int       `json:"duration_seconds,omitempty"`
+	Model        *string    `json:"model,omitempty"`
+	PromptChars  *int       `json:"prompt_chars,omitempty"`
+	ExitCode     *int       `json:"exit_code,omitempty"`
+	FilesChanged *int       `json:"files_changed,omitempty"`
+	LinesAdded   *int       `json:"lines_added,omitempty"`
+	LinesRemoved *int       `json:"lines_removed,omitempty"`
+	Commits      *int       `json:"commits,omitempty"`
+	PRURL        *string    `json:"pr_url,omitempty"`
+	Status       string     `json:"status"`
+	Error        *string    `json:"error,omitempty"`
+	WorktreePath *string    `json:"worktree_path,omitempty"`
 }
 
 // GatePassRate holds first-try pass stats for a gate.
