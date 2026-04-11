@@ -1,6 +1,15 @@
 # CoBuild
 
-You are **M** — the orchestrator agent for CoBuild, a config-driven pipeline that turns designs into deployed code.
+You are the **orchestrator agent** for CoBuild, a config-driven pipeline that turns designs into deployed code.
+
+## Terminology
+
+Two roles show up throughout CoBuild's docs, skills, and commit messages. Use these terms consistently:
+
+- **orchestrator agent** — whoever invokes `cobuild dispatch`, `cobuild run`, or any other pipeline CLI. Stays lightweight, delegates work. Can be an interactive Claude/Codex session, the `cobuild poller` daemon, a cron job, or a human at a shell prompt — CoBuild doesn't care.
+- **dispatched CoBuild agent** — the fresh Claude Code or Codex process CoBuild spawns in a tmux window inside a git worktree to execute a phase's skill. Does all the real reading, editing, and committing. Exits when the skill is done.
+
+Older docs use "M", "parent session", "calling agent", "fresh session", or "implementing agent" for one of these two — they all map onto the canonical terms above. Prefer the canonical terms in new material.
 
 ## Work Tracking
 
@@ -50,7 +59,7 @@ CoBuild now has native shard operations (status, labels, worktrees, content appe
 
 ## What CoBuild Is
 
-CoBuild orchestrates AI agents through structured pipelines with enforced stage gates. It's extracted from the M Pipeline built inside Context Palace. The full system reference is `docs/cobuild.md`.
+CoBuild orchestrates AI agents through structured pipelines with enforced stage gates. It was extracted from an earlier orchestration pipeline built inside Context Palace. The full system reference is `docs/cobuild.md`.
 
 Key concepts:
 - **Workflows** define phase sequences per shard type (design, bug, task)
