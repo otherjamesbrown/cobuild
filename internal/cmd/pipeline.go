@@ -3,13 +3,14 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
-	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -89,45 +90,164 @@ var initCmd = &cobra.Command{
 }
 
 var showCmd = &cobra.Command{
-	Use:     "show <shard-id>",
-	Short:   "Display current pipeline state",
+	Use:   "show <shard-id>",
+	Short: "Display current pipeline state",
+	Long: `Display the current pipeline state for a design, bug, or task.
+
+Reads from the pipeline_runs / pipeline_gates / pipeline_tasks tables that
+cobuild init, review, gate, and dispatch all write to. Falls back to the
+legacy shards.metadata.pipeline JSONB field only if the store is
+unavailable — this is the pre-cobuild cxp-pipeline-MVP path and is
+retained for old designs that were never migrated.`,
 	Args:    cobra.ExactArgs(1),
 	Example: `  cobuild show pf-design-123`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		id := args[0]
 
-		state, err := cbClient.PipelineGet(ctx, id)
-		if err != nil {
-			return err
+		// Preferred path: read from the store tables that init/review/gate
+		// all write to. This is what cobuild audit and cobuild status use;
+		// before cb-a8ca46, cobuild show was the only holdout reading from
+		// legacy shard metadata, so an initialised pipeline would look
+		// "empty" to show while audit/status reported it correctly.
+		var run *store.PipelineRun
+		if cbStore != nil {
+			r, err := cbStore.GetRun(ctx, id)
+			if err == nil {
+				run = r
+			} else if !errors.Is(err, store.ErrNotFound) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: store lookup failed: %v\n", err)
+			}
+		}
+
+		// Legacy fallback: read from shards.metadata.pipeline. This path is
+		// reached only if the store has no record — either because the store
+		// isn't configured or because this is an old MVP-era pipeline that
+		// never got migrated into pipeline_runs.
+		var legacyState *client.PipelineState
+		if run == nil && cbClient != nil {
+			if s, err := cbClient.PipelineGet(ctx, id); err == nil {
+				legacyState = s
+			}
+		}
+
+		if run == nil && legacyState == nil {
+			// Not found in either storage. Exit non-zero and write to stderr
+			// so scripts that pipe `cobuild show` don't silently succeed with
+			// error text on stdout (agent-mycroft flagged this sharp edge).
+			fmt.Fprintf(cmd.ErrOrStderr(), "shard %s has no pipeline; run `cobuild init %s` first\n", id, id)
+			return fmt.Errorf("no pipeline record for %s", id)
+		}
+
+		// Enrich with title, gate history, task list — each optional so a
+		// partial store failure still returns useful data.
+		var title string
+		if conn != nil {
+			if item, err := conn.Get(ctx, id); err == nil && item != nil {
+				title = item.Title
+			}
+		}
+
+		var gates []store.PipelineGateRecord
+		var tasks []store.PipelineTaskRecord
+		if run != nil && cbStore != nil {
+			gates, _ = cbStore.GetGateHistory(ctx, id)
+			tasks, _ = cbStore.ListTasks(ctx, run.ID)
 		}
 
 		if outputFormat == "json" {
-			out := map[string]any{"id": id, "pipeline": state}
+			out := map[string]any{"id": id}
+			if title != "" {
+				out["title"] = title
+			}
+			if run != nil {
+				out["run"] = run
+				if len(gates) > 0 {
+					out["gates"] = gates
+				}
+				if len(tasks) > 0 {
+					out["tasks"] = tasks
+				}
+			} else if legacyState != nil {
+				out["pipeline"] = legacyState
+				out["source"] = "legacy-metadata"
+			}
 			s, _ := client.FormatJSON(out)
 			fmt.Println(s)
 			return nil
 		}
 
-		fmt.Printf("Pipeline: %s\n", id)
-		fmt.Printf("  Phase:          %s\n", state.Phase)
-		if state.LockedBy != nil {
-			fmt.Printf("  Locked by:      %s\n", *state.LockedBy)
+		// Text output
+		header := id
+		if title != "" {
+			header = fmt.Sprintf("%s: %s", id, title)
 		}
-		if state.LockExpires != nil {
-			fmt.Printf("  Lock expires:   %s\n", state.LockExpires.Format("2006-01-02 15:04"))
+		fmt.Println(header)
+
+		if run != nil {
+			fmt.Printf("  Phase:          %s\n", run.CurrentPhase)
+			fmt.Printf("  Status:         %s\n", run.Status)
+			if run.Mode != "" {
+				fmt.Printf("  Mode:           %s\n", run.Mode)
+			}
+			fmt.Printf("  Started:        %s\n", run.CreatedAt.Format("2006-01-02 15:04"))
+			fmt.Printf("  Last updated:   %s\n", run.UpdatedAt.Format("2006-01-02 15:04"))
+
+			if len(gates) > 0 {
+				passes := 0
+				fails := 0
+				for _, g := range gates {
+					if g.Verdict == "pass" {
+						passes++
+					} else if g.Verdict == "fail" {
+						fails++
+					}
+				}
+				fmt.Printf("  Gates:          %d recorded (%d pass, %d fail)\n", len(gates), passes, fails)
+				// Show the most recent gate inline — handy for "what just happened"
+				last := gates[len(gates)-1]
+				shardID := ""
+				if last.ReviewShardID != nil {
+					shardID = " " + *last.ReviewShardID
+				}
+				fmt.Printf("  Latest gate:    %s round %d %s%s\n",
+					last.GateName, last.Round, strings.ToUpper(last.Verdict), shardID)
+			}
+
+			if len(tasks) > 0 {
+				byStatus := map[string]int{}
+				for _, t := range tasks {
+					byStatus[t.Status]++
+				}
+				parts := make([]string, 0, len(byStatus))
+				for s, n := range byStatus {
+					parts = append(parts, fmt.Sprintf("%d %s", n, s))
+				}
+				fmt.Printf("  Tasks:          %d (%s)\n", len(tasks), strings.Join(parts, ", "))
+			}
+			return nil
 		}
-		if len(state.WaitingFor) > 0 {
-			fmt.Printf("  Waiting for:    %s\n", strings.Join(state.WaitingFor, ", "))
+
+		// Legacy path output (old MVP metadata) — preserve original format
+		// verbatim so any existing scripts depending on it keep working.
+		fmt.Printf("  Phase:          %s  (legacy metadata)\n", legacyState.Phase)
+		if legacyState.LockedBy != nil {
+			fmt.Printf("  Locked by:      %s\n", *legacyState.LockedBy)
 		}
-		fmt.Printf("  Last progress:  %s\n", state.LastProgress)
-		if len(state.TaskShards) > 0 {
-			fmt.Printf("  Task shards:    %s\n", strings.Join(state.TaskShards, ", "))
+		if legacyState.LockExpires != nil {
+			fmt.Printf("  Lock expires:   %s\n", legacyState.LockExpires.Format("2006-01-02 15:04"))
 		}
-		fmt.Printf("  Tokens:         %d\n", state.CumulativeTokens)
-		if len(state.IterationCounts) > 0 {
-			parts := make([]string, 0, len(state.IterationCounts))
-			for phase, count := range state.IterationCounts {
+		if len(legacyState.WaitingFor) > 0 {
+			fmt.Printf("  Waiting for:    %s\n", strings.Join(legacyState.WaitingFor, ", "))
+		}
+		fmt.Printf("  Last progress:  %s\n", legacyState.LastProgress)
+		if len(legacyState.TaskShards) > 0 {
+			fmt.Printf("  Task shards:    %s\n", strings.Join(legacyState.TaskShards, ", "))
+		}
+		fmt.Printf("  Tokens:         %d\n", legacyState.CumulativeTokens)
+		if len(legacyState.IterationCounts) > 0 {
+			parts := make([]string, 0, len(legacyState.IterationCounts))
+			for phase, count := range legacyState.IterationCounts {
 				parts = append(parts, fmt.Sprintf("%s=%d", phase, count))
 			}
 			fmt.Printf("  Iterations:     %s\n", strings.Join(parts, ", "))
