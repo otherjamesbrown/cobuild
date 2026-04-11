@@ -187,9 +187,24 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("1. `cobuild init <id>` (if the pipeline doesn't exist yet)\n")
 	sb.WriteString("2. `cobuild dispatch <id>` — spawns a dispatched CoBuild agent for the current phase\n")
 	sb.WriteString("3. Read the `Next step:` line printed by the command — run that\n")
-	sb.WriteString("4. Repeat step 3 until phase = done\n\n")
+	sb.WriteString("4. Repeat step 3 until phase = done\n")
+	sb.WriteString("5. **Report back to the user with what shipped.** Not \"dispatched, let me know when you're ready\" — wait for completion, then summarise the outcome.\n\n")
 	sb.WriteString("If you are ever unsure what to run next, run `cobuild next <id>` — it prints the single concrete command for the current state.\n\n")
-	sb.WriteString("Do NOT execute phase work yourself (decompose, review, investigate, etc.) just because you could. **Every phase has a skill and a dispatched CoBuild agent runs it.** Your only job as orchestrator is to type the commands and follow the output.\n\n")
+	sb.WriteString("Do NOT execute phase work yourself (decompose, review, investigate, etc.) just because you could. **Every phase has a skill and a dispatched CoBuild agent runs it.** Your only job as orchestrator is to type the commands, follow the output, and report the result when it's done.\n\n")
+
+	// Explicit rule — dispatch is NOT the end of your turn
+	sb.WriteString("## Dispatch is not a handoff to the user\n\n")
+	sb.WriteString("**Common failure mode:** an orchestrator agent runs `cobuild dispatch <id>`, sees \"Dispatched\" in the output, and stops. This is wrong. Dispatch spawns a **separate** dispatched CoBuild agent in a tmux worktree that runs asynchronously — CoBuild does not block your session while it runs. Your job is not done until that agent has completed and you have reported back to the user.\n\n")
+	sb.WriteString("**After every `cobuild dispatch` or `cobuild dispatch-wave`:**\n\n")
+	sb.WriteString("1. Follow the `Next step:` line — usually `cobuild audit <id>` or `cobuild wait <id>`\n")
+	sb.WriteString("2. Poll with `cobuild audit <id>` every ~30-60 seconds (do NOT use `cobuild wait` — it's a 2h blocker). You can use a short `sleep` between polls or just retry manually.\n")
+	sb.WriteString("3. When the dispatched agent completes (status = `needs-review`, or the pipeline phase has advanced), **inspect what happened** via `cobuild audit <id>` and `cobuild wi show <child-id>` for any new shards\n")
+	sb.WriteString("4. **Then, and only then, report back to the user** with a concrete summary: which shards were created, which PRs were opened, which gates passed or failed, and what the next concrete action is\n\n")
+	sb.WriteString("**Never return to the user with just \"Dispatched\" and nothing else.** The user has to chase you for the outcome every time, and that's exactly the manual overhead CoBuild exists to eliminate. If the dispatched agent will take a long time (implementation waves, review cycles), it is still your job to wait — CoBuild is designed so orchestrators follow through the full lifecycle. The only legitimate reasons to return to the user before completion are:\n\n")
+	sb.WriteString("- The dispatched agent is genuinely blocked (gate failed, critical review finding, merge conflict) and needs a human decision\n")
+	sb.WriteString("- Deploy phase reached — deploy always requires human approval\n")
+	sb.WriteString("- The pipeline has hit a true dead-end (max retries exceeded, infrastructure error)\n\n")
+	sb.WriteString("In any of those cases, explain WHY you're stopping and WHAT the user needs to decide. Don't just drop the ball.\n\n")
 
 	// Terminology — pinned at the top so every agent reading this file has
 	// the shared vocabulary before it hits commands or workflow details.
@@ -307,13 +322,26 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	// Orchestrator lifecycle
 	sb.WriteString("## Orchestrator Protocol\n\n")
 	sb.WriteString("If you are the orchestrator agent (dispatching tasks, not executing them yourself),\n")
-	sb.WriteString("**follow through the full lifecycle. Do not stop after dispatch.**\n\n")
+	sb.WriteString("**follow through the full lifecycle. Do not stop after dispatch.** See the \"Dispatch is not a handoff to the user\" section above for the common failure mode.\n\n")
 	sb.WriteString("After dispatching tasks:\n\n")
 	sb.WriteString("1. **Monitor** — use `cobuild audit <id>` or `cobuild status` for instant checks (do NOT use `cobuild wait` as a background task — it's a 2-hour blocking command)\n")
 	sb.WriteString("2. **Process reviews** — run `cobuild process-review <task-id>` for each needs-review task. This automatically: waits for Gemini review, classifies findings, merges clean PRs, or re-dispatches agents for fixes. If it says \"Waiting\" — Gemini hasn't reviewed yet, retry after a few minutes.\n")
-	sb.WriteString("3. **Report** — tell the user what shipped, not \"want me to review?\"\n")
+	sb.WriteString("3. **Report** — when the pipeline has advanced or completed, tell the user **what shipped** with specifics (shard IDs, PR URLs, gate verdicts). Not \"dispatched, let me know\". Not \"want me to review?\". Concrete outcome.\n")
 	sb.WriteString("4. **Deploy** — do NOT deploy automatically. Run `cobuild deploy <id> --dry-run` to show which services would be affected, then **ask the user** for approval. On approval, run `cobuild deploy <id>` (triggers deploy commands from pipeline config with smoke tests and auto-rollback). Deploy touches production and is always a human decision.\n\n")
 	sb.WriteString("Only pause for user input if there is an actual blocker: merge conflict, critical Gemini finding you can't resolve, a design decision, or deploy approval.\n\n")
+
+	sb.WriteString("### Report format when work completes\n\n")
+	sb.WriteString("When a dispatched agent's work has actually landed, return to the user with a short structured summary:\n\n")
+	sb.WriteString("```\n")
+	sb.WriteString("Completed <phase> for <work-item-id>.\n\n")
+	sb.WriteString("- Child shards created: <cb-xxx, cb-yyy, ...>  (if decompose)\n")
+	sb.WriteString("- PRs opened: <url1, url2, ...>                (if implement)\n")
+	sb.WriteString("- PRs merged: <url1, url2, ...>                (if review/merge)\n")
+	sb.WriteString("- Gate verdict: pass|fail round N              (always)\n")
+	sb.WriteString("- Pipeline phase: <old> → <new>                (always)\n")
+	sb.WriteString("- Next concrete action: cobuild <...>          (always)\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("Omit rows that don't apply. Do not embellish. Do not ask \"want me to continue?\" — if the next action isn't a deploy or a blocked state, just continue automatically.\n\n")
 
 	// Agent clarity
 	sb.WriteString("## What CoBuild manages vs what you do directly\n\n")
