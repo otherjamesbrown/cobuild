@@ -122,3 +122,48 @@ func TestMergeConfig_RuntimesFieldMerge(t *testing.T) {
 		t.Errorf("claude-code model: got %q, want sonnet (from base)", got)
 	}
 }
+
+// TestMergeConfig_WorkflowsFieldMerge reproduces the cb-11a464 scenario:
+// a stale global pipeline.yaml overrides just `bug` and `task` without
+// touching `bug-complex`, and `bug-complex` must survive from the base
+// DefaultConfig (pre-fix, MergeConfig replaced the whole map wholesale
+// and bug-complex was lost, reappearing only because setup_agents had a
+// duplicate hardcoded fallback).
+func TestMergeConfig_WorkflowsFieldMerge(t *testing.T) {
+	base := DefaultConfig()
+	override := &Config{
+		Workflows: map[string]WorkflowConfig{
+			"bug": {Phases: []string{"investigate", "implement", "review", "done"}},
+			// task and design present in base; override leaves them alone.
+		},
+	}
+	merged := MergeConfig(base, override)
+
+	// Bug workflow replaced by override.
+	if got := merged.Workflows["bug"].Phases; len(got) != 4 || got[0] != "investigate" {
+		t.Errorf("bug workflow: got %v, want [investigate implement review done]", got)
+	}
+	// bug-complex must survive from base — this is the regression the fix
+	// addresses. Before the fix, this would be an empty WorkflowConfig{}.
+	bugComplex, ok := merged.Workflows["bug-complex"]
+	if !ok {
+		t.Fatalf("bug-complex workflow missing after merge — wholesale replace regression")
+	}
+	wantComplex := []string{"investigate", "implement", "review", "done"}
+	if len(bugComplex.Phases) != len(wantComplex) {
+		t.Errorf("bug-complex phases: got %v, want %v", bugComplex.Phases, wantComplex)
+	}
+	// Task and design also survive from base untouched.
+	if _, ok := merged.Workflows["task"]; !ok {
+		t.Errorf("task workflow missing after merge")
+	}
+	if _, ok := merged.Workflows["design"]; !ok {
+		t.Errorf("design workflow missing after merge")
+	}
+
+	// Base must not have been mutated — copyWorkflows is supposed to deep-copy.
+	baseBug := base.Workflows["bug"].Phases
+	if len(baseBug) != 3 || baseBug[0] != "fix" {
+		t.Errorf("base bug workflow was mutated: %v (expected [fix review done])", baseBug)
+	}
+}

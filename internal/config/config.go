@@ -420,7 +420,7 @@ func MergeConfig(base, override *Config) *Config {
 	out.Review = base.Review
 	out.GitHub = base.GitHub
 	out.SkillsDir = base.SkillsDir
-	out.Workflows = base.Workflows
+	out.Workflows = copyWorkflows(base.Workflows)
 	out.Phases = copyPhases(base.Phases)
 
 	if override.Build != nil {
@@ -435,8 +435,21 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Phases != nil {
 		out.Phases = copyPhases(override.Phases)
 	}
-	if override.Workflows != nil {
-		out.Workflows = override.Workflows
+	// Merge workflows per-name so an override that only names one workflow
+	// doesn't wipe out the others from the base config (cb-11a464).
+	// Historical behavior was wholesale replace, which combined with a stale
+	// global ~/.cobuild/pipeline.yaml to produce the wrong bug workflow in
+	// generated AGENTS.md files.
+	if len(override.Workflows) > 0 {
+		if out.Workflows == nil {
+			out.Workflows = make(map[string]WorkflowConfig, len(override.Workflows))
+		}
+		for name, ow := range override.Workflows {
+			out.Workflows[name] = WorkflowConfig{
+				Phases:        copyStrings(ow.Phases),
+				ContextLayers: ow.ContextLayers,
+			}
+		}
 	}
 	if override.Agents != nil {
 		if out.Agents == nil {
@@ -765,6 +778,24 @@ func copyPhases(p map[string]PhaseConfig) map[string]PhaseConfig {
 	out := make(map[string]PhaseConfig, len(p))
 	for k, v := range p {
 		out[k] = v
+	}
+	return out
+}
+
+// copyWorkflows returns a deep copy of a workflows map so the caller can
+// mutate it (or MergeConfig can rewrite individual entries) without
+// affecting the source — in particular, DefaultConfig()'s hardcoded
+// workflows must not leak edits back into the package-level default.
+func copyWorkflows(w map[string]WorkflowConfig) map[string]WorkflowConfig {
+	if w == nil {
+		return nil
+	}
+	out := make(map[string]WorkflowConfig, len(w))
+	for k, v := range w {
+		out[k] = WorkflowConfig{
+			Phases:        copyStrings(v.Phases),
+			ContextLayers: v.ContextLayers,
+		}
 	}
 	return out
 }

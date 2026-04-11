@@ -62,6 +62,14 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Also prepare a minimal .cobuild.yaml at the repo root so every future
+	// cobuild command can resolve projectName without hitting the
+	// repos.yaml/github.owner_repo fallback chain in root.go (cb-11a464).
+	// This is the file root.go:PersistentPreRunE reads via
+	// readProjectConfigFromYAML.
+	projectYAMLPath := filepath.Join(repoRoot, ".cobuild.yaml")
+	projectYAMLContent := fmt.Sprintf("# Project identity for cobuild\n# Created by `cobuild setup`\nproject: %s\n", project)
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("could not determine home directory: %v", err)
@@ -86,6 +94,8 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Dry run -- no files written.\n\n")
 		fmt.Printf("Would write %s:\n", pipelinePath)
 		fmt.Printf("---\n%s\n", pipelineYAML)
+		fmt.Printf("Would write %s:\n", projectYAMLPath)
+		fmt.Printf("---\n%s\n", projectYAMLContent)
 		fmt.Printf("Would write %s:\n", reposPath)
 		fmt.Printf("---\n%s\n", string(reposData))
 		return nil
@@ -98,12 +108,22 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write %s: %v", pipelinePath, err)
 	}
 
+	// Write .cobuild.yaml only if it doesn't already exist OR --force was
+	// passed. The user may have placed their own project identity file
+	// already; don't stomp it without an explicit opt-in.
+	if _, err := os.Stat(projectYAMLPath); os.IsNotExist(err) || force {
+		if err := os.WriteFile(projectYAMLPath, []byte(projectYAMLContent), 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %v", projectYAMLPath, err)
+		}
+	}
+
 	if err := config.SaveRepoRegistry(reg); err != nil {
 		return fmt.Errorf("failed to save repo registry: %v", err)
 	}
 
 	fmt.Printf("Pipeline configured for %s\n", project)
 	fmt.Printf("  Config:   %s\n", pipelinePath)
+	fmt.Printf("  Identity: %s\n", projectYAMLPath)
 	fmt.Printf("  Registry: %s\n", reposPath)
 	fmt.Printf("  Build:    %s\n", formatCmdList(buildCmds))
 	fmt.Printf("  Test:     %s\n", formatCmdList(testCmds))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -145,18 +146,23 @@ func detectSkills(repoRoot string, pCfg *config.Config) map[string][]string {
 	return skills
 }
 
+// detectWorkflows returns workflow name → rendered phase chain, derived
+// directly from the merged pipeline config. It used to maintain a duplicate
+// hardcoded fallback map, which drifted from DefaultConfig and papered over
+// a MergeConfig bug where override workflows would wipe the base map
+// wholesale (cb-11a464). Post-fix, pCfg.Workflows always has the full set
+// after merge, so we can trust it as the single source of truth.
 func detectWorkflows(pCfg *config.Config) map[string]string {
-	workflows := map[string]string{
-		"design":      "design → decompose → implement → review → done",
-		"bug":         "fix → review → done",
-		"bug-complex": "investigate → implement → review → done",
-		"task":        "implement → review → done",
+	if pCfg == nil || len(pCfg.Workflows) == 0 {
+		// Only reached if the caller passed a nil-or-empty config AND
+		// DefaultConfig wasn't applied — in practice update-agents always
+		// calls LoadConfig/DefaultConfig first. Fall back to DefaultConfig()
+		// rather than a separately-maintained hardcoded list.
+		pCfg = config.DefaultConfig()
 	}
-
-	if pCfg != nil && pCfg.Workflows != nil {
-		for name, wf := range pCfg.Workflows {
-			workflows[name] = strings.Join(wf.Phases, " → ")
-		}
+	workflows := make(map[string]string, len(pCfg.Workflows))
+	for name, wf := range pCfg.Workflows {
+		workflows[name] = strings.Join(wf.Phases, " → ")
 	}
 	return workflows
 }
@@ -176,8 +182,16 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 		sb.WriteString(fmt.Sprintf("- **Prefix:** %s\n", prefix))
 	}
 	sb.WriteString("- **Workflows:**\n")
-	for name, phases := range workflows {
-		sb.WriteString(fmt.Sprintf("  - %s: %s\n", name, phases))
+	// Sort by name so the output is deterministic across runs (Go map
+	// iteration is randomized, which used to flip the computed hash on
+	// every regen).
+	workflowNames := make([]string, 0, len(workflows))
+	for name := range workflows {
+		workflowNames = append(workflowNames, name)
+	}
+	sort.Strings(workflowNames)
+	for _, name := range workflowNames {
+		sb.WriteString(fmt.Sprintf("  - %s: %s\n", name, workflows[name]))
 	}
 	sb.WriteString("\n")
 

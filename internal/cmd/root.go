@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -93,6 +95,34 @@ CONFIGURATION:
 			}
 		}
 		pCfg, _ := config.LoadConfig(configRoot)
+
+		// Fall back to deriving projectName from other sources when
+		// .cobuild.yaml / .cxp.yaml doesn't exist. Fixes cb-11a464 where
+		// `cobuild update-agents` produced an empty **Name:** field for
+		// repos that were set up via `cobuild setup` (which historically
+		// didn't write .cobuild.yaml). Try in order of specificity:
+		//   1. ~/.cobuild/repos.yaml entry whose path matches repoRoot
+		//   2. github.owner_repo basename from the pipeline config
+		//   3. directory basename of repoRoot
+		if projectName == "" && repoRoot != "" {
+			if reg, err := config.LoadRepoRegistry(); err == nil {
+				for name, entry := range reg.Repos {
+					if entry.Path == repoRoot {
+						projectName = name
+						break
+					}
+				}
+			}
+			if projectName == "" && pCfg != nil && pCfg.GitHub.OwnerRepo != "" {
+				_, repo, ok := strings.Cut(pCfg.GitHub.OwnerRepo, "/")
+				if ok && repo != "" {
+					projectName = repo
+				}
+			}
+			if projectName == "" {
+				projectName = filepath.Base(repoRoot)
+			}
+		}
 
 		// Initialize connector (always — needed for wi commands)
 		agent := agentFlag
