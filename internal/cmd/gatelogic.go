@@ -109,14 +109,40 @@ func RecordGateVerdict(
 		return nil, fmt.Errorf("record gate: %w", err)
 	}
 
-	// 5. Advance phase on pass
+	// 5. Advance phase on pass.
+	//
+	// We used to call pCfg.NextPhase(currentPhase) here, but that method
+	// falls back to ValidPipelinePhases — a FLAT list that interleaves
+	// design-workflow and bug-workflow phases as
+	// [design, decompose, investigate, fix, implement, review, deploy, done].
+	// NextPhase walked that list sequentially, so NextPhase("decompose")
+	// returned "investigate" instead of "implement" for design shards.
+	// This silently advanced cp-c2ec47 to the wrong phase on a perfectly
+	// valid decomposition-review PASS — the hardcoded fallback switch
+	// below had the right answer but never ran because NextPhase returned
+	// non-empty.
+	//
+	// Fix: resolve the next phase from the WORKFLOW that applies to this
+	// shard type (design / bug / bug-complex / task), not from a flat
+	// phase list. NextPhaseInWorkflow walks the workflow's ordered Phases
+	// array correctly. We still keep the gate-name hardcoded switch as a
+	// last-resort fallback for configs that have no workflow definition.
 	nextPhase := ""
 	resultPhase := currentPhase
 	if verdict == "pass" {
-		if pCfg != nil {
-			nextPhase = pCfg.NextPhase(currentPhase)
+		if pCfg != nil && cn != nil {
+			// Fetch the shard type and map it to a workflow name
+			// (inferWorkflowFromType handles the bug vs bug-complex
+			// escalation based on the needs-investigation label).
+			if item, err := cn.Get(ctx, designID); err == nil && item != nil {
+				workflow := inferWorkflowFromType(item)
+				nextPhase = pCfg.NextPhaseInWorkflow(workflow, currentPhase)
+			}
 		}
 		if nextPhase == "" {
+			// Last-resort hardcoded fallback when the workflow lookup
+			// couldn't resolve a next phase (no connector, no config, or
+			// a gate in an unrecognized phase).
 			switch gateName {
 			case "readiness-review":
 				nextPhase = "decompose"
@@ -124,6 +150,8 @@ func RecordGateVerdict(
 				nextPhase = "implement"
 			case "investigation":
 				nextPhase = "implement"
+			case "review":
+				nextPhase = "done"
 			case "retrospective":
 				nextPhase = "" // done is terminal
 			}
