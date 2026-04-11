@@ -289,7 +289,7 @@ type RepoEntry struct {
 
 // ValidPipelinePhases is the list of allowed pipeline phase values.
 var ValidPipelinePhases = []string{
-	"design", "decompose", "investigate", "fix", "implement", "review", "deploy", "done",
+	"design", "decompose", "investigate", "fix", "implement", "review", "deploy", "kb-sync", "done",
 }
 
 // ValidatePipelinePhase checks if a phase string is valid.
@@ -340,19 +340,22 @@ func DefaultConfig() *Config {
 			"investigate": {
 				Skill: "investigate/bug-investigation.md",
 			},
+			"kb-sync": {
+				Skill: "kb-sync/kb-sync-phase.md",
+			},
 		},
 		Workflows: map[string]WorkflowConfig{
 			"design": {
-				Phases: []string{"design", "decompose", "implement", "review", "done"},
+				Phases: []string{"design", "decompose", "implement", "review", "kb-sync", "done"},
 			},
 			"bug": {
-				Phases: []string{"fix", "review", "done"},
+				Phases: []string{"fix", "review", "kb-sync", "done"},
 			},
 			"bug-complex": {
-				Phases: []string{"investigate", "implement", "review", "done"},
+				Phases: []string{"investigate", "implement", "review", "kb-sync", "done"},
 			},
 			"task": {
-				Phases: []string{"implement", "review", "done"},
+				Phases: []string{"implement", "review", "kb-sync", "done"},
 			},
 		},
 	}

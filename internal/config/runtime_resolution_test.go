@@ -149,7 +149,7 @@ func TestMergeConfig_WorkflowsFieldMerge(t *testing.T) {
 	if !ok {
 		t.Fatalf("bug-complex workflow missing after merge — wholesale replace regression")
 	}
-	wantComplex := []string{"investigate", "implement", "review", "done"}
+	wantComplex := []string{"investigate", "implement", "review", "kb-sync", "done"}
 	if len(bugComplex.Phases) != len(wantComplex) {
 		t.Errorf("bug-complex phases: got %v, want %v", bugComplex.Phases, wantComplex)
 	}
@@ -163,7 +163,7 @@ func TestMergeConfig_WorkflowsFieldMerge(t *testing.T) {
 
 	// Base must not have been mutated — copyWorkflows is supposed to deep-copy.
 	baseBug := base.Workflows["bug"].Phases
-	if len(baseBug) != 3 || baseBug[0] != "fix" {
-		t.Errorf("base bug workflow was mutated: %v (expected [fix review done])", baseBug)
+	if len(baseBug) != 4 || baseBug[0] != "fix" {
+		t.Errorf("base bug workflow was mutated: %v (expected [fix review kb-sync done])", baseBug)
 	}
 }
