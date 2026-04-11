@@ -191,6 +191,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("5. **Report back to the user with what shipped.** Not \"dispatched, let me know when you're ready\" — wait for completion, then summarise the outcome.\n\n")
 	sb.WriteString("If you are ever unsure what to run next, run `cobuild next <id>` — it prints the single concrete command for the current state.\n\n")
 	sb.WriteString("Do NOT execute phase work yourself (decompose, review, investigate, etc.) just because you could. **Every phase has a skill and a dispatched CoBuild agent runs it.** Your only job as orchestrator is to type the commands, follow the output, and report the result when it's done.\n\n")
+	sb.WriteString("**When a user asks you to run/orchestrate/complete a shard through CoBuild end-to-end, load the `skills/orchestrate/run-pipeline.md` skill and follow it.** That skill is the single source of truth for the orchestrator loop, per-phase actions, failure modes, and the structured report format. Do not reason about what to do from memory — load the skill and follow it mechanically.\n\n")
 
 	// Explicit rule — dispatch is NOT the end of your turn
 	sb.WriteString("## Dispatch is not a handoff to the user\n\n")
@@ -356,6 +357,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("|-----------|--------|---------|\n")
 
 	phaseDescriptions := map[string]string{
+		"orchestrate": "Orchestrator-side pipeline driver (run-pipeline.md) — load this when asked to run a shard through CoBuild end-to-end",
 		"design":      "Design evaluation",
 		"decompose":   "Break designs into tasks",
 		"fix":         "Single-session bug fix (investigate + implement)",
@@ -366,7 +368,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 		"shared":      "Cross-phase reference",
 	}
 
-	phaseOrder := []string{"design", "decompose", "fix", "investigate", "implement", "review", "done", "shared"}
+	phaseOrder := []string{"orchestrate", "design", "decompose", "fix", "investigate", "implement", "review", "done", "shared"}
 	for _, phase := range phaseOrder {
 		names, ok := skills[phase]
 		if !ok || len(names) == 0 {
