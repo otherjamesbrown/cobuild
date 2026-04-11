@@ -124,10 +124,22 @@ Exit codes:
 			fmt.Printf("  cobuild dispatch %s\n", id)
 			fmt.Printf("  (Spawns a dispatched CoBuild agent to run the %s skill)\n", run.CurrentPhase)
 		case "implement":
+			// pipeline_tasks is populated by `cobuild dispatch-wave` when
+			// it starts a wave — NOT by `cobuild wi create` from the
+			// decompose agent. So an empty pipeline_tasks slice in the
+			// implement phase means "no wave has been dispatched yet",
+			// not "all tasks closed" (which is what the default case
+			// below would incorrectly claim).
+			if len(tasks) == 0 {
+				fmt.Printf("  cobuild dispatch-wave %s\n", id)
+				fmt.Println("  (Implement phase entered — dispatch the first wave of tasks)")
+				break
+			}
 			// If there are pending tasks, dispatch the wave; if tasks are
-			// in needs-review, process them; if closed, advance to merge.
+			// in needs-review, process them; if all closed, advance to merge.
 			pending := 0
 			inReview := 0
+			closed := 0
 			for _, t := range tasks {
 				switch t.Status {
 				case "pending":
@@ -136,6 +148,8 @@ Exit codes:
 					pending++
 				case "needs-review":
 					inReview++
+				case "completed", "closed":
+					closed++
 				}
 			}
 			switch {
@@ -157,9 +171,12 @@ Exit codes:
 					}
 				}
 				fmt.Println()
-			default:
+			case closed == len(tasks):
 				fmt.Printf("  cobuild merge-design %s\n", id)
 				fmt.Println("  (All tasks closed — run smart merge to merge PRs in dependency order)")
+			default:
+				fmt.Printf("  cobuild audit %s\n", id)
+				fmt.Printf("  (%d task(s) in unknown/mixed states — inspect the audit trail)\n", len(tasks))
 			}
 		case "review":
 			fmt.Printf("  cobuild process-review %s\n", id)
