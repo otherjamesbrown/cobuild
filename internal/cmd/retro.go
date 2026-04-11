@@ -93,6 +93,7 @@ In autonomous mode, the poller triggers this automatically.`,
 			} else {
 				fmt.Println("Pipeline marked as completed.")
 			}
+			printNextStep(designID, "done", "retro")
 		} else {
 			fmt.Println("\nTo record the retrospective: cobuild retro <design-id> --body \"<findings>\"")
 		}

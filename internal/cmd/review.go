@@ -69,6 +69,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			state := strings.TrimSpace(string(stateOut))
 			if state == "MERGED" {
 				fmt.Printf("PR already merged for %s, skipping review.\n", taskID)
+				printNextStep(taskID, "merged", "process-review")
 				return nil
 			}
 			if state == "CLOSED" {
@@ -97,6 +98,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 				remaining := timeoutDuration - prAge
 				fmt.Printf("No Gemini review yet for %s (PR #%d, %s old, timeout %dm). Waiting %s.\n",
 					taskID, prNumber, formatDuration(prAge), reviewTimeout, formatDuration(remaining))
+				printNextStep(taskID, "waiting", "process-review")
 				return nil
 			}
 
@@ -115,6 +117,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// CI still pending — wait regardless of review source
 		if ciResult.summary == "pending" {
 			fmt.Printf("CI checks still pending for %s (PR #%d). Waiting.\n", taskID, prNumber)
+			printNextStep(taskID, "waiting", "process-review")
 			return nil
 		}
 
@@ -179,9 +182,17 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		if verdict == "approve" {
-			return doMerge(ctx, taskID, prURL)
+			if err := doMerge(ctx, taskID, prURL); err != nil {
+				return err
+			}
+			printNextStep(taskID, "merged", "process-review")
+			return nil
 		}
-		return doRequestChanges(ctx, taskID, findings, ciResult)
+		if err := doRequestChanges(ctx, taskID, findings, ciResult); err != nil {
+			return err
+		}
+		printNextStep(taskID, "redispatched", "process-review")
+		return nil
 	},
 }
 

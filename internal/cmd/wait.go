@@ -107,6 +107,20 @@ Exit codes:
 
 			if allDone {
 				fmt.Printf("\nAll %d task(s) reached target status.\n", len(taskIDs))
+				// Phase-aware next step for the single-task case; multi-task
+				// falls through to a generic "run cobuild next <id>" list
+				// since the tasks may be in different pipeline states.
+				if len(taskIDs) == 1 && cbStore != nil {
+					if run, err := cbStore.GetRun(ctx, taskIDs[0]); err == nil && run != nil {
+						printNextStep(taskIDs[0], run.CurrentPhase, "wait-complete")
+						return nil
+					}
+				}
+				fmt.Println()
+				fmt.Println("Next step:")
+				for _, id := range taskIDs {
+					fmt.Printf("  cobuild next %s\n", id)
+				}
 				return nil
 			}
 

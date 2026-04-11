@@ -250,6 +250,7 @@ Only deploys services whose trigger_paths match the changed files.`,
 		if failed > 0 {
 			return fmt.Errorf("%d service(s) failed to deploy", failed)
 		}
+		printNextStep(designID, "", "deploy")
 		return nil
 	},
 }

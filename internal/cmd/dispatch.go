@@ -520,6 +520,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		fmt.Printf("  Session:  %s\n", tmuxSession)
 		fmt.Printf("  Worktree: %s\n", worktreePath)
 		fmt.Printf("  Window:   %s\n", taskID)
+		printNextStep(taskID, currentPhase, "dispatch")
 		return nil
 	},
 }
@@ -631,6 +632,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		if len(blocked) > 0 {
 			fmt.Printf("\n%d tasks still blocked.\n", len(blocked))
 		}
+		printNextStep(designID, "implement", "dispatch-wave")
 		return nil
 	},
 }

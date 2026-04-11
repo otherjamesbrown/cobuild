@@ -18,7 +18,13 @@ func printNextStep(workItemID, phase, action string) {
 
 	case "dispatch":
 		fmt.Printf("  cobuild wait %s\n", workItemID)
-		fmt.Println("  (Blocks until the agent completes)")
+		fmt.Println("  (Blocks until the dispatched CoBuild agent completes)")
+		fmt.Printf("  OR: cobuild audit %s  (instant check, non-blocking)\n", workItemID)
+
+	case "dispatch-wave":
+		fmt.Printf("  cobuild audit %s\n", workItemID)
+		fmt.Println("  (Check progress of the dispatched wave — dispatched agents run in parallel)")
+		fmt.Printf("  When all tasks reach needs-review: run `cobuild process-review <task-id>` for each")
 
 	case "wait-complete":
 		switch phase {
@@ -75,6 +81,22 @@ func printNextStep(workItemID, phase, action string) {
 	case "run":
 		fmt.Println("  cobuild poller")
 		fmt.Println("  (Start the poller — it will process this item through all phases)")
+
+	case "process-review":
+		// phase param carries the outcome: "merged", "redispatched", or "waiting"
+		switch phase {
+		case "merged":
+			fmt.Printf("  cobuild next %s\n", workItemID)
+			fmt.Println("  (PR merged and task closed. Check next action for this task or its parent design.)")
+		case "redispatched":
+			fmt.Printf("  cobuild wait %s  OR  cobuild audit %s\n", workItemID, workItemID)
+			fmt.Println("  (Agent re-dispatched to address review feedback. Wait for completion, then re-run process-review.)")
+		case "waiting":
+			fmt.Printf("  cobuild process-review %s\n", workItemID)
+			fmt.Println("  (Review data not ready yet — retry after a few minutes.)")
+		default:
+			fmt.Printf("  cobuild next %s\n", workItemID)
+		}
 
 	default:
 		fmt.Printf("  cobuild status\n")

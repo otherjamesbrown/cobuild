@@ -210,6 +210,9 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 			}
 		}
 
+		if err == nil && failed == 0 {
+			printNextStep(designID, "done", "merge-design")
+		}
 		return err
 	},
 }
