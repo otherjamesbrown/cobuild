@@ -19,7 +19,8 @@ var adminStuckCmd = &cobra.Command{
 		staleDuration := time.Duration(staleHours) * time.Hour
 
 		fmt.Println("CoBuild — Stuck Work")
-		fmt.Println("====================\n")
+		fmt.Println("====================")
+		fmt.Println()
 
 		// Stuck pipelines
 		if cbStore != nil {
