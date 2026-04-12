@@ -444,6 +444,12 @@ var decomposeCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
+		if verdict == "pass" {
+			if err := validateSingleRepoChildTasks(ctx, conn, designID); err != nil {
+				return err
+			}
+		}
+
 		var result *GateVerdictResult
 		if cbStore != nil {
 			if verdict == "pass" {
