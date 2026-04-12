@@ -432,14 +432,33 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 			continue
 		}
 		wave := taskWave(item)
+		taskStatus := e.Status
 
-		if resolveWaveStrategy(pCfg) == "serial" && e.Status != "closed" {
+		if shouldMarkTaskForRedispatch(taskStatus, latestTaskSession(ctx, item.ID)) && !hasActiveSession(ctx, item.ID) {
+			rec, _ := cbStore.GetSession(ctx, item.ID)
+			reason := redispatchReason(rec)
+			if dryRun {
+				fmt.Printf("  [implement] %s — %s left task stuck in progress, would mark pending for redispatch\n", item.ID, rec.Status)
+			} else {
+				if err := markTaskPendingForRedispatch(ctx, item.ID, rec); err != nil {
+					fmt.Fprintf(os.Stderr, "  [implement] %s redispatch recovery failed: %v\n", item.ID, err)
+				} else {
+					fmt.Printf("  [implement] %s — marked pending for redispatch after %s\n", item.ID, rec.Status)
+					if reason != "" {
+						fmt.Printf("    %s\n", reason)
+					}
+				}
+			}
+			continue
+		}
+
+		if resolveWaveStrategy(pCfg) == "serial" && taskStatus != "closed" {
 			if activeWave == 0 || (wave > 0 && wave < activeWave) {
 				activeWave = wave
 			}
 		}
 
-		switch e.Status {
+		switch taskStatus {
 		case "closed":
 			done++
 		case "in_progress":
@@ -500,6 +519,17 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 			fmt.Printf("  [implement] %s — ready to dispatch\n", taskID)
 		}
 	}
+}
+
+func latestTaskSession(ctx context.Context, taskID string) *store.SessionRecord {
+	if cbStore == nil {
+		return nil
+	}
+	rec, err := cbStore.GetSession(ctx, taskID)
+	if err != nil {
+		return nil
+	}
+	return rec
 }
 
 // pollTaskReviews finds needs-review tasks with PRs and processes Gemini reviews.

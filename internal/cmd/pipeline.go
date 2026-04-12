@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -581,11 +582,14 @@ var auditCmd = &cobra.Command{
 
 		// Gate history from store
 		var gates []store.PipelineGateRecord
+		var sessions []store.SessionRecord
 		if cbStore != nil {
 			gates, _ = cbStore.GetGateHistory(ctx, designID)
+			sessions, _ = cbStore.ListSessions(ctx, designID)
 		}
+		lifecycleEvents := sessionLifecycleEvents(sessions)
 
-		if len(gates) == 0 {
+		if len(gates) == 0 && len(lifecycleEvents) == 0 {
 			// Fall back to legacy audit
 			if cbClient != nil {
 				entries, err := cbClient.PipelineAudit(ctx, designID)
@@ -611,22 +615,61 @@ var auditCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(gates)
+			out := map[string]any{
+				"id":     designID,
+				"phase":  phase,
+				"status": status,
+				"gates":  gates,
+			}
+			if len(lifecycleEvents) > 0 {
+				out["sessions"] = lifecycleEvents
+			}
+			s, _ := client.FormatJSON(out)
 			fmt.Println(s)
 			return nil
 		}
 
 		fmt.Println("TIMELINE")
+		type auditTimelineEntry struct {
+			timestamp time.Time
+			print     func()
+		}
+		entries := make([]auditTimelineEntry, 0, len(gates)+len(lifecycleEvents))
 		for _, g := range gates {
-			ts := g.CreatedAt.Format("2006-01-02 15:04")
-			shardID := ""
-			if g.ReviewShardID != nil {
-				shardID = *g.ReviewShardID
-			}
-			fmt.Printf("  %s  %-22s  Round %d  %-4s   %s\n", ts, g.GateName, g.Round, strings.ToUpper(g.Verdict), shardID)
-			if g.Body != nil && *g.Body != "" {
-				fmt.Printf("    %s\n", client.Truncate(*g.Body, 100))
-			}
+			gate := g
+			entries = append(entries, auditTimelineEntry{
+				timestamp: gate.CreatedAt,
+				print: func() {
+					ts := gate.CreatedAt.Format("2006-01-02 15:04")
+					shardID := ""
+					if gate.ReviewShardID != nil {
+						shardID = *gate.ReviewShardID
+					}
+					fmt.Printf("  %s  %-22s  Round %d  %-4s   %s\n", ts, gate.GateName, gate.Round, strings.ToUpper(gate.Verdict), shardID)
+					if gate.Body != nil && *gate.Body != "" {
+						fmt.Printf("    %s\n", client.Truncate(*gate.Body, 100))
+					}
+				},
+			})
+		}
+		for _, e := range lifecycleEvents {
+			event := e
+			entries = append(entries, auditTimelineEntry{
+				timestamp: event.Timestamp,
+				print: func() {
+					ts := event.Timestamp.Format("2006-01-02 15:04")
+					fmt.Printf("  %s  %-22s  %-10s  %s\n", ts, "session "+event.Status, event.TaskID, event.Phase)
+					if event.Note != "" {
+						fmt.Printf("    %s\n", client.Truncate(event.Note, 100))
+					}
+				},
+			})
+		}
+		sort.SliceStable(entries, func(i, j int) bool {
+			return entries[i].timestamp.Before(entries[j].timestamp)
+		})
+		for _, entry := range entries {
+			entry.print()
 		}
 
 		return nil
