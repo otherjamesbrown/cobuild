@@ -917,7 +917,7 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 		parentID, referencedRepos, refErr := parentDesignReferencedRepos(ctx, taskID, reg)
 		if refErr == nil && len(referencedRepos) > 1 {
 			return dispatchRepoTarget{}, fmt.Errorf(
-				"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
+				"task %s has no `repo` metadata (missing `repo` metadata), and parent design %s references multiple repos (%s); set `repo` metadata on this task before dispatching",
 				taskID, parentID, strings.Join(referencedRepos, ", "),
 			)
 		}

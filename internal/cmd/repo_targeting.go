@@ -26,14 +26,18 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 			continue
 		}
 
-		repo, _ := cn.GetMetadata(ctx, item.ID, "repo")
-		repo = strings.TrimSpace(repo)
+		if _, err := resolveTaskTargetRepo(ctx, cn, item, item.Project); err != nil {
+			repo, _ := cn.GetMetadata(ctx, item.ID, "repo")
+			repo = strings.TrimSpace(repo)
 
-		switch {
-		case repo == "":
-			invalid = append(invalid, fmt.Sprintf("%s (missing `repo` metadata)", item.ID))
-		case repoMetadataLooksAmbiguous(repo):
-			invalid = append(invalid, fmt.Sprintf("%s (ambiguous `repo` metadata: %q)", item.ID, repo))
+			switch {
+			case repo == "":
+				invalid = append(invalid, fmt.Sprintf("%s (missing `repo` metadata)", item.ID))
+			case repoMetadataLooksAmbiguous(repo):
+				invalid = append(invalid, fmt.Sprintf("%s (ambiguous `repo` metadata: %q)", item.ID, repo))
+			default:
+				invalid = append(invalid, fmt.Sprintf("%s (%v)", item.ID, err))
+			}
 		}
 	}
 
