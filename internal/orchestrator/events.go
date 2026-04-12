@@ -22,6 +22,7 @@ type EventKind string
 const (
 	EventDispatch   EventKind = "dispatch"
 	EventPoll       EventKind = "poll"
+	EventReview     EventKind = "review"
 	EventTransition EventKind = "transition"
 	EventTerminal   EventKind = "terminal"
 )
