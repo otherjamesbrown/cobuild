@@ -705,6 +705,18 @@ func (s *PostgresStore) ListRunningSessions(ctx context.Context, project string)
 	return sessions, rows.Err()
 }
 
+func (s *PostgresStore) CancelRunningSessions(ctx context.Context, designID string) (int, error) {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_sessions
+		SET status = 'cancelled', ended_at = NOW(), completion_note = 'Cancelled by pipeline reset'
+		WHERE design_id = $1 AND status = 'running'
+	`, designID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel running sessions: %w", err)
+	}
+	return int(result.RowsAffected()), nil
+}
+
 // --- Insights ---
 
 func (s *PostgresStore) GetRunStatusCounts(ctx context.Context, project string) (map[string]int, error) {

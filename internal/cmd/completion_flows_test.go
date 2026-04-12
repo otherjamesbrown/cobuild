@@ -576,6 +576,10 @@ func (f *completionFakeStore) UpdateRunPhase(_ context.Context, designID, phase 
 	return nil
 }
 
+func (f *completionFakeStore) CancelRunningSessions(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
 func (f *completionFakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
 	run, ok := f.runs[designID]
 	if !ok {

@@ -840,6 +840,81 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+var resetCmd = &cobra.Command{
+	Use:   "reset <shard-id>",
+	Short: "Reset a pipeline run to a given phase",
+	Long: `Resets a pipeline run back to a specified phase, clearing all gates, tasks,
+and session records. The run is marked active so the poller (or cobuild orchestrate)
+will pick it up again.
+
+Use --phase to specify the target phase (default: the start phase for the work item type).`,
+	Args:    cobra.ExactArgs(1),
+	Example: "  cobuild reset cp-b25138\n  cobuild reset cp-b25138 --phase decompose",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		id := args[0]
+		phase, _ := cmd.Flags().GetString("phase")
+
+		if cbStore == nil {
+			return fmt.Errorf("no store configured")
+		}
+
+		// Verify run exists
+		existing, err := cbStore.GetRun(ctx, id)
+		if err != nil {
+			return fmt.Errorf("no pipeline run for %s: %w", id, err)
+		}
+
+		// Determine target phase
+		if phase == "" {
+			phase = "design" // default
+			if conn != nil {
+				item, err := conn.Get(ctx, id)
+				if err == nil && item != nil {
+					repoRoot := findRepoRoot()
+					pCfg, _ := config.LoadConfig(repoRoot)
+					if pCfg != nil {
+						sp := pCfg.StartPhaseForType(item.Type)
+						if sp != "" {
+							phase = sp
+						}
+					}
+				}
+			}
+		}
+
+		fmt.Printf("Resetting %s: %s/%s → %s/active\n",
+			id, existing.CurrentPhase, existing.Status, phase)
+
+		if err := cbStore.ResetRun(ctx, id, phase); err != nil {
+			return fmt.Errorf("reset failed: %w", err)
+		}
+
+		// Clear stale sessions so re-dispatch isn't blocked (cb-29e7fa)
+		if cancelled, err := cbStore.CancelRunningSessions(ctx, id); err != nil {
+			fmt.Printf("Warning: failed to cancel stale sessions: %v\n", err)
+		} else if cancelled > 0 {
+			fmt.Printf("  Cancelled %d stale session(s)\n", cancelled)
+		}
+
+		// Reopen the work item in the connector if it was closed
+		if conn != nil {
+			item, err := conn.Get(ctx, id)
+			if err == nil && item != nil && item.Status == "closed" {
+				if err := conn.UpdateStatus(ctx, id, "open"); err != nil {
+					fmt.Printf("Warning: failed to reopen work item: %v\n", err)
+				} else {
+					fmt.Printf("  Work item %s → open\n", id)
+				}
+			}
+		}
+
+		fmt.Printf("  Pipeline reset to phase: %s\n", phase)
+		printNextStep(id, phase, "reset")
+		return nil
+	},
+}
+
 func init() {
 	// gate flags
 	gateCmd.Flags().String("verdict", "", "Gate verdict: 'pass' or 'fail' (required)")
@@ -875,8 +950,12 @@ func init() {
 	// init flags
 	initCmd.Flags().Bool("autonomous", false, "Submit for autonomous processing (poller handles all phases)")
 
+	// reset flags
+	resetCmd.Flags().String("phase", "", "Target phase to reset to (default: start phase for work item type)")
+
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(gateCmd)
 	rootCmd.AddCommand(reviewCmd)

@@ -25,6 +25,9 @@ func (s stubWaveStore) UpdateRunPhase(context.Context, string, string) error { p
 func (s stubWaveStore) AdvancePhase(context.Context, string, string, string) error {
 	panic("not used")
 }
+func (s stubWaveStore) CancelRunningSessions(context.Context, string) (int, error) {
+	panic("not used")
+}
 func (s stubWaveStore) UpdateRunStatus(context.Context, string, string) error { panic("not used") }
 func (s stubWaveStore) SetRunMode(context.Context, string, string) error      { panic("not used") }
 func (s stubWaveStore) ResetRun(context.Context, string, string) error        { panic("not used") }

@@ -65,6 +65,10 @@ type Store interface {
 	GetSession(ctx context.Context, taskID string) (*SessionRecord, error)
 	ListSessions(ctx context.Context, designID string) ([]SessionRecord, error)
 	ListRunningSessions(ctx context.Context, project string) ([]SessionRecord, error)
+	// CancelRunningSessions marks all running sessions for a design as
+	// cancelled. Called by reset to prevent stale sessions from blocking
+	// re-dispatch.
+	CancelRunningSessions(ctx context.Context, designID string) (int, error)
 
 	// --- Insights (read-only aggregates) ---
 
