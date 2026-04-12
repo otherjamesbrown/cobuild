@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -555,7 +556,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			return fmt.Errorf("get child tasks: %w", err)
 		}
 
-		var ready []string
+		var ready []dispatchWaveCandidate
 		var inProgress []string
 		var blocked []string
 
@@ -594,7 +595,10 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 				}
 			}
 			if allSatisfied {
-				ready = append(ready, e.ItemID)
+				ready = append(ready, dispatchWaveCandidate{
+					TaskID: e.ItemID,
+					Wave:   dispatchWaveMetadata(item.Metadata),
+				})
 			} else {
 				blocked = append(blocked, e.ItemID)
 			}
@@ -613,8 +617,12 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
+		}
+		ready = filterDispatchWaveCandidates(ready, pCfg.Dispatch.WaveStrategy)
 		maxConcurrent := 3
-		if pCfg != nil && pCfg.Dispatch.MaxConcurrent > 0 {
+		if pCfg.Dispatch.MaxConcurrent > 0 {
 			maxConcurrent = pCfg.Dispatch.MaxConcurrent
 		}
 
@@ -629,7 +637,8 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		}
 
 		fmt.Printf("Dispatching %d tasks (wave) for %s:\n", len(ready), designID)
-		for _, taskID := range ready {
+		for _, candidate := range ready {
+			taskID := candidate.TaskID
 			if dryRun {
 				fmt.Printf("  [dry-run] %s\n", taskID)
 				continue
@@ -654,6 +663,57 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		printNextStep(designID, "implement", "dispatch-wave")
 		return nil
 	},
+}
+
+type dispatchWaveCandidate struct {
+	TaskID string
+	Wave   int
+}
+
+func filterDispatchWaveCandidates(candidates []dispatchWaveCandidate, strategy string) []dispatchWaveCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if strings.EqualFold(strategy, "parallel") {
+		return candidates
+	}
+
+	selectedWave := candidates[0].Wave
+	for _, candidate := range candidates[1:] {
+		if candidate.Wave < selectedWave {
+			selectedWave = candidate.Wave
+		}
+	}
+
+	filtered := make([]dispatchWaveCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Wave == selectedWave {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
+func dispatchWaveMetadata(metadata map[string]any) int {
+	if metadata == nil {
+		return 0
+	}
+
+	switch v := metadata["wave"].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		wave, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return wave
+		}
+	}
+
+	return 0
 }
 
 // writePhasePrompt writes phase-appropriate instructions into the dispatch prompt.

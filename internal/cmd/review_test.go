@@ -10,7 +10,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
-type fakeConnector struct {
+type reviewFakeConnector struct {
 	items         map[string]*connector.WorkItem
 	edges         map[string][]connector.Edge
 	created       []connector.CreateRequest
@@ -18,9 +18,9 @@ type fakeConnector struct {
 	statusUpdates []struct{ id, status string }
 }
 
-func (f *fakeConnector) Name() string { return "fake" }
+func (f *reviewFakeConnector) Name() string { return "fake" }
 
-func (f *fakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, error) {
+func (f *reviewFakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, error) {
 	item, ok := f.items[id]
 	if !ok {
 		return nil, fmt.Errorf("item not found: %s", id)
@@ -35,11 +35,11 @@ func (f *fakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, 
 	return &cp, nil
 }
 
-func (f *fakeConnector) List(context.Context, connector.ListFilters) (*connector.ListResult, error) {
+func (f *reviewFakeConnector) List(context.Context, connector.ListFilters) (*connector.ListResult, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string, _ []string) ([]connector.Edge, error) {
+func (f *reviewFakeConnector) GetEdges(_ context.Context, id string, direction string, _ []string) ([]connector.Edge, error) {
 	key := id + "|" + direction
 	edges := append([]connector.Edge(nil), f.edges[key]...)
 	for i := range edges {
@@ -52,7 +52,7 @@ func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string,
 	return edges, nil
 }
 
-func (f *fakeConnector) GetMetadata(_ context.Context, id string, key string) (string, error) {
+func (f *reviewFakeConnector) GetMetadata(_ context.Context, id string, key string) (string, error) {
 	item, ok := f.items[id]
 	if !ok || item.Metadata == nil {
 		return "", nil
@@ -63,7 +63,7 @@ func (f *fakeConnector) GetMetadata(_ context.Context, id string, key string) (s
 	return "", nil
 }
 
-func (f *fakeConnector) Create(_ context.Context, req connector.CreateRequest) (string, error) {
+func (f *reviewFakeConnector) Create(_ context.Context, req connector.CreateRequest) (string, error) {
 	id := fmt.Sprintf("cb-review-%d", len(f.created)+1)
 	f.created = append(f.created, req)
 	f.items[id] = &connector.WorkItem{
@@ -78,7 +78,7 @@ func (f *fakeConnector) Create(_ context.Context, req connector.CreateRequest) (
 	return id, nil
 }
 
-func (f *fakeConnector) UpdateStatus(_ context.Context, id string, status string) error {
+func (f *reviewFakeConnector) UpdateStatus(_ context.Context, id string, status string) error {
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -88,7 +88,7 @@ func (f *fakeConnector) UpdateStatus(_ context.Context, id string, status string
 	return nil
 }
 
-func (f *fakeConnector) AppendContent(_ context.Context, id string, content string) error {
+func (f *reviewFakeConnector) AppendContent(_ context.Context, id string, content string) error {
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -97,7 +97,7 @@ func (f *fakeConnector) AppendContent(_ context.Context, id string, content stri
 	return nil
 }
 
-func (f *fakeConnector) SetMetadata(_ context.Context, id string, key string, value any) error {
+func (f *reviewFakeConnector) SetMetadata(_ context.Context, id string, key string, value any) error {
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -109,7 +109,7 @@ func (f *fakeConnector) SetMetadata(_ context.Context, id string, key string, va
 	return nil
 }
 
-func (f *fakeConnector) UpdateMetadataMap(_ context.Context, id string, patch map[string]any) error {
+func (f *reviewFakeConnector) UpdateMetadataMap(_ context.Context, id string, patch map[string]any) error {
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -123,7 +123,7 @@ func (f *fakeConnector) UpdateMetadataMap(_ context.Context, id string, patch ma
 	return nil
 }
 
-func (f *fakeConnector) AddLabel(_ context.Context, id string, label string) error {
+func (f *reviewFakeConnector) AddLabel(_ context.Context, id string, label string) error {
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -132,12 +132,12 @@ func (f *fakeConnector) AddLabel(_ context.Context, id string, label string) err
 	return nil
 }
 
-func (f *fakeConnector) CreateEdge(_ context.Context, fromID string, toID string, edgeType string) error {
+func (f *reviewFakeConnector) CreateEdge(_ context.Context, fromID string, toID string, edgeType string) error {
 	f.createdEdges = append(f.createdEdges, struct{ fromID, toID, edgeType string }{fromID: fromID, toID: toID, edgeType: edgeType})
 	return nil
 }
 
-type fakeStore struct {
+type reviewFakeStore struct {
 	runs          map[string]*store.PipelineRun
 	gates         []store.PipelineGateInput
 	updatePhases  []struct{ designID, phase string }
@@ -145,15 +145,15 @@ type fakeStore struct {
 	latestGateKey map[string]int
 }
 
-func (f *fakeStore) CreateRun(context.Context, string, string, string) (*store.PipelineRun, error) {
+func (f *reviewFakeStore) CreateRun(context.Context, string, string, string) (*store.PipelineRun, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeStore) CreateRunWithMode(context.Context, string, string, string, string) (*store.PipelineRun, error) {
+func (f *reviewFakeStore) CreateRunWithMode(context.Context, string, string, string, string) (*store.PipelineRun, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeStore) GetRun(_ context.Context, designID string) (*store.PipelineRun, error) {
+func (f *reviewFakeStore) GetRun(_ context.Context, designID string) (*store.PipelineRun, error) {
 	run, ok := f.runs[designID]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -162,11 +162,11 @@ func (f *fakeStore) GetRun(_ context.Context, designID string) (*store.PipelineR
 	return &cp, nil
 }
 
-func (f *fakeStore) ListRuns(context.Context, string) ([]store.PipelineRunStatus, error) {
+func (f *reviewFakeStore) ListRuns(context.Context, string) ([]store.PipelineRunStatus, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeStore) UpdateRunPhase(_ context.Context, designID, phase string) error {
+func (f *reviewFakeStore) UpdateRunPhase(_ context.Context, designID, phase string) error {
 	f.updatePhases = append(f.updatePhases, struct{ designID, phase string }{designID: designID, phase: phase})
 	if run, ok := f.runs[designID]; ok {
 		run.CurrentPhase = phase
@@ -174,7 +174,7 @@ func (f *fakeStore) UpdateRunPhase(_ context.Context, designID, phase string) er
 	return nil
 }
 
-func (f *fakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
+func (f *reviewFakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
 	f.updateStatus = append(f.updateStatus, struct{ designID, status string }{designID: designID, status: status})
 	if run, ok := f.runs[designID]; ok {
 		run.Status = status
@@ -182,9 +182,9 @@ func (f *fakeStore) UpdateRunStatus(_ context.Context, designID, status string) 
 	return nil
 }
 
-func (f *fakeStore) SetRunMode(context.Context, string, string) error { return nil }
+func (f *reviewFakeStore) SetRunMode(context.Context, string, string) error { return nil }
 
-func (f *fakeStore) RecordGate(_ context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
+func (f *reviewFakeStore) RecordGate(_ context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)
 	key := input.PipelineID + ":" + input.GateName
 	f.latestGateKey[key]++
@@ -200,46 +200,52 @@ func (f *fakeStore) RecordGate(_ context.Context, input store.PipelineGateInput)
 	}, nil
 }
 
-func (f *fakeStore) GetGateHistory(context.Context, string) ([]store.PipelineGateRecord, error) {
+func (f *reviewFakeStore) GetGateHistory(context.Context, string) ([]store.PipelineGateRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeStore) GetLatestGateRound(_ context.Context, pipelineID, gateName string) (int, error) {
+func (f *reviewFakeStore) GetLatestGateRound(_ context.Context, pipelineID, gateName string) (int, error) {
 	return f.latestGateKey[pipelineID+":"+gateName], nil
 }
 
-func (f *fakeStore) AddTask(context.Context, string, string, string, *int) error { return nil }
-func (f *fakeStore) ListTasks(context.Context, string) ([]store.PipelineTaskRecord, error) {
+func (f *reviewFakeStore) AddTask(context.Context, string, string, string, *int) error { return nil }
+func (f *reviewFakeStore) ListTasks(context.Context, string) ([]store.PipelineTaskRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) UpdateTaskStatus(context.Context, string, string) error { return nil }
-func (f *fakeStore) CreateSession(context.Context, store.SessionInput) (*store.SessionRecord, error) {
+func (f *reviewFakeStore) UpdateTaskStatus(context.Context, string, string) error { return nil }
+func (f *reviewFakeStore) CreateSession(context.Context, store.SessionInput) (*store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) EndSession(context.Context, string, store.SessionResult) error { return nil }
-func (f *fakeStore) GetSession(context.Context, string) (*store.SessionRecord, error) {
+func (f *reviewFakeStore) EndSession(context.Context, string, store.SessionResult) error { return nil }
+func (f *reviewFakeStore) GetSession(context.Context, string) (*store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) ListSessions(context.Context, string) ([]store.SessionRecord, error) {
+func (f *reviewFakeStore) ListSessions(context.Context, string) ([]store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) GetRunStatusCounts(context.Context, string) (map[string]int, error) {
+func (f *reviewFakeStore) GetRunStatusCounts(context.Context, string) (map[string]int, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) GetTaskStatusCounts(context.Context, string) (map[string]int, error) {
+func (f *reviewFakeStore) GetTaskStatusCounts(context.Context, string) (map[string]int, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) GetGatePassRates(context.Context, string) ([]store.GatePassRate, error) {
+func (f *reviewFakeStore) GetGatePassRates(context.Context, string) ([]store.GatePassRate, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) GetGateFailures(context.Context, string) ([]store.PipelineGateRecord, error) {
+func (f *reviewFakeStore) GetGateFailures(context.Context, string) ([]store.PipelineGateRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) GetAvgTaskDuration(context.Context, string) (*float64, error) {
+func (f *reviewFakeStore) GetAvgTaskDuration(context.Context, string) (*float64, error) {
 	return nil, fmt.Errorf("not implemented")
 }
-func (f *fakeStore) Migrate(context.Context) error { return nil }
-func (f *fakeStore) Close() error                  { return nil }
+func (f *reviewFakeStore) GetTasksByWave(_ context.Context, _ string, _ int) ([]store.PipelineTaskRecord, error) {
+	return nil, nil
+}
+func (f *reviewFakeStore) IsWaveClosed(_ context.Context, _ string, _ int) (bool, error) {
+	return false, nil
+}
+func (f *reviewFakeStore) Migrate(context.Context) error { return nil }
+func (f *reviewFakeStore) Close() error                  { return nil }
 
 func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 	origConn, origStore, origProject := conn, cbStore, projectName
@@ -250,7 +256,7 @@ func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 	}()
 
 	projectName = "cobuild"
-	conn = &fakeConnector{
+	conn = &reviewFakeConnector{
 		items: map[string]*connector.WorkItem{
 			"cb-task": {
 				ID:       "cb-task",
@@ -275,7 +281,7 @@ func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 			},
 		},
 	}
-	cbStore = &fakeStore{
+	cbStore = &reviewFakeStore{
 		runs: map[string]*store.PipelineRun{
 			"cb-task":   {ID: "run-task", DesignID: "cb-task", CurrentPhase: "review", Status: "active", Mode: "manual", CreatedAt: time.Now(), UpdatedAt: time.Now()},
 			"cb-design": {ID: "run-design", DesignID: "cb-design", CurrentPhase: "review", Status: "active", Mode: "manual", CreatedAt: time.Now(), UpdatedAt: time.Now()},
@@ -289,8 +295,8 @@ func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 		t.Fatalf("process-review returned error: %v", err)
 	}
 
-	fc := conn.(*fakeConnector)
-	fs := cbStore.(*fakeStore)
+	fc := conn.(*reviewFakeConnector)
+	fs := cbStore.(*reviewFakeStore)
 
 	if got := fc.items["cb-task"].Status; got != "closed" {
 		t.Fatalf("task status = %q, want closed", got)
@@ -330,7 +336,7 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 	}()
 
 	projectName = "cobuild"
-	conn = &fakeConnector{
+	conn = &reviewFakeConnector{
 		items: map[string]*connector.WorkItem{
 			"cb-task": {
 				ID:       "cb-task",
@@ -355,7 +361,7 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 			},
 		},
 	}
-	cbStore = &fakeStore{
+	cbStore = &reviewFakeStore{
 		runs: map[string]*store.PipelineRun{
 			"cb-design": {ID: "run-design", DesignID: "cb-design", CurrentPhase: "review", Status: "active", Mode: "manual", CreatedAt: time.Now(), UpdatedAt: time.Now()},
 		},
@@ -368,8 +374,8 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 		t.Fatalf("process-review returned error: %v", err)
 	}
 
-	fc := conn.(*fakeConnector)
-	fs := cbStore.(*fakeStore)
+	fc := conn.(*reviewFakeConnector)
+	fs := cbStore.(*reviewFakeStore)
 
 	if len(fs.gates) != 0 {
 		t.Fatalf("recorded %d gates, want 0 for idempotent closed task", len(fs.gates))

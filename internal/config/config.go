@@ -485,13 +485,15 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Dispatch.MaxConcurrent != 0 {
 		out.Dispatch.MaxConcurrent = override.Dispatch.MaxConcurrent
 	}
+	if override.Dispatch.WaveStrategy != "" {
+		out.Dispatch.WaveStrategy = normalizeWaveStrategy(override.Dispatch.WaveStrategy)
+	}
 	if override.Dispatch.TmuxSession != "" {
 		out.Dispatch.TmuxSession = override.Dispatch.TmuxSession
 	}
 	if override.Dispatch.DefaultRuntime != "" {
 		out.Dispatch.DefaultRuntime = override.Dispatch.DefaultRuntime
 	}
-	out.Dispatch.WaveStrategy = normalizeWaveStrategy(override.Dispatch.WaveStrategy)
 	if override.Dispatch.ClaudeFlags != "" {
 		out.Dispatch.ClaudeFlags = override.Dispatch.ClaudeFlags
 	}
