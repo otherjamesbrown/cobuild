@@ -344,6 +344,14 @@ func (f *fakeStore) GetAvgTaskDuration(ctx context.Context, project string) (*fl
 
 func (f *fakeStore) Migrate(ctx context.Context) error { return nil }
 
+func (f *fakeStore) GetTasksByWave(ctx context.Context, designID string, wave int) ([]store.PipelineTaskRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) IsWaveClosed(ctx context.Context, designID string, wave int) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeStore) Close() error { return nil }
 
 func newTestWorktree(t *testing.T, branch string) string {
