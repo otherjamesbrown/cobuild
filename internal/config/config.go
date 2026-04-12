@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -74,22 +75,22 @@ type WorkItemsConnectorCfg struct {
 
 // Config holds pipeline configuration loaded from YAML files.
 type Config struct {
-	Build           []string                    `yaml:"build,omitempty"`
-	Test            []string                    `yaml:"test,omitempty"`
-	CompletionSteps []string                    `yaml:"completion_steps,omitempty"`
-	Agents          map[string]AgentCfg         `yaml:"agents,omitempty"`
-	Dispatch        DispatchCfg                 `yaml:"dispatch,omitempty"`
-	Monitoring      MonitoringCfg               `yaml:"monitoring,omitempty"`
-	Review          ReviewCfg                   `yaml:"review,omitempty"`
-	Context         ContextConfig               `yaml:"context,omitempty"`
-	Workflows       map[string]WorkflowConfig   `yaml:"workflows,omitempty"`
-	Deploy          DeployCfg                   `yaml:"deploy,omitempty"`
-	GitHub          GitHubCfg                   `yaml:"github,omitempty"`
-	Storage         StoreCfg                    `yaml:"storage,omitempty"`
-	Connectors      ConnectorsCfg               `yaml:"connectors,omitempty"`
-	Poller          PollerCfg                   `yaml:"poller,omitempty"`
-	SkillsDir       string                      `yaml:"skills_dir,omitempty"`
-	Phases          map[string]PhaseConfig       `yaml:"phases,omitempty"`
+	Build           []string                  `yaml:"build,omitempty"`
+	Test            []string                  `yaml:"test,omitempty"`
+	CompletionSteps []string                  `yaml:"completion_steps,omitempty"`
+	Agents          map[string]AgentCfg       `yaml:"agents,omitempty"`
+	Dispatch        DispatchCfg               `yaml:"dispatch,omitempty"`
+	Monitoring      MonitoringCfg             `yaml:"monitoring,omitempty"`
+	Review          ReviewCfg                 `yaml:"review,omitempty"`
+	Context         ContextConfig             `yaml:"context,omitempty"`
+	Workflows       map[string]WorkflowConfig `yaml:"workflows,omitempty"`
+	Deploy          DeployCfg                 `yaml:"deploy,omitempty"`
+	GitHub          GitHubCfg                 `yaml:"github,omitempty"`
+	Storage         StoreCfg                  `yaml:"storage,omitempty"`
+	Connectors      ConnectorsCfg             `yaml:"connectors,omitempty"`
+	Poller          PollerCfg                 `yaml:"poller,omitempty"`
+	SkillsDir       string                    `yaml:"skills_dir,omitempty"`
+	Phases          map[string]PhaseConfig    `yaml:"phases,omitempty"`
 }
 
 // PollerCfg controls the autonomous pipeline poller.
@@ -112,10 +113,13 @@ type AgentCfg struct {
 // as a final fallback by ModelForPhase[Runtime] when no runtime-specific
 // model is configured.
 type DispatchCfg struct {
-	MaxConcurrent  int                  `yaml:"max_concurrent,omitempty"`
-	TmuxSession    string               `yaml:"tmux_session,omitempty"`
-	DefaultRuntime string               `yaml:"default_runtime,omitempty"`
-	Runtimes       map[string]RuntimeCfg `yaml:"runtimes,omitempty"`
+	MaxConcurrent  int    `yaml:"max_concurrent,omitempty"`
+	TmuxSession    string `yaml:"tmux_session,omitempty"`
+	DefaultRuntime string `yaml:"default_runtime,omitempty"`
+	// WaveStrategy controls whether dispatch proceeds one dependency wave at a time
+	// ("serial") or dispatches all currently-eligible work at once ("parallel").
+	WaveStrategy string                `yaml:"wave_strategy,omitempty"`
+	Runtimes     map[string]RuntimeCfg `yaml:"runtimes,omitempty"`
 
 	// Legacy / back-compat fields ----------------------------------------
 	ClaudeFlags  string `yaml:"claude_flags,omitempty"`
@@ -135,6 +139,11 @@ type RuntimeCfg struct {
 	// "--json --full-auto").
 	Flags string `yaml:"flags,omitempty"`
 }
+
+const (
+	WaveStrategySerial   = "serial"
+	WaveStrategyParallel = "parallel"
+)
 
 // ModelForPhase resolves the model to use for a given phase, falling back
 // through the legacy (runtime-unaware) chain. Kept for call sites that
@@ -220,6 +229,15 @@ func (c *Config) ResolveRuntime(flagOverride, metadataValue string) string {
 	return "claude-code"
 }
 
+// ResolveWaveStrategy returns the normalized dispatch wave strategy.
+// Supported values are "serial" and "parallel"; anything else falls back to "serial".
+func (c *Config) ResolveWaveStrategy() string {
+	if c == nil {
+		return WaveStrategySerial
+	}
+	return normalizeWaveStrategy(c.Dispatch.WaveStrategy)
+}
+
 // GitHubCfg holds GitHub repository information.
 type GitHubCfg struct {
 	OwnerRepo string `yaml:"owner_repo"`
@@ -228,11 +246,11 @@ type GitHubCfg struct {
 // DeployServiceCfg maps file paths to deploy/test/rollback commands.
 type DeployServiceCfg struct {
 	Name         string   `yaml:"name"`
-	TriggerPaths []string `yaml:"trigger_paths"`          // file globs that trigger this deploy
-	Command      string   `yaml:"command"`                 // deploy command (e.g., "penf deploy gateway")
-	SmokeTest    string   `yaml:"smoke_test,omitempty"`    // verify deploy succeeded (e.g., "curl -s .../health")
-	Rollback     string   `yaml:"rollback,omitempty"`      // revert on smoke test failure
-	Timeout      string   `yaml:"timeout,omitempty"`       // max time for deploy + smoke test (default: 5m)
+	TriggerPaths []string `yaml:"trigger_paths"`        // file globs that trigger this deploy
+	Command      string   `yaml:"command"`              // deploy command (e.g., "penf deploy gateway")
+	SmokeTest    string   `yaml:"smoke_test,omitempty"` // verify deploy succeeded (e.g., "curl -s .../health")
+	Rollback     string   `yaml:"rollback,omitempty"`   // revert on smoke test failure
+	Timeout      string   `yaml:"timeout,omitempty"`    // max time for deploy + smoke test (default: 5m)
 }
 
 // DeployCfg controls auto-deploy after PR merge.
@@ -309,6 +327,7 @@ func DefaultConfig() *Config {
 			MaxConcurrent:  3,
 			TmuxSession:    "", // empty = auto: cobuild-<project>
 			DefaultRuntime: "claude-code",
+			WaveStrategy:   WaveStrategySerial,
 			Runtimes: map[string]RuntimeCfg{
 				"claude-code": {Model: "sonnet"},
 				"codex":       {Model: "gpt-5.4"},
@@ -472,6 +491,7 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Dispatch.DefaultRuntime != "" {
 		out.Dispatch.DefaultRuntime = override.Dispatch.DefaultRuntime
 	}
+	out.Dispatch.WaveStrategy = normalizeWaveStrategy(override.Dispatch.WaveStrategy)
 	if override.Dispatch.ClaudeFlags != "" {
 		out.Dispatch.ClaudeFlags = override.Dispatch.ClaudeFlags
 	}
@@ -575,6 +595,17 @@ func MergeConfig(base, override *Config) *Config {
 	}
 
 	return out
+}
+
+func normalizeWaveStrategy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", WaveStrategySerial:
+		return WaveStrategySerial
+	case WaveStrategyParallel:
+		return WaveStrategyParallel
+	default:
+		return WaveStrategySerial
+	}
 }
 
 // LoadRepoRegistry loads the repo registry from ~/.cobuild/repos.yaml.

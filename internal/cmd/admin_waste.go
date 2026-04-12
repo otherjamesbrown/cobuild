@@ -78,7 +78,8 @@ Run on a specific events.jsonl file or scans all session archives.`,
 
 		totalWasted := 0
 		fmt.Printf("Token Waste Analysis (%d patterns found)\n", len(allFlags))
-		fmt.Println("==========================================\n")
+		fmt.Println("==========================================")
+		fmt.Println()
 
 		fmt.Printf("%-25s %-8s %s\n", "PATTERN", "TOKENS", "DESCRIPTION")
 		fmt.Printf("%-25s %-8s %s\n", "-------", "------", "-----------")
@@ -105,14 +106,14 @@ Run on a specific events.jsonl file or scans all session archives.`,
 }
 
 type eventLine struct {
-	Timestamp      string `json:"ts"`
-	Event          string `json:"event"`
-	File           string `json:"file"`
-	TokensEstimated int   `json:"tokens_estimated"`
-	TokensSaved    int    `json:"tokens_saved"`
-	ReadCount      int    `json:"read_count"`
-	Command        string `json:"command"`
-	Error          string `json:"error"`
+	Timestamp       string `json:"ts"`
+	Event           string `json:"event"`
+	File            string `json:"file"`
+	TokensEstimated int    `json:"tokens_estimated"`
+	TokensSaved     int    `json:"tokens_saved"`
+	ReadCount       int    `json:"read_count"`
+	Command         string `json:"command"`
+	Error           string `json:"error"`
 }
 
 func detectWaste(eventsPath string) []wasteFlag {
