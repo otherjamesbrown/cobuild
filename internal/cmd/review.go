@@ -54,35 +54,14 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			}
 		}
 		if prURL == "" {
-			fmt.Printf("Task %s has no PR URL. Treating as direct-mode review.\n", taskID)
-
-			if dryRun {
-				if task.Status == "closed" {
-					fmt.Println("[dry-run] Task already closed. Would reconcile direct-mode state only.")
-				} else {
-					fmt.Printf("[dry-run] Would record synthetic pass gate: %q\n", directReviewPassBody)
-					fmt.Println("[dry-run] Would close task without external PR review.")
-				}
-				return nil
+			handled, err := maybeProcessDirectReview(ctx, taskID, task, dryRun)
+			if handled {
+				return err
 			}
-
-			if task.Status != "closed" && cbStore != nil {
-				repoRoot := findRepoRoot()
-				pCfg, _ := config.LoadConfig(repoRoot)
-				_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, pCfg)
-				if gateErr != nil {
-					fmt.Printf("Warning: failed to record synthetic gate verdict: %v\n", gateErr)
-				}
-			}
-
-			reconciled, err := reconcileReviewedTask(ctx, taskID)
 			if err != nil {
 				return err
 			}
-			if reconciled {
-				printNextStep(taskID, "merged", "process-review")
-			}
-			return nil
+			return fmt.Errorf("no PR URL for task %s", taskID)
 		}
 
 		// Extract owner/repo and PR number from URL
@@ -510,16 +489,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	// worktree still has the branch checked out at merge time. Remove the
 	// worktree, which frees the branch, then merge-and-delete succeeds.
 	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
-	if wtPath != "" {
-		archiveSessionLogs(wtPath, taskID)
-		repoForCleanup, _ := config.RepoForProject(projectName)
-		if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
-			fmt.Printf("  Warning: failed to remove worktree pre-merge: %v\n", err)
-			// Continue anyway — merge without --delete-branch if needed below
-		} else {
-			fmt.Println("  Worktree cleaned up.")
-		}
-	}
+	cleanupTaskWorktree(ctx, taskID, wtPath)
 
 	fmt.Printf("Merging %s...\n", prURL)
 	mergeOut, err := exec.CommandContext(ctx, "gh", "pr", "merge", prURL,
@@ -530,38 +500,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	fmt.Println("  Merged.")
 
 	// Close task
-	if err := conn.UpdateStatus(ctx, taskID, "closed"); err != nil {
-		fmt.Printf("  Warning: failed to close task: %v\n", err)
-	} else {
-		fmt.Printf("  Task %s → closed.\n", taskID)
-	}
-
-	// Check if all sibling tasks are done → advance pipeline
-	edges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
-	if err == nil && len(edges) > 0 {
-		designID := edges[0].ItemID
-		siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
-		if err == nil {
-			allDone := true
-			for _, s := range siblings {
-				if s.Status != "closed" {
-					allDone = false
-					break
-				}
-			}
-			if allDone {
-				fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-				if cbStore != nil {
-					if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-						fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-					}
-					if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
-						fmt.Printf("  Warning: failed to mark completed: %v\n", err)
-					}
-				}
-			}
-		}
-	}
+	closeTaskAndAdvance(ctx, taskID)
 
 	return nil
 }
