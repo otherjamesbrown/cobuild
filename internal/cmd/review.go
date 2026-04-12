@@ -902,6 +902,6 @@ func reviewSectionTitle(source string) string {
 
 func init() {
 	processReviewCmd.Flags().Bool("dry-run", false, "Show verdict without merging or re-dispatching")
-	processReviewCmd.Flags().Int("review-timeout", 10, "Minutes to wait for Gemini review before falling back to CI-based review")
+	processReviewCmd.Flags().Int("review-timeout", 0, "Minutes to wait for external review before falling back (0 = skip external review entirely)")
 	rootCmd.AddCommand(processReviewCmd)
 }
