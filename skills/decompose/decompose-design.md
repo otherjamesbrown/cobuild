@@ -33,6 +33,7 @@ Break the design into tasks. Each task should be:
 - **Independently testable** — the agent can verify it worked without other tasks being done
 - **Scoped to 1-5 files** — a task touching 10 files is probably multiple tasks
 - **~100-300 lines of new/changed code** — larger tasks risk agent context overflow
+- **Target exactly one repo** — one task maps to one worktree and one PR; if the design spans multiple repos, split it into separate tasks and link them with `blocked-by` when sequencing matters
 
 ### Common decomposition patterns
 
@@ -49,6 +50,7 @@ Break the design into tasks. Each task should be:
 - "Implement the feature" — too vague, no clear scope
 - "Fix everything" — unbounded
 - A task that requires another task's PR to be merged first but doesn't declare the dependency
+- A task that edits files in more than one repo
 - A task with no acceptance criteria
 
 ### Mandatory: Test infrastructure task (Wave 1)
@@ -79,13 +81,54 @@ Create a dependency graph and assign **waves**:
 - **Wave 2**: Tasks that depend only on wave 1 tasks
 - **Wave 3**: Tasks that depend on wave 2, etc.
 
+## Multi-repo designs
+
+Designs may span multiple repos. Tasks must not.
+
+Use this rule: first map each spec or file reference in the design to a target `(project, repo)`, then create one task per repo-sized unit of work. If one repo's change depends on another repo landing first, express that with a `blocked-by` edge instead of combining both repos into one task.
+
+Be explicit about ownership:
+
+- **`--project <name>`** sets the shard's home project. Use it when the task should live in a different project's backlog or use a different shard namespace than the parent design.
+- **`repo` metadata** sets the git repo `cobuild dispatch` will open a worktree in. Use it whenever the task's code changes belong in a repo that is not the current repo default.
+
+A task may need both. A penfold-owned task that edits the `penfold` repo should be created with `--project penfold` and `repo=penfold`. A context-palace-owned coordination task that edits the `penf-cli` repo would usually keep the default project but set `repo=penf-cli`.
+
+Worked example:
+
+If a design says:
+
+```text
+Update penfold/X.go to emit the new payload, then update context-palace/Y.go to consume it.
+```
+
+The correct decomposition is two single-repo tasks, not one combined task:
+
+```bash
+# Task 1: penfold repo change
+cobuild wi create --project penfold --type task --title "Emit new payload from X.go" --body "<scope for penfold/X.go>" --parent <design-id>
+cxp shard metadata set <task-penfold> repo penfold
+
+# Task 2: context-palace repo change
+cobuild wi create --type task --title "Consume new payload in Y.go" --body "<scope for context-palace/Y.go>" --parent <design-id>
+cxp shard metadata set <task-context-palace> repo context-palace
+
+# Sequence them if Y.go depends on X.go shipping first
+cobuild wi links add <task-context-palace> <task-penfold> blocked-by
+```
+
+The second task only gets the `blocked-by` edge when the dependency is real. If both repo changes can be implemented and verified independently, keep them in the same wave with no dependency edge.
+
 ## Step 4: Create task work items
 
 For each task, create a work item with:
 
 ```bash
-cobuild wi create --type task --title "<specific, action-oriented title>" --body "<task body>"
+cobuild wi create --project <target-project-if-needed> --type task --title "<specific, action-oriented title>" --body "<task body>"
+cxp shard metadata set <task-id> repo <target-repo>
 ```
+
+Set `--project` when the task belongs to a different project's backlog than the parent design. Set `repo` metadata for every task whose code lands in a different repo than the current repo default. For cross-project, cross-repo work, set both.
 
 Each task body should include:
 
