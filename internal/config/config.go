@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -270,11 +271,15 @@ type CICfg struct {
 type ReviewCfg struct {
 	CI                CICfg    `yaml:"ci,omitempty"`
 	Strategy          string   `yaml:"strategy,omitempty"`
+	Provider          string   `yaml:"provider,omitempty"`
 	ExternalReviewers []string `yaml:"external_reviewers,omitempty"`
 	ProcessSkill      string   `yaml:"process_skill,omitempty"`
 	ReviewSkill       string   `yaml:"review_skill,omitempty"`
 	ReviewAgent       string   `yaml:"review_agent,omitempty"`
 	Model             string   `yaml:"model,omitempty"`
+	CrossModel        *bool    `yaml:"cross_model,omitempty"`
+	PostComments      *bool    `yaml:"post_comments,omitempty"`
+	Timeout           string   `yaml:"timeout,omitempty"`
 }
 
 // MonitoringCfg controls health monitoring for dispatched agents.
@@ -322,6 +327,7 @@ func ValidatePipelinePhase(phase string) error {
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
+	defaultTrue := true
 	return &Config{
 		Dispatch: DispatchCfg{
 			MaxConcurrent:  3,
@@ -349,7 +355,12 @@ func DefaultConfig() *Config {
 			},
 		},
 		Review: ReviewCfg{
-			Model: "haiku",
+			Strategy:     "external",
+			Provider:     "external",
+			Model:        "haiku",
+			CrossModel:   &defaultTrue,
+			PostComments: &defaultTrue,
+			Timeout:      "120s",
 		},
 		SkillsDir: "skills",
 		Phases: map[string]PhaseConfig{
@@ -521,6 +532,9 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Review.Model != "" {
 		out.Review.Model = override.Review.Model
 	}
+	if override.Review.Provider != "" {
+		out.Review.Provider = override.Review.Provider
+	}
 	if override.Review.Strategy != "" {
 		out.Review.Strategy = override.Review.Strategy
 	}
@@ -535,6 +549,17 @@ func MergeConfig(base, override *Config) *Config {
 	}
 	if override.Review.ExternalReviewers != nil {
 		out.Review.ExternalReviewers = copyStrings(override.Review.ExternalReviewers)
+	}
+	if override.Review.CrossModel != nil {
+		value := *override.Review.CrossModel
+		out.Review.CrossModel = &value
+	}
+	if override.Review.PostComments != nil {
+		value := *override.Review.PostComments
+		out.Review.PostComments = &value
+	}
+	if override.Review.Timeout != "" {
+		out.Review.Timeout = override.Review.Timeout
 	}
 	if override.GitHub.OwnerRepo != "" {
 		out.GitHub.OwnerRepo = override.GitHub.OwnerRepo
@@ -608,6 +633,47 @@ func normalizeWaveStrategy(value string) string {
 	default:
 		return WaveStrategySerial
 	}
+}
+
+// EffectiveProvider returns the configured review provider with legacy
+// strategy-based fallback preserved for older repos.
+func (r ReviewCfg) EffectiveProvider() string {
+	if provider := strings.ToLower(strings.TrimSpace(r.Provider)); provider != "" {
+		return provider
+	}
+	if strategy := strings.ToLower(strings.TrimSpace(r.Strategy)); strategy == "external" {
+		return "external"
+	}
+	return "auto"
+}
+
+// CrossModelEnabled defaults to true when the field is unset.
+func (r ReviewCfg) CrossModelEnabled() bool {
+	if r.CrossModel == nil {
+		return true
+	}
+	return *r.CrossModel
+}
+
+// PostCommentsEnabled defaults to true when the field is unset.
+func (r ReviewCfg) PostCommentsEnabled() bool {
+	if r.PostComments == nil {
+		return true
+	}
+	return *r.PostComments
+}
+
+// ReviewTimeout resolves the configured review timeout, defaulting to 120s.
+func (r ReviewCfg) ReviewTimeout() time.Duration {
+	timeout := strings.TrimSpace(r.Timeout)
+	if timeout == "" {
+		timeout = "120s"
+	}
+	d, err := time.ParseDuration(timeout)
+	if err != nil {
+		return 120 * time.Second
+	}
+	return d
 }
 
 // LoadRepoRegistry loads the repo registry from ~/.cobuild/repos.yaml.
