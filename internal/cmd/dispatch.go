@@ -57,7 +57,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		if task.Status == "in_progress" {
 			// Allow re-dispatch if --force or if there's no active tmux session
 			// (review feedback sets status back to in_progress for re-dispatch)
-			tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+			tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
 			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").Output()
 			hasWindow := false
 			for _, line := range strings.Split(string(windowOut), "\n") {
@@ -89,7 +89,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
 		}
 
-		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, projectName, cmd.ErrOrStderr())
+		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, resolveTaskProject(task), cmd.ErrOrStderr())
 		if err != nil {
 			return err
 		}
@@ -356,7 +356,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+		tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
 		if pCfg.Dispatch.TmuxSession != "" {
 			tmuxSession = pCfg.Dispatch.TmuxSession
 		}
@@ -1042,6 +1042,30 @@ func reposForProject(reg *config.RepoRegistry, project string) []string {
 	}
 	sort.Strings(repos)
 	return repos
+}
+
+// resolveTaskProject returns the project name for a task, used for tmux
+// session naming and config resolution. Checks (in order): task.Project,
+// pipeline run project (from store), global projectName fallback.
+func resolveTaskProject(task *connector.WorkItem) string {
+	if task != nil && task.Project != "" {
+		return task.Project
+	}
+	// Check the pipeline run — it always has the correct project
+	if cbStore != nil && task != nil {
+		if run, err := cbStore.GetRun(context.Background(), task.ID); err == nil && run.Project != "" {
+			return run.Project
+		}
+		// Task might be a child — check parent design's run
+		if conn != nil {
+			if edges, err := conn.GetEdges(context.Background(), task.ID, "outgoing", []string{"child-of"}); err == nil && len(edges) > 0 {
+				if run, err := cbStore.GetRun(context.Background(), edges[0].ItemID); err == nil && run.Project != "" {
+					return run.Project
+				}
+			}
+		}
+	}
+	return projectName
 }
 
 // inferWorkflowFromType maps a work item to a workflow name.
