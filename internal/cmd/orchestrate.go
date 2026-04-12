@@ -1,0 +1,99 @@
+package cmd
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/orchestrator"
+	"github.com/spf13/cobra"
+)
+
+type orchestrateCommandRunner interface {
+	Run(ctx context.Context, shardID string) error
+}
+
+var newOrchestrateRunner = func(opts orchestrator.Options) orchestrateCommandRunner {
+	return orchestrator.NewRunner(
+		orchestrator.StorePhaseSource{Store: cbStore},
+		orchestrator.DispatchFunc(func(_ context.Context, shardID string) error {
+			return dispatchCmd.RunE(dispatchCmd, []string{shardID})
+		}),
+		opts,
+	)
+}
+
+var orchestrateCmd = &cobra.Command{
+	Use:   "orchestrate <shard-id>",
+	Short: "Run a pipeline in the foreground until completion or a human stop point",
+	Long: `Drives the current pipeline phase in the foreground with structured log output.
+
+This is the preferred path for end-to-end orchestration from a shell or agent.
+It exits 0 on completion, 2 when deploy approval is required, and 1 on real
+failures.`,
+	Args: cobra.ExactArgs(1),
+	Example: `  cobuild orchestrate cb-design-123
+  cobuild orchestrate cb-design-123 --step
+  cobuild orchestrate cb-design-123 --timeout 45m --poll-interval 10s`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if cbStore == nil {
+			return fmt.Errorf("no store configured")
+		}
+
+		timeout, _ := cmd.Flags().GetDuration("timeout")
+		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
+		stepMode, _ := cmd.Flags().GetBool("step")
+		interactiveMode, _ := cmd.Flags().GetBool("interactive")
+
+		signalCh := make(chan os.Signal, 1)
+		signal.Notify(signalCh, os.Interrupt)
+		defer signal.Stop(signalCh)
+
+		opts := orchestrator.Options{
+			PollInterval: pollInterval,
+			PhaseTimeout: timeout,
+			StepMode:     stepMode || interactiveMode,
+			Output:       cmd.OutOrStdout(),
+			SignalCh:     signalCh,
+		}
+		if opts.StepMode {
+			opts.BeforeStep = newBeforeStepPrompt(cmd.InOrStdin(), cmd.OutOrStdout())
+		}
+
+		err := newOrchestrateRunner(opts).Run(cmd.Context(), args[0])
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, orchestrator.ErrDeployApprovalRequired) {
+			return commandErrorWithExitCodeAndPrint(err, 2, false)
+		}
+		return commandErrorWithExitCode(err, 1)
+	},
+}
+
+func newBeforeStepPrompt(in io.Reader, out io.Writer) func(ctx context.Context, shardID, phase string) error {
+	reader := bufio.NewReader(in)
+	return func(_ context.Context, shardID, phase string) error {
+		if _, err := fmt.Fprintf(out, "Next phase for %s: %s. Press Enter to continue or Ctrl-C to stop.\n", shardID, phase); err != nil {
+			return err
+		}
+		_, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read step confirmation: %w", err)
+		}
+		return nil
+	}
+}
+
+func init() {
+	orchestrateCmd.Flags().Bool("step", false, "Pause before each dispatch and wait for Enter")
+	orchestrateCmd.Flags().Bool("interactive", false, "Alias for --step")
+	orchestrateCmd.Flags().Duration("timeout", 2*time.Hour, "Maximum wait per phase before exiting")
+	orchestrateCmd.Flags().Duration("poll-interval", 30*time.Second, "Polling interval while waiting for phase changes")
+	rootCmd.AddCommand(orchestrateCmd)
+}
