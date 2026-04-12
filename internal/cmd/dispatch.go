@@ -793,7 +793,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
 		b.WriteString("10. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
 		b.WriteString("   ```json\n")
-		b.WriteString(fmt.Sprintf("   {\"gate\": \"decomposition-review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<summary with spec-to-project-repo map and any tasks tagged completion_mode: direct>\"}\n", workItemID))
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"decomposition-review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<summary with spec-to-project-repo map and any tasks tagged `completion_mode: direct`>\"}\n", workItemID))
 		b.WriteString("   ```\n")
 		b.WriteString("   **Do NOT run `cobuild decompose` yourself** — the runner handles it after your session ends.\n\n")
 		b.WriteString("**CRITICAL — multi-project vs multi-repo (do not confuse these):**\n\n")
