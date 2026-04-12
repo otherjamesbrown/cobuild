@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -173,4 +176,207 @@ func RecordGateVerdict(
 		ReviewShardID: reviewID,
 		NextPhase:     nextPhase,
 	}, nil
+}
+
+// ValidateDecompositionTaskRepos ensures every child task of a design resolves
+// to exactly one repo before a passing decomposition gate is recorded.
+func ValidateDecompositionTaskRepos(ctx context.Context, cn connector.Connector, designID, fallbackProject string) error {
+	if cn == nil {
+		return fmt.Errorf("no connector configured")
+	}
+
+	if fallbackProject == "" {
+		design, err := cn.Get(ctx, designID)
+		if err == nil && design != nil {
+			fallbackProject = design.Project
+		}
+	}
+
+	edges, err := cn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return fmt.Errorf("list child tasks for %s: %w", designID, err)
+	}
+
+	var problems []string
+	for _, edge := range edges {
+		if edge.Type != "" && edge.Type != "task" {
+			continue
+		}
+
+		task, err := cn.Get(ctx, edge.ItemID)
+		if err != nil {
+			return fmt.Errorf("load child task %s: %w", edge.ItemID, err)
+		}
+		if task == nil || task.Type != "task" {
+			continue
+		}
+
+		if _, err := resolveTaskTargetRepo(ctx, cn, task, fallbackProject); err != nil {
+			problems = append(problems, fmt.Sprintf("%s (%s)", task.ID, err))
+		}
+	}
+
+	if len(problems) > 0 {
+		return fmt.Errorf("decomposition pass blocked: child tasks must resolve to exactly one repo: %s", strings.Join(problems, ", "))
+	}
+	return nil
+}
+
+func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *connector.WorkItem, fallbackProject string) (string, error) {
+	if task == nil {
+		return "", fmt.Errorf("missing task")
+	}
+
+	if repoValue, ok := metadataValue(task, "repo"); ok {
+		repos, err := normalizeRepoTargets(repoValue)
+		if err != nil {
+			return "", err
+		}
+		if len(repos) != 1 {
+			return "", fmt.Errorf("repo metadata is ambiguous")
+		}
+		if _, err := config.RepoForProject(repos[0]); err != nil {
+			return "", fmt.Errorf("repo metadata references unknown repo %q", repos[0])
+		}
+		return repos[0], nil
+	}
+
+	if cn != nil {
+		repo, err := cn.GetMetadata(ctx, task.ID, "repo")
+		if err != nil {
+			return "", fmt.Errorf("read repo metadata: %w", err)
+		}
+		repo = strings.TrimSpace(repo)
+		if repo != "" {
+			repos, err := normalizeRepoTargets(repo)
+			if err != nil {
+				return "", err
+			}
+			if len(repos) != 1 {
+				return "", fmt.Errorf("repo metadata is ambiguous")
+			}
+			if _, err := config.RepoForProject(repos[0]); err != nil {
+				return "", fmt.Errorf("repo metadata references unknown repo %q", repos[0])
+			}
+			return repos[0], nil
+		}
+	}
+
+	project := strings.TrimSpace(task.Project)
+	if project == "" {
+		project = strings.TrimSpace(fallbackProject)
+	}
+	if project == "" {
+		return "", fmt.Errorf("missing repo metadata and no project fallback is available")
+	}
+
+	repos, err := reposForProject(project)
+	if err != nil {
+		return "", fmt.Errorf("resolve repos for project %q: %w", project, err)
+	}
+	switch len(repos) {
+	case 0:
+		return "", fmt.Errorf("missing repo metadata and project %q has no registered repos", project)
+	case 1:
+		return repos[0], nil
+	default:
+		return "", fmt.Errorf("missing repo metadata and project %q maps to multiple repos (%s)", project, strings.Join(repos, ", "))
+	}
+}
+
+func metadataValue(item *connector.WorkItem, key string) (any, bool) {
+	if item == nil || item.Metadata == nil {
+		return nil, false
+	}
+	value, ok := item.Metadata[key]
+	if !ok || value == nil {
+		return nil, false
+	}
+	return value, true
+}
+
+func normalizeRepoTargets(raw any) ([]string, error) {
+	switch v := raw.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return normalizeRepoString(v)
+	case []string:
+		return cleanRepoList(v), nil
+	case []any:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			s := strings.TrimSpace(fmt.Sprintf("%v", item))
+			if s != "" {
+				values = append(values, s)
+			}
+		}
+		return cleanRepoList(values), nil
+	default:
+		s := strings.TrimSpace(fmt.Sprintf("%v", raw))
+		if s == "" {
+			return nil, nil
+		}
+		return []string{s}, nil
+	}
+}
+
+func normalizeRepoString(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		var parsed []string
+		if err := json.Unmarshal([]byte(value), &parsed); err == nil {
+			return cleanRepoList(parsed), nil
+		}
+		var parsedAny []any
+		if err := json.Unmarshal([]byte(value), &parsedAny); err == nil {
+			return normalizeRepoTargets(parsedAny)
+		}
+	}
+
+	var values []string
+	if strings.Contains(value, ",") {
+		values = strings.Split(value, ",")
+	} else {
+		values = strings.Fields(value)
+	}
+	return cleanRepoList(values), nil
+}
+
+func cleanRepoList(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func reposForProject(project string) ([]string, error) {
+	reg, err := config.LoadRepoRegistry()
+	if err != nil {
+		return nil, err
+	}
+
+	var repos []string
+	for name, entry := range reg.Repos {
+		if readProjectConfigFromYAML(entry.Path).Project == project {
+			repos = append(repos, name)
+		}
+	}
+	slices.Sort(repos)
+	return repos, nil
 }

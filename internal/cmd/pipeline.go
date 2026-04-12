@@ -445,6 +445,11 @@ var decomposeCmd = &cobra.Command{
 
 		var result *GateVerdictResult
 		if cbStore != nil {
+			if verdict == "pass" {
+				if err := ValidateDecompositionTaskRepos(ctx, conn, designID, projectName); err != nil {
+					return err
+				}
+			}
 			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, "decomposition-review", verdict, content, 0, pCfg)
 		} else {
 			return fmt.Errorf("no store configured")
