@@ -241,6 +241,9 @@ func (f *reviewFakeStore) GetSession(_ context.Context, taskID string) (*store.S
 func (f *reviewFakeStore) ListSessions(context.Context, string) ([]store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+func (f *reviewFakeStore) ListRunningSessions(context.Context, string) ([]store.SessionRecord, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 func (f *reviewFakeStore) GetRunStatusCounts(context.Context, string) (map[string]int, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -506,6 +509,7 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 	waitTrue := true
 	cfg.Review.PostComments = &postTrue
 	cfg.Review.WaitForCI = &waitTrue
+	cfg.Review.WaitForCI = &postTrue
 	reviewConfigLoader = func() *config.Config { return cfg }
 
 	reviewer := &stubReviewer{
@@ -606,6 +610,7 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 	waitTrue := true
 	cfg.Review.PostComments = &postTrue
 	cfg.Review.WaitForCI = &waitTrue
+	cfg.Review.WaitForCI = &postTrue
 	reviewConfigLoader = func() *config.Config { return cfg }
 
 	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {

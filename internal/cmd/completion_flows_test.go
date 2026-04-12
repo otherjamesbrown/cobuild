@@ -748,6 +748,10 @@ func (f *completionFakeStore) ListSessions(_ context.Context, _ string) ([]store
 	return nil, nil
 }
 
+func (f *completionFakeStore) ListRunningSessions(_ context.Context, _ string) ([]store.SessionRecord, error) {
+	return nil, nil
+}
+
 func (f *completionFakeStore) GetRunStatusCounts(_ context.Context, _ string) (map[string]int, error) {
 	return nil, nil
 }

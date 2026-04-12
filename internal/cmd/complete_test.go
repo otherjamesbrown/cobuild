@@ -327,9 +327,11 @@ func ensureDirMap(in map[string][]connector.Edge) map[string][]connector.Edge {
 }
 
 type fakeStore struct {
-	runs  map[string]*store.PipelineRun
-	gates []store.PipelineGateInput
-	ended map[string]store.SessionResult
+	runs            map[string]*store.PipelineRun
+	gates           []store.PipelineGateInput
+	ended           map[string]store.SessionResult
+	runningSessions []store.SessionRecord
+	lastProject     string
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
 	tasks []store.PipelineTaskRecord
@@ -428,6 +430,11 @@ func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.Sessi
 
 func (f *fakeStore) ListSessions(ctx context.Context, designID string) ([]store.SessionRecord, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) ListRunningSessions(ctx context.Context, project string) ([]store.SessionRecord, error) {
+	f.lastProject = project
+	return append([]store.SessionRecord(nil), f.runningSessions...), nil
 }
 
 func (f *fakeStore) GetRunStatusCounts(ctx context.Context, project string) (map[string]int, error) {

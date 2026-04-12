@@ -567,14 +567,14 @@ func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*Session
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
-			status, error, worktree_path
+			status, error, worktree_path, tmux_session, tmux_window
 		FROM pipeline_sessions WHERE task_id = $1
 		ORDER BY started_at DESC LIMIT 1
 	`, taskID).Scan(
 		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
 		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
-		&r.Status, &r.Error, &r.WorktreePath,
+		&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
@@ -587,8 +587,8 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
-			status, error, worktree_path
-		FROM pipeline_sessions WHERE design_id = $1
+			status, error, worktree_path, tmux_session, tmux_window
+		FROM pipeline_sessions WHERE ($1 = '' OR design_id = $1)
 		ORDER BY started_at ASC
 	`, designID)
 	if err != nil {
@@ -603,7 +603,38 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
 			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
-			&r.Status, &r.Error, &r.WorktreePath,
+			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, r)
+	}
+	return sessions, rows.Err()
+}
+
+func (s *PostgresStore) ListRunningSessions(ctx context.Context, project string) ([]SessionRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
+			started_at, ended_at, duration_seconds, model, prompt_chars,
+			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
+			status, error, worktree_path, tmux_session, tmux_window
+		FROM pipeline_sessions
+		WHERE status = 'running' AND ($1 = '' OR project = $1)
+		ORDER BY started_at ASC
+	`, project)
+	if err != nil {
+		return nil, fmt.Errorf("list running sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionRecord
+	for rows.Next() {
+		var r SessionRecord
+		if err := rows.Scan(
+			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
+			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
+			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
 		); err != nil {
 			return nil, err
 		}
