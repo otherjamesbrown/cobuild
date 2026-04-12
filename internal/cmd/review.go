@@ -16,6 +16,7 @@ import (
 )
 
 const geminiBotLogin = "gemini-code-assist[bot]"
+const directReviewPassBody = "Direct-mode task, no PR review required"
 
 var processReviewCmd = &cobra.Command{
 	Use:   "process-review <task-id>",
@@ -53,7 +54,35 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			}
 		}
 		if prURL == "" {
-			return fmt.Errorf("no PR URL for task %s", taskID)
+			fmt.Printf("Task %s has no PR URL. Treating as direct-mode review.\n", taskID)
+
+			if dryRun {
+				if task.Status == "closed" {
+					fmt.Println("[dry-run] Task already closed. Would reconcile direct-mode state only.")
+				} else {
+					fmt.Printf("[dry-run] Would record synthetic pass gate: %q\n", directReviewPassBody)
+					fmt.Println("[dry-run] Would close task without external PR review.")
+				}
+				return nil
+			}
+
+			if task.Status != "closed" && cbStore != nil {
+				repoRoot := findRepoRoot()
+				pCfg, _ := config.LoadConfig(repoRoot)
+				_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, pCfg)
+				if gateErr != nil {
+					fmt.Printf("Warning: failed to record synthetic gate verdict: %v\n", gateErr)
+				}
+			}
+
+			reconciled, err := reconcileReviewedTask(ctx, taskID)
+			if err != nil {
+				return err
+			}
+			if reconciled {
+				printNextStep(taskID, "merged", "process-review")
+			}
+			return nil
 		}
 
 		// Extract owner/repo and PR number from URL
@@ -76,49 +105,8 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			state := strings.TrimSpace(string(stateOut))
 			if state == "MERGED" {
 				fmt.Printf("PR already merged for %s. Reconciling local state.\n", taskID)
-
-				// Close the task shard if it isn't already
-				item, _ := conn.Get(ctx, taskID)
-				if item != nil && item.Status != "closed" {
-					if err := conn.UpdateStatus(ctx, taskID, "closed"); err != nil {
-						fmt.Printf("  Warning: failed to close task: %v\n", err)
-					} else {
-						fmt.Printf("  Task %s → closed.\n", taskID)
-					}
-				}
-
-				// Clean up the worktree if it still exists
-				wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
-				if wtPath != "" {
-					archiveSessionLogs(wtPath, taskID)
-					repoForCleanup, _ := config.RepoForProject(projectName)
-					if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
-						fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
-					} else {
-						fmt.Println("  Worktree cleaned up.")
-					}
-				}
-
-				// Advance the pipeline phase if all siblings are now closed
-				edges, _ := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
-				if len(edges) > 0 {
-					designID := edges[0].ItemID
-					siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
-					if err == nil {
-						allDone := true
-						for _, s := range siblings {
-							if s.Status != "closed" {
-								allDone = false
-								break
-							}
-						}
-						if allDone && cbStore != nil {
-							fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-							if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-								fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-							}
-						}
-					}
+				if _, err := reconcileReviewedTask(ctx, taskID); err != nil {
+					return err
 				}
 
 				printNextStep(taskID, "merged", "process-review")
@@ -455,6 +443,64 @@ func buildVerdictBody(verdict string, findings []reviewFinding, ci ciCheckResult
 
 	fmt.Fprintf(&b, "**Verdict:** %s\n", verdict)
 	return b.String()
+}
+
+func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
+	reconciled := false
+
+	item, err := conn.Get(ctx, taskID)
+	if err != nil {
+		return false, fmt.Errorf("reconcile task %s: %w", taskID, err)
+	}
+	if item != nil && item.Status != "closed" {
+		if err := conn.UpdateStatus(ctx, taskID, "closed"); err != nil {
+			fmt.Printf("  Warning: failed to close task: %v\n", err)
+		} else {
+			reconciled = true
+			fmt.Printf("  Task %s → closed.\n", taskID)
+		}
+	}
+
+	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	if wtPath != "" {
+		archiveSessionLogs(wtPath, taskID)
+		repoForCleanup, _ := config.RepoForProject(projectName)
+		if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
+			fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
+		} else {
+			reconciled = true
+			fmt.Println("  Worktree cleaned up.")
+		}
+	}
+
+	edges, _ := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+	if len(edges) == 0 {
+		return reconciled, nil
+	}
+
+	designID := edges[0].ItemID
+	siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return reconciled, nil
+	}
+
+	allDone := true
+	for _, s := range siblings {
+		if s.Status != "closed" {
+			allDone = false
+			break
+		}
+	}
+	if allDone && cbStore != nil {
+		fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
+		if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
+			fmt.Printf("  Warning: failed to advance phase: %v\n", err)
+		} else {
+			reconciled = true
+		}
+	}
+
+	return reconciled, nil
 }
 
 func doMerge(ctx context.Context, taskID, prURL string) error {

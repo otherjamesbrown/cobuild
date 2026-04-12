@@ -91,7 +91,8 @@ Run on a specific events.jsonl file or scans all session archives.`,
 		fmt.Printf("\nTotal estimated waste: ~%s tokens\n", formatTokensShort(totalWasted))
 
 		if totalWasted > 10000 {
-			fmt.Println("\nSuggestions:")
+			fmt.Println()
+			fmt.Println("Suggestions:")
 			seen := make(map[string]bool)
 			for _, f := range allFlags {
 				if !seen[f.Pattern] {
