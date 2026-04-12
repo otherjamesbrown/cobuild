@@ -54,7 +54,8 @@ Use --project to filter to one project. Use --json for structured output.`,
 			ORDER BY pipelines DESC
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Projects\n")
+			fmt.Println("## Projects")
+			fmt.Println()
 			fmt.Printf("%-12s %8s %8s %10s %10s\n", "PROJECT", "TOTAL", "ACTIVE", "COMPLETED", "MODE")
 			fmt.Printf("%-12s %8s %8s %10s %10s\n", "-------", "-----", "------", "---------", "----")
 			for rows.Next() {
@@ -81,7 +82,8 @@ Use --project to filter to one project. Use --json for structured output.`,
 			ORDER BY pr.project, total DESC
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Gate Verdicts\n")
+			fmt.Println("## Gate Verdicts")
+			fmt.Println()
 			fmt.Printf("%-12s %-24s %6s %6s %6s %8s\n", "PROJECT", "GATE", "TOTAL", "PASS", "FAIL", "RATE")
 			fmt.Printf("%-12s %-24s %6s %6s %6s %8s\n", "-------", "----", "-----", "----", "----", "----")
 			for rows.Next() {
@@ -111,7 +113,8 @@ Use --project to filter to one project. Use --json for structured output.`,
 			ORDER BY project, sessions DESC
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Agent Sessions\n")
+			fmt.Println("## Agent Sessions")
+			fmt.Println()
 			fmt.Printf("%-12s %-14s %5s %5s %5s %5s %8s %8s %6s %7s\n",
 				"PROJECT", "PHASE", "TOTAL", "DONE", "RUN", "FAIL", "AVG(s)", "MAX(s)", "FILES", "COMMITS")
 			fmt.Printf("%-12s %-14s %5s %5s %5s %5s %8s %8s %6s %7s\n",
@@ -147,7 +150,8 @@ Use --project to filter to one project. Use --json for structured output.`,
 			LIMIT 20
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Active Pipelines\n")
+			fmt.Println("## Active Pipelines")
+			fmt.Println()
 			fmt.Printf("%-16s %-12s %-14s %-10s %6s %s\n",
 				"ID", "PROJECT", "PHASE", "MODE", "TASKS", "LAST ACTIVITY")
 			fmt.Printf("%-16s %-12s %-14s %-10s %6s %s\n",
@@ -184,7 +188,8 @@ Use --project to filter to one project. Use --json for structured output.`,
 			ORDER BY total_cost DESC
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Token Usage\n")
+			fmt.Println("## Token Usage")
+			fmt.Println()
 			fmt.Printf("%-12s %6s %10s %12s %10s %10s %8s\n",
 				"PROJECT", "SESS", "OUTPUT", "CACHE READ", "AVG CTX", "TURNS", "COST")
 			fmt.Printf("%-12s %6s %10s %12s %10s %10s %8s\n",

@@ -24,7 +24,8 @@ var adminStatsCmd = &cobra.Command{
 		defer conn.Close(ctx)
 
 		fmt.Println("CoBuild Database Stats")
-		fmt.Println("======================\n")
+		fmt.Println("======================")
+		fmt.Println()
 
 		fmt.Printf("%-30s %8s %10s\n", "Table", "Rows", "Size")
 		fmt.Printf("%-30s %8s %10s\n", "-----", "----", "----")
