@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 )
 
 const (
@@ -16,7 +18,30 @@ const (
 	SeverityNit        = "nit"
 )
 
-// ReviewInput is the shared payload all reviewer implementations consume.
+// ReviewResult is the structured outcome returned by a reviewer.
+type ReviewResult struct {
+	Verdict  string    `json:"verdict"`
+	Findings []Finding `json:"findings"`
+	Summary  string    `json:"summary"`
+}
+
+// Finding is a single review issue.
+type Finding struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Severity string `json:"severity"`
+	Body     string `json:"body"`
+}
+
+// Reviewer evaluates a PR against its task and design context.
+type Reviewer interface {
+	Review(ctx context.Context, input ReviewInput) (*ReviewResult, error)
+}
+
+// ReviewInput is the provider-neutral payload used by built-in reviewers.
+// Fields from the original implementation (Diff, PRURL, DesignContext) are
+// retained for backward compatibility with existing reviewer implementations.
+// The newer fields (PRDiff, ParentDesign*) are used by BuildInput and Prompt.
 type ReviewInput struct {
 	TaskID             string
 	TaskTitle          string
@@ -25,26 +50,115 @@ type ReviewInput struct {
 	Diff               string
 	AcceptanceCriteria []string
 	PRURL              string
+
+	// Newer fields used by BuildInput / Prompt.
+	ParentDesignID      string
+	ParentDesignTitle   string
+	ParentDesignContext string
+	PRDiff              string
 }
 
-// ReviewResult is the common structured output from all reviewer implementations.
-type ReviewResult struct {
-	Verdict  string
-	Findings []Finding
-	Summary  string
+// BuildInput loads the task and its parent design through the connector and
+// combines them with the PR diff into a provider-neutral review input.
+func BuildInput(ctx context.Context, conn connector.Connector, taskID, prDiff string) (ReviewInput, error) {
+	if conn == nil {
+		return ReviewInput{}, fmt.Errorf("nil connector")
+	}
+
+	task, err := conn.Get(ctx, taskID)
+	if err != nil {
+		return ReviewInput{}, fmt.Errorf("get task %s: %w", taskID, err)
+	}
+
+	input := ReviewInput{
+		TaskID:             task.ID,
+		TaskTitle:          task.Title,
+		TaskSpec:           strings.TrimSpace(task.Content),
+		AcceptanceCriteria: ExtractAcceptanceCriteria(task.Content),
+		PRDiff:             strings.TrimSpace(prDiff),
+	}
+
+	parentEdges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+	if err == nil && len(parentEdges) > 0 {
+		parent, parentErr := conn.Get(ctx, parentEdges[0].ItemID)
+		if parentErr == nil {
+			input.ParentDesignID = parent.ID
+			input.ParentDesignTitle = parent.Title
+			input.ParentDesignContext = strings.TrimSpace(parent.Content)
+		}
+	}
+
+	return input, nil
 }
 
-// Finding is a single actionable review item.
-type Finding struct {
-	File     string
-	Line     int
-	Severity string
-	Body     string
-}
+// Prompt returns the structured review prompt shared by built-in providers.
+func Prompt(input ReviewInput) string {
+	var b strings.Builder
 
-// Reviewer runs a review and returns a structured verdict.
-type Reviewer interface {
-	Review(ctx context.Context, input ReviewInput) (*ReviewResult, error)
+	b.WriteString("You are reviewing a PR for a CoBuild pipeline task.\n\n")
+	b.WriteString("Return JSON only.\n")
+	b.WriteString("Use this exact shape:\n")
+	b.WriteString("{\"verdict\":\"approve\"|\"request-changes\",\"findings\":[{\"file\":\"path/to/file\",\"line\":123,\"severity\":\"critical\"|\"suggestion\"|\"nit\",\"body\":\"issue and fix\"}],\"summary\":\"short summary\"}\n\n")
+
+	b.WriteString("## Task\n")
+	if input.TaskTitle != "" {
+		b.WriteString(input.TaskTitle)
+		b.WriteString("\n")
+	}
+	if input.TaskID != "" {
+		b.WriteString("Task ID: ")
+		b.WriteString(input.TaskID)
+		b.WriteString("\n")
+	}
+	if input.TaskSpec != "" {
+		b.WriteString("\n")
+		b.WriteString(input.TaskSpec)
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n## Acceptance Criteria\n")
+	if len(input.AcceptanceCriteria) == 0 {
+		b.WriteString("None provided.\n")
+	} else {
+		for _, criterion := range input.AcceptanceCriteria {
+			b.WriteString("- ")
+			b.WriteString(criterion)
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n## Parent Design\n")
+	if input.ParentDesignTitle != "" {
+		b.WriteString(input.ParentDesignTitle)
+		b.WriteString("\n")
+	}
+	if input.ParentDesignID != "" {
+		b.WriteString("Design ID: ")
+		b.WriteString(input.ParentDesignID)
+		b.WriteString("\n")
+	}
+	if input.ParentDesignContext != "" {
+		b.WriteString("\n")
+		b.WriteString(input.ParentDesignContext)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("None provided.\n")
+	}
+
+	b.WriteString("\n## PR Diff\n")
+	if input.PRDiff != "" {
+		b.WriteString(input.PRDiff)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("No diff provided.\n")
+	}
+
+	b.WriteString("\n## Instructions\n")
+	b.WriteString("Review the PR against the task spec, acceptance criteria, and parent design.\n")
+	b.WriteString("Approve only if the implementation matches the spec and there are no critical issues.\n")
+	b.WriteString("Each finding must include file, line, severity, and a concrete explanation of what should change.\n")
+
+	return strings.TrimSpace(b.String())
 }
 
 type rawReviewResult struct {
