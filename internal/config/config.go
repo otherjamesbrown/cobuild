@@ -327,7 +327,7 @@ func DefaultConfig() *Config {
 			MaxConcurrent:  3,
 			TmuxSession:    "", // empty = auto: cobuild-<project>
 			DefaultRuntime: "claude-code",
-			WaveStrategy:   WaveStrategySerial,
+			WaveStrategy:   WaveStrategyParallel,
 			Runtimes: map[string]RuntimeCfg{
 				"claude-code": {Model: "sonnet"},
 				"codex":       {Model: "gpt-5.4"},

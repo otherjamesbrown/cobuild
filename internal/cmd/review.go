@@ -614,6 +614,7 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 	if err := conn.UpdateStatus(ctx, taskID, "in_progress"); err != nil {
 		fmt.Printf("Warning: failed to set in_progress: %v\n", err)
 	}
+	syncPipelineTaskStatus(ctx, taskID, "in_progress")
 
 	// Re-dispatch
 	fmt.Printf("Re-dispatching %s for fixes...\n", taskID)

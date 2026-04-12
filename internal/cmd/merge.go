@@ -85,6 +85,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		} else {
 			fmt.Printf("  Task %s → closed.\n", taskID)
 		}
+		syncPipelineTaskStatus(ctx, taskID, "closed")
 
 		// Archive session logs before cleanup
 		wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
@@ -99,31 +100,8 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			}
 		}
 
-		// Check if all sibling tasks are done → advance to done phase
-		edges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
-		if err == nil && len(edges) > 0 {
-			designID := edges[0].ItemID
-			siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
-			if err == nil {
-				allDone := true
-				for _, s := range siblings {
-					if s.Status != "closed" {
-						allDone = false
-						break
-					}
-				}
-				if allDone {
-					fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-					if cbStore != nil {
-						if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-							fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-						}
-						if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
-							fmt.Printf("  Warning: failed to mark completed: %v\n", err)
-						}
-					}
-				}
-			}
+		if err := handlePostCloseProgress(ctx, taskID); err != nil {
+			return err
 		}
 
 		printNextStep(taskID, "review", "merge")

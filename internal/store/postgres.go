@@ -362,6 +362,47 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 	return tasks, rows.Err()
 }
 
+func (s *PostgresStore) ListTasksByDesign(ctx context.Context, designID string) ([]PipelineTaskRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		FROM pipeline_tasks WHERE design_id = $1
+		ORDER BY wave NULLS LAST, created_at ASC
+	`, designID)
+	if err != nil {
+		return nil, fmt.Errorf("list design pipeline tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []PipelineTaskRecord
+	for rows.Next() {
+		var t PipelineTaskRecord
+		if err := rows.Scan(
+			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+func (s *PostgresStore) GetTaskByShardID(ctx context.Context, taskShardID string) (*PipelineTaskRecord, error) {
+	var t PipelineTaskRecord
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		FROM pipeline_tasks WHERE task_shard_id = $1
+	`, taskShardID).Scan(
+		&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get pipeline task by shard: %w", err)
+	}
+	return &t, nil
+}
+
 func (s *PostgresStore) GetTasksByWave(ctx context.Context, designID string, wave int) ([]PipelineTaskRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
