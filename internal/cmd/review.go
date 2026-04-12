@@ -533,10 +533,44 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	}
 	fmt.Println("  Merged.")
 
+	// Run kb-sync if the project has it enabled
+	maybeRunKBSync(ctx, taskID)
+
 	// Close task
 	closeTaskAndAdvance(ctx, taskID)
 
 	return nil
+}
+
+// maybeRunKBSync checks if the project has kb_sync enabled and runs it
+// after a successful PR merge. Non-blocking — failures are logged but
+// don't prevent task closure.
+// maybeRunKBSync checks if the project has kb_sync enabled and runs it
+// after a successful PR merge. Non-blocking — failures are logged but
+// don't prevent task closure.
+func maybeRunKBSync(ctx context.Context, taskID string) {
+	cfg := reviewConfigLoader()
+	if cfg == nil || !cfg.KBSync.Enabled {
+		return
+	}
+	fmt.Printf("  Running kb-sync for %s...\n", taskID)
+	args := []string{"kb-sync", taskID}
+	if cfg.KBSync.RootArticle != "" {
+		args = append(args, "--root", cfg.KBSync.RootArticle)
+	}
+	out, err := reviewCommandCombinedOutput(ctx, "cobuild", args...)
+	if err != nil {
+		fmt.Printf("  kb-sync warning: %v\n%s\n", err, string(out))
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	start := len(lines) - 3
+	if start < 0 {
+		start = 0
+	}
+	for _, l := range lines[start:] {
+		fmt.Printf("  kb-sync: %s\n", l)
+	}
 }
 
 func doRequestChanges(ctx context.Context, taskID string, findings []reviewFinding, ci ciCheckResult, reviewSource string) error {

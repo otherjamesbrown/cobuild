@@ -90,8 +90,18 @@ type Config struct {
 	Storage         StoreCfg                  `yaml:"storage,omitempty"`
 	Connectors      ConnectorsCfg             `yaml:"connectors,omitempty"`
 	Poller          PollerCfg                 `yaml:"poller,omitempty"`
+	KBSync          KBSyncCfg                 `yaml:"kb_sync,omitempty"`
 	SkillsDir       string                    `yaml:"skills_dir,omitempty"`
 	Phases          map[string]PhaseConfig    `yaml:"phases,omitempty"`
+}
+
+// KBSyncCfg controls automatic KB synchronisation after PR merges.
+// Projects opt in by setting enabled: true and optionally specifying a
+// root KB article. If root_article is empty, kb-sync searches all KB
+// articles in the project.
+type KBSyncCfg struct {
+	Enabled     bool   `yaml:"enabled,omitempty"`
+	RootArticle string `yaml:"root_article,omitempty"` // shard ID of the KB root (optional)
 }
 
 // PollerCfg controls the autonomous pipeline poller.
@@ -598,6 +608,13 @@ func MergeConfig(base, override *Config) *Config {
 	}
 	if override.Monitoring.Model != "" {
 		out.Monitoring.Model = override.Monitoring.Model
+	}
+
+	// KB Sync — override wins wholesale if enabled is set
+	if override.KBSync.Enabled {
+		out.KBSync = override.KBSync
+	} else if base.KBSync.Enabled {
+		out.KBSync = base.KBSync
 	}
 
 	// Deploy

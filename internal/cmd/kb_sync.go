@@ -68,6 +68,16 @@ Gate verdict is non-blocking: all-rolled-back still advances the work item to do
 		ctx := context.Background()
 		wiID := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		rootArticle, _ := cmd.Flags().GetString("root")
+
+		// If --root not specified, check project config
+		if rootArticle == "" {
+			repoRoot := findRepoRoot()
+			cfg, _ := config.LoadConfig(repoRoot)
+			if cfg != nil && cfg.KBSync.RootArticle != "" {
+				rootArticle = cfg.KBSync.RootArticle
+			}
+		}
 
 		if conn == nil {
 			return fmt.Errorf("no connector configured")
@@ -100,8 +110,8 @@ Gate verdict is non-blocking: all-rolled-back still advances the work item to do
 			return recordKBSyncVerdict(ctx, wiID, kbSyncVerdictNoChanges, "no concepts extractable from PR diff")
 		}
 
-		// 5. Find affected KB articles
-		affectedArticles := findAffectedKBArticles(ctx, concepts, prDiff)
+		// 5. Find affected KB articles (scoped to root article children if configured)
+		affectedArticles := findAffectedKBArticles(ctx, concepts, prDiff, rootArticle)
 		if len(affectedArticles) == 0 {
 			fmt.Println("No KB articles affected — recording no-changes-needed.")
 			return recordKBSyncVerdict(ctx, wiID, kbSyncVerdictNoChanges, "no affected KB articles found")
@@ -307,16 +317,36 @@ func extractConcepts(diff, body string) []string {
 }
 
 // findAffectedKBArticles finds KB articles related to the given concepts.
-func findAffectedKBArticles(ctx context.Context, concepts []string, diff string) []string {
+// If rootArticle is non-empty, results are filtered to children of that article.
+func findAffectedKBArticles(ctx context.Context, concepts []string, diff string, rootArticle string) []string {
+	// If a root article is specified, build an allowlist of its children
+	var allowedArticles map[string]bool
+	if rootArticle != "" && conn != nil {
+		edges, err := conn.GetEdges(ctx, rootArticle, "incoming", []string{"child-of"})
+		if err == nil {
+			allowedArticles = make(map[string]bool, len(edges)+1)
+			allowedArticles[rootArticle] = true
+			for _, e := range edges {
+				allowedArticles[e.ItemID] = true
+			}
+			fmt.Printf("kb-sync: scoped to %d articles under root %s\n", len(allowedArticles), rootArticle)
+		}
+	}
+
 	seen := make(map[string]bool)
 	var articles []string
 
 	addArticle := func(id string) {
 		id = strings.TrimSpace(id)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			articles = append(articles, id)
+		if id == "" || seen[id] {
+			return
 		}
+		// If scoped to a root, only include articles in the allowlist
+		if allowedArticles != nil && !allowedArticles[id] {
+			return
+		}
+		seen[id] = true
+		articles = append(articles, id)
 	}
 
 	// Semantic search for each concept batch (group to reduce calls)
@@ -640,5 +670,6 @@ func recordKBSyncVerdict(ctx context.Context, wiID string, verdict kbSyncGateVer
 
 func init() {
 	kbSyncCmd.Flags().Bool("dry-run", false, "Show what would be updated without executing")
+	kbSyncCmd.Flags().String("root", "", "Root KB article shard ID — scope updates to its children (overrides config)")
 	rootCmd.AddCommand(kbSyncCmd)
 }

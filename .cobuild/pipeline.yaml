@@ -6,3 +6,7 @@ dispatch:
     default_runtime: codex
     max_concurrent: 3
     model: sonnet
+
+kb_sync:
+    enabled: true
+    root_article: cb-5ae167
