@@ -509,10 +509,13 @@ func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
 	}
 	if allDone && cbStore != nil {
 		fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-		if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-			fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-		} else {
+		if run, err := cbStore.GetRun(ctx, designID); err == nil {
+			repoRoot, _ := config.RepoForProject(projectName)
+			pCfg, _ := config.LoadConfig(repoRoot)
+			advanceDesignToCompleted(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase)
 			reconciled = true
+		} else {
+			fmt.Printf("  Warning: no pipeline run for %s: %v\n", designID, err)
 		}
 	}
 
@@ -535,6 +538,10 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
 	}
 	fmt.Println("  Merged.")
+
+	// Rebase sibling branches onto updated main to prevent merge conflicts
+	// on subsequent wave PRs (cb-7dd0d4).
+	rebaseSiblingBranches(ctx, taskID)
 
 	// Run kb-sync if the project has it enabled
 	maybeRunKBSync(ctx, taskID)
@@ -573,6 +580,93 @@ func maybeRunKBSync(ctx context.Context, taskID string) {
 	}
 	for _, l := range lines[start:] {
 		fmt.Printf("  kb-sync: %s\n", l)
+	}
+}
+
+// rebaseSiblingBranches rebases open sibling branches onto main after a PR
+// merge to prevent merge conflicts on subsequent waves (cb-7dd0d4).
+// Best-effort: failures are logged but don't block task closure.
+func rebaseSiblingBranches(ctx context.Context, mergedTaskID string) {
+	if conn == nil {
+		return
+	}
+
+	// Find parent design
+	edges, err := conn.GetEdges(ctx, mergedTaskID, "outgoing", []string{"child-of"})
+	if err != nil || len(edges) == 0 {
+		return
+	}
+	designID := edges[0].ItemID
+
+	// Find sibling tasks
+	siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return
+	}
+
+	// Resolve the repo for this design
+	repoRoot := ""
+	if run, err := cbStore.GetRun(ctx, designID); err == nil {
+		repoRoot, _ = config.RepoForProject(run.Project)
+	}
+	if repoRoot == "" {
+		return
+	}
+
+	// Fetch latest main
+	exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", "origin", "main").Run()
+
+	rebased := 0
+	for _, s := range siblings {
+		if s.ItemID == mergedTaskID || s.Status == "closed" {
+			continue
+		}
+		if s.Type != "" && s.Type != "task" {
+			continue
+		}
+
+		// Check if this sibling has a worktree with a branch
+		wtPath := ""
+		if conn != nil {
+			wtPath, _ = conn.GetMetadata(ctx, s.ItemID, "worktree_path")
+		}
+		if wtPath == "" {
+			continue
+		}
+
+		// Get the branch name
+		branchOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "branch", "--show-current").Output()
+		if err != nil {
+			continue
+		}
+		branch := strings.TrimSpace(string(branchOut))
+		if branch == "" || branch == "main" {
+			continue
+		}
+
+		// Rebase onto origin/main
+		rebaseOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "rebase", "origin/main").CombinedOutput()
+		if err != nil {
+			// Abort failed rebase and skip — agent will need to handle conflicts
+			exec.CommandContext(ctx, "git", "-C", wtPath, "rebase", "--abort").Run()
+			fmt.Printf("  rebase %s: conflict (skipped)\n", s.ItemID)
+			continue
+		}
+		_ = rebaseOut
+
+		// Force-push the rebased branch
+		pushOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "push", "--force-with-lease").CombinedOutput()
+		if err != nil {
+			fmt.Printf("  rebase %s: push failed: %s\n", s.ItemID, strings.TrimSpace(string(pushOut)))
+			continue
+		}
+
+		rebased++
+		fmt.Printf("  rebased %s (%s)\n", s.ItemID, branch)
+	}
+
+	if rebased > 0 {
+		fmt.Printf("  Rebased %d sibling branch(es) onto main.\n", rebased)
 	}
 }
 

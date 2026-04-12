@@ -69,8 +69,26 @@ func TestDecomposePassAdvancesWhenChildTasksResolveToSingleRepo(t *testing.T) {
 
 	testConn := newFakeConnector()
 	testConn.addItem(&connector.WorkItem{ID: "design-2", Title: "design", Type: "design", Status: "open", Project: "single"})
-	testConn.addItem(&connector.WorkItem{ID: "cb-task-1", Title: "task 1", Type: "task", Status: "open", Project: "single"})
-	testConn.addItem(&connector.WorkItem{ID: "cb-task-2", Title: "task 2", Type: "task", Status: "open", Project: "single"})
+	testConn.addItem(&connector.WorkItem{
+		ID:      "cb-task-1",
+		Title:   "task 1",
+		Type:    "task",
+		Status:  "open",
+		Project: "single",
+		Metadata: map[string]any{
+			"repo": "repo-solo",
+		},
+	})
+	testConn.addItem(&connector.WorkItem{
+		ID:      "cb-task-2",
+		Title:   "task 2",
+		Type:    "task",
+		Status:  "open",
+		Project: "single",
+		Metadata: map[string]any{
+			"repo": "repo-solo",
+		},
+	})
 	testConn.setChildTasks("design-2", "cb-task-1", "cb-task-2")
 
 	testStore := newFakeStore()

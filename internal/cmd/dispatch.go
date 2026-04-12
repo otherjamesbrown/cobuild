@@ -57,7 +57,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		if task.Status == "in_progress" {
 			// Allow re-dispatch if --force or if there's no active tmux session
 			// (review feedback sets status back to in_progress for re-dispatch)
-			tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+			tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
 			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").Output()
 			hasWindow := false
 			for _, line := range strings.Split(string(windowOut), "\n") {
@@ -89,7 +89,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
 		}
 
-		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, projectName, cmd.ErrOrStderr())
+		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, resolveTaskProject(task), cmd.ErrOrStderr())
 		if err != nil {
 			return err
 		}
@@ -231,7 +231,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
 			currentPhase = "fix"
 			if cbStore != nil {
-				if err := cbStore.UpdateRunPhase(ctx, task.ID, "fix"); err != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, "investigate", "fix"); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
 				}
 			}
@@ -356,7 +356,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+		tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
 		if pCfg.Dispatch.TmuxSession != "" {
 			tmuxSession = pCfg.Dispatch.TmuxSession
 		}
@@ -655,13 +655,44 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		} else {
 			fmt.Printf("Dispatching %d tasks (parallel ready set) for %s:\n", len(ready), designID)
 		}
-		for _, candidate := range ready {
+		// Look up the parent design's pipeline run so we can register tasks
+		var pipelineID string
+		if cbStore != nil {
+			if run, err := cbStore.GetRun(ctx, designID); err == nil {
+				pipelineID = run.ID
+			}
+		}
+
+		for i, candidate := range ready {
 			taskID := candidate.TaskID
 			if dryRun {
 				fmt.Printf("  [dry-run] %s\n", taskID)
 				continue
 			}
-			// Run dispatch for each task via the existing dispatch command logic
+
+			// Register the task in pipeline_tasks so the orchestrator's
+			// implement loop can track it via ListTasksByDesign.
+			if cbStore != nil && pipelineID != "" {
+				wave := candidate.Wave
+				var wavePtr *int
+				if wave > 0 {
+					wavePtr = &wave
+				}
+				if err := cbStore.AddTask(ctx, pipelineID, taskID, designID, wavePtr); err != nil {
+					// Ignore duplicates — task may already be registered from a prior run
+					if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already exists") {
+						fmt.Printf("  Warning: failed to register task %s: %v\n", taskID, err)
+					}
+				}
+			}
+
+			// Run dispatch for each task via the existing dispatch command logic.
+			// Stagger dispatches by 3 seconds to avoid overwhelming the Codex
+			// app-server — simultaneous codex exec processes contend for the
+			// local server and later ones silently fail to start (cb-357c42).
+			if i > 0 {
+				time.Sleep(3 * time.Second)
+			}
 			fmt.Printf("  %s ", taskID)
 			dispatchArgs := []string{"dispatch", taskID}
 			subCmd, _, err := rootCmd.Find(dispatchArgs)
@@ -1011,6 +1042,30 @@ func reposForProject(reg *config.RepoRegistry, project string) []string {
 	}
 	sort.Strings(repos)
 	return repos
+}
+
+// resolveTaskProject returns the project name for a task, used for tmux
+// session naming and config resolution. Checks (in order): task.Project,
+// pipeline run project (from store), global projectName fallback.
+func resolveTaskProject(task *connector.WorkItem) string {
+	if task != nil && task.Project != "" {
+		return task.Project
+	}
+	// Check the pipeline run — it always has the correct project
+	if cbStore != nil && task != nil {
+		if run, err := cbStore.GetRun(context.Background(), task.ID); err == nil && run.Project != "" {
+			return run.Project
+		}
+		// Task might be a child — check parent design's run
+		if conn != nil {
+			if edges, err := conn.GetEdges(context.Background(), task.ID, "outgoing", []string{"child-of"}); err == nil && len(edges) > 0 {
+				if run, err := cbStore.GetRun(context.Background(), edges[0].ItemID); err == nil && run.Project != "" {
+					return run.Project
+				}
+			}
+		}
+	}
+	return projectName
 }
 
 // inferWorkflowFromType maps a work item to a workflow name.

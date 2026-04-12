@@ -143,7 +143,11 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 						startPhase = sp
 					}
 				}
-				_, err := cbStore.CreateRunWithMode(ctx, item.ID, projectName, startPhase, "autonomous")
+				itemProject := item.Project
+				if itemProject == "" {
+					itemProject = projectName // fallback to global
+				}
+				_, err := cbStore.CreateRunWithMode(ctx, item.ID, itemProject, startPhase, "autonomous")
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "  [auto] init %s failed: %v\n", item.ID, err)
 				}
@@ -161,7 +165,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 	}
 
 	stallTimeout := resolveStallTimeout(pCfg)
-	sessions, err := cbStore.ListRunningSessions(ctx, projectName)
+	sessions, err := cbStore.ListRunningSessions(ctx, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [error] list running sessions: %v\n", err)
 		return
@@ -278,7 +282,7 @@ func sessionTarget(session store.SessionRecord) (sessionName, windowName string)
 
 // pollActivePipelines checks each active pipeline and dispatches if no agent is working.
 func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Config, dryRun bool) {
-	runs, err := cbStore.ListRuns(ctx, projectName)
+	runs, err := cbStore.ListRuns(ctx, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [error] list runs: %v\n", err)
 		return
@@ -298,8 +302,15 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 
 		// Check if there's already an agent session running for this pipeline
 		if hasActiveSession(ctx, run.DesignID) {
-			fmt.Printf("  [%s] %s — agent running\n", run.Phase, run.DesignID)
+			fmt.Printf("  [%s] %s (%s) — agent running\n", run.Phase, run.DesignID, run.Project)
 			continue
+		}
+
+		// Resolve config for this run's project (not the global projectName)
+		runRepoRoot, _ := config.RepoForProject(run.Project)
+		runCfg, _ := config.LoadConfig(runRepoRoot)
+		if runCfg == nil {
+			runCfg = pCfg // fall back to global config
 		}
 
 		// Check phase — some phases need task-level dispatch, not design-level
@@ -308,13 +319,13 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 			// Check for child tasks that need dispatch
 			edges, _ := conn.GetEdges(ctx, run.DesignID, "incoming", []string{"child-of"})
 			if len(edges) > 0 {
-				dispatchReadyTasks(ctx, repoRoot, pCfg, run.DesignID, dryRun)
+				dispatchReadyTasks(ctx, runRepoRoot, runCfg, run.DesignID, dryRun)
 			} else {
 				// Standalone task — dispatch the item itself
 				if dryRun {
-					fmt.Printf("  [implement] %s — standalone task, would dispatch\n", run.DesignID)
+					fmt.Printf("  [implement] %s (%s) — standalone task, would dispatch\n", run.DesignID, run.Project)
 				} else {
-					fmt.Printf("  [implement] %s — dispatching standalone task\n", run.DesignID)
+					fmt.Printf("  [implement] %s (%s) — dispatching standalone task\n", run.DesignID, run.Project)
 					dispatchForPhase(ctx, run.DesignID)
 				}
 			}
@@ -322,9 +333,9 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 		case "design", "decompose", "investigate", "review", "done":
 			// Design-level dispatch — spawn agent for this phase
 			if dryRun {
-				fmt.Printf("  [%s] %s — would dispatch\n", run.Phase, run.DesignID)
+				fmt.Printf("  [%s] %s (%s) — would dispatch\n", run.Phase, run.DesignID, run.Project)
 			} else {
-				fmt.Printf("  [%s] %s — dispatching...\n", run.Phase, run.DesignID)
+				fmt.Printf("  [%s] %s (%s) — dispatching...\n", run.Phase, run.DesignID, run.Project)
 				dispatchForPhase(ctx, run.DesignID)
 			}
 
@@ -371,7 +382,13 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 				fmt.Printf("  [needs-review] %s — all tasks done, would advance %s to review\n", item.ID, designID)
 			} else {
 				fmt.Printf("  [needs-review] %s — all tasks done, advancing %s\n", item.ID, designID)
-				cbStore.UpdateRunPhase(ctx, designID, "review")
+				if run, err := cbStore.GetRun(ctx, designID); err == nil {
+					repoRoot, _ := config.RepoForProject(run.Project)
+					pCfg, _ := config.LoadConfig(repoRoot)
+					if _, err := advancePipelinePhase(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase); err != nil {
+						fmt.Printf("  Warning: could not advance %s: %v\n", designID, err)
+					}
+				}
 			}
 		} else {
 			// Check if this task's wave is complete — dispatch next wave
@@ -384,7 +401,14 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 
 // hasActiveSession checks if there's a running tmux window for this design.
 func hasActiveSession(ctx context.Context, designID string) bool {
-	tmuxSession := fmt.Sprintf("cobuild-%s", projectName)
+	// Try the run's project first, fall back to global projectName
+	runProject := projectName
+	if cbStore != nil {
+		if run, err := cbStore.GetRun(ctx, designID); err == nil && run.Project != "" {
+			runProject = run.Project
+		}
+	}
+	tmuxSession := fmt.Sprintf("cobuild-%s", runProject)
 
 	// Check for design-level window
 	out, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").CombinedOutput()

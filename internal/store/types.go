@@ -60,6 +60,7 @@ type PipelineGateInput struct {
 // PipelineRunStatus is an enriched view of a pipeline run for the status command.
 type PipelineRunStatus struct {
 	DesignID     string    `json:"design_id"`
+	Project      string    `json:"project"`
 	Phase        string    `json:"phase"`
 	Status       string    `json:"status"`
 	TaskTotal    int       `json:"task_total"`

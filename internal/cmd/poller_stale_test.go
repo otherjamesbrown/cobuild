@@ -63,8 +63,8 @@ func TestCheckStaleSessionsKillsOldRunningSession(t *testing.T) {
 		Monitoring: config.MonitoringCfg{StallTimeout: "30m"},
 	}, false)
 
-	if fs.lastProject != "test-project" {
-		t.Fatalf("ListRunningSessions project = %q, want test-project", fs.lastProject)
+	if fs.lastProject != "" {
+		t.Fatalf("ListRunningSessions project = %q, want empty (all projects)", fs.lastProject)
 	}
 	if killedTarget != "custom-session:cb-task" {
 		t.Fatalf("killed target = %q, want custom-session:cb-task", killedTarget)

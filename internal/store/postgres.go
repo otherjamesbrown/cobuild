@@ -190,6 +190,33 @@ func (s *PostgresStore) UpdateRunPhase(ctx context.Context, designID, phase stri
 	return nil
 }
 
+func (s *PostgresStore) AdvancePhase(ctx context.Context, designID, expectedCurrent, nextPhase string) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_runs
+		SET current_phase = $3, updated_at = NOW()
+		WHERE design_id = $1 AND current_phase = $2
+	`, designID, expectedCurrent, nextPhase)
+	if err != nil {
+		return fmt.Errorf("advance phase: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		// Distinguish "no such run" from "phase already changed"
+		var actual string
+		err := s.pool.QueryRow(ctx,
+			`SELECT current_phase FROM pipeline_runs WHERE design_id = $1`,
+			designID,
+		).Scan(&actual)
+		if err != nil {
+			return fmt.Errorf("no pipeline run for design %s", designID)
+		}
+		return fmt.Errorf(
+			"expected phase %q but pipeline is in %q: %w",
+			expectedCurrent, actual, ErrPhaseConflict,
+		)
+	}
+	return nil
+}
+
 func (s *PostgresStore) UpdateRunStatus(ctx context.Context, designID, status string) error {
 	result, err := s.pool.Exec(ctx, `
 		UPDATE pipeline_runs SET status = $2, updated_at = NOW() WHERE design_id = $1
@@ -203,10 +230,45 @@ func (s *PostgresStore) UpdateRunStatus(ctx context.Context, designID, status st
 	return nil
 }
 
+func (s *PostgresStore) ResetRun(ctx context.Context, designID, phase string) error {
+	// Look up the pipeline run ID for cascade deletes.
+	var pipelineID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id FROM pipeline_runs WHERE design_id = $1
+	`, designID).Scan(&pipelineID)
+	if err != nil {
+		return fmt.Errorf("no pipeline run for design %s: %w", designID, err)
+	}
+
+	// Delete dependent records: sessions, tasks, gates.
+	for _, q := range []string{
+		`DELETE FROM pipeline_session_events WHERE session_id IN (SELECT id FROM pipeline_sessions WHERE pipeline_id = $1)`,
+		`DELETE FROM pipeline_sessions WHERE pipeline_id = $1`,
+		`DELETE FROM pipeline_tasks WHERE pipeline_id = $1`,
+		`DELETE FROM pipeline_gates WHERE pipeline_id = $1`,
+	} {
+		if _, err := s.pool.Exec(ctx, q, pipelineID); err != nil {
+			return fmt.Errorf("reset run (cleanup): %w", err)
+		}
+	}
+
+	// Reset the run itself.
+	_, err = s.pool.Exec(ctx, `
+		UPDATE pipeline_runs
+		SET current_phase = $2, status = 'active', updated_at = NOW()
+		WHERE design_id = $1
+	`, designID, phase)
+	if err != nil {
+		return fmt.Errorf("reset run (update): %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
 			pr.design_id,
+			pr.project,
 			pr.current_phase,
 			pr.status,
 			COALESCE(tc.total, 0),
@@ -233,7 +295,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	var runs []PipelineRunStatus
 	for rows.Next() {
 		var r PipelineRunStatus
-		if err := rows.Scan(&r.DesignID, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
+		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
 			return nil, err
 		}
 		runs = append(runs, r)
@@ -641,6 +703,18 @@ func (s *PostgresStore) ListRunningSessions(ctx context.Context, project string)
 		sessions = append(sessions, r)
 	}
 	return sessions, rows.Err()
+}
+
+func (s *PostgresStore) CancelRunningSessions(ctx context.Context, designID string) (int, error) {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_sessions
+		SET status = 'cancelled', ended_at = NOW(), completion_note = 'Cancelled by pipeline reset'
+		WHERE design_id = $1 AND status = 'running'
+	`, designID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel running sessions: %w", err)
+	}
+	return int(result.RowsAffected()), nil
 }
 
 // --- Insights ---

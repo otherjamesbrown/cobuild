@@ -60,6 +60,8 @@ Safe to run — only changes pipeline_run metadata, not work items.`,
 			action := "would mark"
 			if !dryRun {
 				action = "marking"
+				// Admin tool: intentionally uses UpdateRunPhase (force) to clean up
+				// abandoned pipelines regardless of current phase.
 				if wiClosed {
 					_ = cbStore.UpdateRunPhase(ctx, r.DesignID, "done")
 				}

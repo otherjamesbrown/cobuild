@@ -406,10 +406,10 @@ func TestDispatchRefusesMissingRepoMetadataWhenParentDesignReferencesMultipleRep
 
 	msg := err.Error()
 	for _, want := range []string{
-		"cb-task-missing has no `repo` metadata",
+		"cb-task-missing is missing `repo` metadata",
 		"parent design cb-design references multiple repos",
 		"context-palace, penfold",
-		"set `repo` metadata on this task before dispatching",
+		"set `repo` metadata before dispatching",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q:\n%s", want, msg)

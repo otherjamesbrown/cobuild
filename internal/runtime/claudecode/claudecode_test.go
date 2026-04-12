@@ -83,6 +83,52 @@ func TestBuildRunnerScript_Shape(t *testing.T) {
 	}
 }
 
+func TestBuildRunnerScript_GatePhaseUsesHeadlessMode(t *testing.T) {
+	r := New()
+	for _, phase := range []string{"design", "decompose", "investigate", "review", "done"} {
+		t.Run(phase, func(t *testing.T) {
+			script, err := r.BuildRunnerScript(runtime.RunnerInput{
+				WorktreePath: "/w",
+				RepoRoot:     "/r",
+				TaskID:       "cb-test",
+				PromptFile:   "/p",
+				Phase:        phase,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(script, "-p --output-format json --max-turns 200") {
+				t.Errorf("gate phase %q: script missing -p headless flags", phase)
+			}
+			if !strings.Contains(script, "session-result.json") {
+				t.Errorf("gate phase %q: script missing session-result.json capture", phase)
+			}
+		})
+	}
+}
+
+func TestBuildRunnerScript_ImplementPhaseUsesInteractiveMode(t *testing.T) {
+	r := New()
+	for _, phase := range []string{"implement", "fix"} {
+		t.Run(phase, func(t *testing.T) {
+			script, err := r.BuildRunnerScript(runtime.RunnerInput{
+				WorktreePath: "/w",
+				RepoRoot:     "/r",
+				TaskID:       "cb-test",
+				PromptFile:   "/p",
+				Phase:        phase,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Implement/fix should NOT have -p in flags
+			if strings.Contains(script, "-p --output-format json") {
+				t.Errorf("implement phase %q: should not use headless mode", phase)
+			}
+		})
+	}
+}
+
 func TestBuildRunnerScript_ExtraFlagsOverrides(t *testing.T) {
 	r := New()
 	script, err := r.BuildRunnerScript(runtime.RunnerInput{

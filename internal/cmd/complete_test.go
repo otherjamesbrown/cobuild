@@ -128,6 +128,102 @@ func TestDetermineCompletionPathPrefersPRFlowForDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestAdvancePipelinePhaseRejectsStaleExpectedPhase(t *testing.T) {
+	ctx := context.Background()
+
+	fs := newFakeStore()
+	fs.runs["cb-test"] = &store.PipelineRun{
+		ID: "run-1", DesignID: "cb-test", CurrentPhase: "decompose", Status: "active",
+	}
+
+	// Caller thinks we're in "design" but we're actually in "decompose"
+	err := advancePipelinePhaseTo(ctx, fs, "cb-test", "design", "decompose")
+	if err == nil {
+		t.Fatal("advancePipelinePhaseTo() error = nil, want ErrPhaseConflict")
+	}
+	if !strings.Contains(err.Error(), "phase conflict") {
+		t.Fatalf("advancePipelinePhaseTo() error = %v, want phase conflict", err)
+	}
+
+	// Correct expectation works
+	if err := advancePipelinePhaseTo(ctx, fs, "cb-test", "decompose", "implement"); err != nil {
+		t.Fatalf("advancePipelinePhaseTo(correct) error = %v", err)
+	}
+	if fs.runs["cb-test"].CurrentPhase != "implement" {
+		t.Fatalf("phase after advance = %q, want implement", fs.runs["cb-test"].CurrentPhase)
+	}
+}
+
+func TestAdvancePipelinePhaseResolvesNextFromWorkflow(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-design"] = &connector.WorkItem{
+		ID: "cb-design", Type: "design", Status: "in_progress",
+	}
+
+	fs := newFakeStore()
+	fs.runs["cb-design"] = &store.PipelineRun{
+		ID: "run-1", DesignID: "cb-design", CurrentPhase: "design", Status: "active",
+	}
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	// Without config, falls back to hardcoded: design → decompose
+	next, err := advancePipelinePhase(ctx, fs, fc, nil, "cb-design", "design")
+	if err != nil {
+		t.Fatalf("advancePipelinePhase() error = %v", err)
+	}
+	if next != "decompose" {
+		t.Fatalf("next phase = %q, want decompose", next)
+	}
+	if fs.runs["cb-design"].CurrentPhase != "decompose" {
+		t.Fatalf("stored phase = %q, want decompose", fs.runs["cb-design"].CurrentPhase)
+	}
+
+	// Second advance: decompose → implement
+	next, err = advancePipelinePhase(ctx, fs, fc, nil, "cb-design", "decompose")
+	if err != nil {
+		t.Fatalf("advancePipelinePhase(decompose) error = %v", err)
+	}
+	if next != "implement" {
+		t.Fatalf("next phase = %q, want implement", next)
+	}
+}
+
+func TestCompleteRefusesOnGatePhase(t *testing.T) {
+	taskID := "cb-gate-task"
+
+	fc := newFakeConnector()
+	fc.items[taskID] = &connector.WorkItem{
+		ID: taskID, Title: "Gate task", Type: "design", Status: "in_progress",
+	}
+
+	for _, gatePhase := range []string{"design", "decompose", "investigate", "review", "done"} {
+		t.Run(gatePhase, func(t *testing.T) {
+			fs := newFakeStore()
+			fs.runs[taskID] = &store.PipelineRun{
+				ID: "run-1", DesignID: taskID, CurrentPhase: gatePhase, Status: "active",
+			}
+			restore := installTestGlobals(t, fc, fs, "test-project")
+			defer restore()
+
+			err := completeCmd.RunE(completeCmd, []string{taskID})
+			if err == nil {
+				// For --auto mode, complete silently skips (returns nil).
+				// For non-auto mode, it should error. Check that the phase didn't change.
+				if fs.runs[taskID].CurrentPhase != gatePhase {
+					t.Fatalf("complete on gate phase %q changed phase to %q", gatePhase, fs.runs[taskID].CurrentPhase)
+				}
+				return
+			}
+			if !strings.Contains(err.Error(), "gate phase") {
+				t.Fatalf("complete on gate phase %q: error = %v, want gate phase error", gatePhase, err)
+			}
+		})
+	}
+}
+
 func installTestGlobals(t *testing.T, testConn connector.Connector, testStore store.Store, testProject string) func() {
 	t.Helper()
 	prevConn := conn
@@ -396,12 +492,27 @@ func (f *fakeStore) UpdateRunPhase(ctx context.Context, designID, phase string) 
 	return nil
 }
 
+func (f *fakeStore) CancelRunningSessions(_ context.Context, _ string) (int, error) { return 0, nil }
+
+func (f *fakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
+	run, ok := f.runs[designID]
+	if !ok {
+		return fmt.Errorf("no pipeline run for design %s", designID)
+	}
+	if run.CurrentPhase != expectedCurrent {
+		return fmt.Errorf("expected phase %q but pipeline is in %q: %w", expectedCurrent, run.CurrentPhase, store.ErrPhaseConflict)
+	}
+	run.CurrentPhase = nextPhase
+	return nil
+}
+
 func (f *fakeStore) UpdateRunStatus(ctx context.Context, designID, status string) error {
 	f.runs[designID].Status = status
 	return nil
 }
 
 func (f *fakeStore) SetRunMode(ctx context.Context, designID, mode string) error { return nil }
+func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error { return nil }
 
 func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)

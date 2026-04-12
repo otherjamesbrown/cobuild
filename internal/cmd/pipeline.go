@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -840,6 +841,87 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+var resetCmd = &cobra.Command{
+	Use:   "reset <shard-id>",
+	Short: "Reset a pipeline run to a given phase",
+	Long: `Resets a pipeline run back to a specified phase, clearing all gates, tasks,
+and session records. The run is marked active so the poller (or cobuild orchestrate)
+will pick it up again.
+
+Use --phase to specify the target phase (default: the start phase for the work item type).`,
+	Args:    cobra.ExactArgs(1),
+	Example: "  cobuild reset cp-b25138\n  cobuild reset cp-b25138 --phase decompose",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		id := args[0]
+		phase, _ := cmd.Flags().GetString("phase")
+
+		if cbStore == nil {
+			return fmt.Errorf("no store configured")
+		}
+
+		// Verify run exists
+		existing, err := cbStore.GetRun(ctx, id)
+		if err != nil {
+			return fmt.Errorf("no pipeline run for %s: %w", id, err)
+		}
+
+		// Determine target phase
+		if phase == "" {
+			phase = "design" // default
+			if conn != nil {
+				item, err := conn.Get(ctx, id)
+				if err == nil && item != nil {
+					repoRoot := findRepoRoot()
+					pCfg, _ := config.LoadConfig(repoRoot)
+					if pCfg != nil {
+						sp := pCfg.StartPhaseForType(item.Type)
+						if sp != "" {
+							phase = sp
+						}
+					}
+				}
+			}
+		}
+
+		fmt.Printf("Resetting %s: %s/%s → %s/active\n",
+			id, existing.CurrentPhase, existing.Status, phase)
+
+		if err := cbStore.ResetRun(ctx, id, phase); err != nil {
+			return fmt.Errorf("reset failed: %w", err)
+		}
+
+		// Clear stale sessions so re-dispatch isn't blocked (cb-29e7fa)
+		if cancelled, err := cbStore.CancelRunningSessions(ctx, id); err != nil {
+			fmt.Printf("Warning: failed to cancel stale sessions: %v\n", err)
+		} else if cancelled > 0 {
+			fmt.Printf("  Cancelled %d stale session(s)\n", cancelled)
+		}
+
+		// Kill any lingering tmux windows for this design so dispatch
+		// won't be blocked by stale "window exists" checks (cb-29e7fa)
+		killStaleTmuxWindows(ctx, id)
+
+		// Reopen the work item in the connector if it's closed or in_progress.
+		// Resetting means we're starting fresh — leaving it in_progress would
+		// cause dispatch to hit the "already dispatched" guard.
+		if conn != nil {
+			item, err := conn.Get(ctx, id)
+			if err == nil && item != nil && (item.Status == "closed" || item.Status == "in_progress") {
+				if err := conn.UpdateStatus(ctx, id, "open"); err != nil {
+					fmt.Printf("Warning: failed to reopen work item: %v\n", err)
+				} else {
+					fmt.Printf("  Work item %s → open\n", id)
+				}
+			}
+		}
+
+		fmt.Printf("  Pipeline reset to phase: %s\n", phase)
+		printNextStep(id, phase, "reset")
+		return nil
+	},
+}
+
 func init() {
 	// gate flags
 	gateCmd.Flags().String("verdict", "", "Gate verdict: 'pass' or 'fail' (required)")
@@ -875,8 +957,12 @@ func init() {
 	// init flags
 	initCmd.Flags().Bool("autonomous", false, "Submit for autonomous processing (poller handles all phases)")
 
+	// reset flags
+	resetCmd.Flags().String("phase", "", "Target phase to reset to (default: start phase for work item type)")
+
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(gateCmd)
 	rootCmd.AddCommand(reviewCmd)
@@ -887,4 +973,46 @@ func init() {
 	rootCmd.AddCommand(unlockCmd)
 	rootCmd.AddCommand(lockCheckCmd)
 	rootCmd.AddCommand(updateCmd)
+}
+
+// killStaleTmuxWindows kills any tmux windows matching the design ID across
+// all cobuild-* sessions. Used by reset to prevent the dispatch guard from
+// refusing on stale "window exists" checks after a failed/killed orchestrate.
+func killStaleTmuxWindows(ctx context.Context, designID string) {
+	// List all cobuild-* tmux sessions
+	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return
+	}
+	killed := 0
+	for _, sess := range strings.Split(string(out), "\n") {
+		sess = strings.TrimSpace(sess)
+		if !strings.HasPrefix(sess, "cobuild-") {
+			continue
+		}
+		// Find windows in this session matching the designID. Use window IDs
+		// (@123) for killing because window names aren't unique — multiple
+		// windows with the same name (from repeated dispatch) can't be
+		// disambiguated by name alone.
+		winOut, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", sess, "-F", "#{window_id} #{window_name}").Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(winOut), "\n") {
+			line = strings.TrimSpace(line)
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			winID, name := parts[0], parts[1]
+			if name == designID || strings.HasPrefix(name, designID) {
+				if err := exec.CommandContext(ctx, "tmux", "kill-window", "-t", winID).Run(); err == nil {
+					killed++
+				}
+			}
+		}
+	}
+	if killed > 0 {
+		fmt.Printf("  Killed %d stale tmux window(s)\n", killed)
+	}
 }

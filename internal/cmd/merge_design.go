@@ -202,11 +202,11 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 
 		// Advance pipeline if all succeeded
 		if failed == 0 && err == nil && cbStore != nil {
-			if advErr := cbStore.UpdateRunPhase(ctx, designID, "done"); advErr == nil {
+			if run, runErr := cbStore.GetRun(ctx, designID); runErr == nil {
+				repoRoot, _ := config.RepoForProject(projectName)
+				pCfg, _ := config.LoadConfig(repoRoot)
+				advanceDesignToCompleted(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase)
 				fmt.Println("Pipeline advanced to done phase.")
-				if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
-					fmt.Printf("  Warning: failed to mark completed: %v\n", err)
-				}
 			}
 		}
 

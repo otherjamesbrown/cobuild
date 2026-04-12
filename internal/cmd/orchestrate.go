@@ -19,6 +19,31 @@ type orchestrateCommandRunner interface {
 }
 
 var newOrchestrateRunner = func(opts orchestrator.Options) orchestrateCommandRunner {
+	// Wire up implement/review support so orchestrate can drive
+	// the full pipeline end-to-end, not just gate phases.
+	opts.Tasks = orchestrator.StoreTaskSource{Store: cbStore}
+	opts.WaveDispatcher = orchestrator.WaveDispatchFunc(func(_ context.Context, designID string) error {
+		return dispatchWaveCmd.RunE(dispatchWaveCmd, []string{designID})
+	})
+	opts.Reviewer = orchestrator.ReviewProcessFunc(func(_ context.Context, shardID string) (orchestrator.ReviewResult, error) {
+		err := processReviewCmd.RunE(processReviewCmd, []string{shardID})
+		if err != nil {
+			return orchestrator.ReviewResult{Outcome: "error", Message: err.Error()}, nil
+		}
+		// Check task status after process-review to determine outcome
+		if conn != nil {
+			if task, err := conn.Get(context.Background(), shardID); err == nil {
+				switch task.Status {
+				case "closed":
+					return orchestrator.ReviewResult{Outcome: "merged"}, nil
+				case "in_progress":
+					return orchestrator.ReviewResult{Outcome: "redispatched"}, nil
+				}
+			}
+		}
+		return orchestrator.ReviewResult{Outcome: "waiting"}, nil
+	})
+
 	return orchestrator.NewRunner(
 		orchestrator.StorePhaseSource{Store: cbStore},
 		orchestrator.DispatchFunc(func(_ context.Context, shardID string) error {
