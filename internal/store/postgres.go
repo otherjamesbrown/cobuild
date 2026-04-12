@@ -84,6 +84,8 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 	-- Idempotent ADD COLUMN IF NOT EXISTS; defaults to claude-code for historical rows.
 	ALTER TABLE IF EXISTS pipeline_sessions
 		ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'claude-code';
+	ALTER TABLE IF EXISTS pipeline_sessions
+		ADD COLUMN IF NOT EXISTS completion_note TEXT;
 	`
 	_, err := s.pool.Exec(ctx, ddl)
 	return err
@@ -486,6 +488,10 @@ func (s *PostgresStore) EndSession(ctx context.Context, id string, result Sessio
 	if result.PRURL != "" {
 		prURL = &result.PRURL
 	}
+	var completionNote *string
+	if result.CompletionNote != "" {
+		completionNote = &result.CompletionNote
+	}
 	var sessionLog *string
 	if result.SessionLog != "" {
 		sessionLog = &result.SessionLog
@@ -503,10 +509,11 @@ func (s *PostgresStore) EndSession(ctx context.Context, id string, result Sessio
 			pr_url = $7,
 			status = $8,
 			error = $9,
-			session_log = $10
+			session_log = $10,
+			completion_note = $11
 		WHERE id = $1
 	`, id, result.ExitCode, result.FilesChanged, result.LinesAdded, result.LinesRemoved,
-		result.Commits, prURL, result.Status, errStr, sessionLog)
+		result.Commits, prURL, result.Status, errStr, sessionLog, completionNote)
 	if err != nil {
 		return fmt.Errorf("end session: %w", err)
 	}
@@ -518,14 +525,14 @@ func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*Session
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
-			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
+			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
 			status, error, worktree_path
 		FROM pipeline_sessions WHERE task_id = $1
 		ORDER BY started_at DESC LIMIT 1
 	`, taskID).Scan(
 		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
-		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
+		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
 		&r.Status, &r.Error, &r.WorktreePath,
 	)
 	if err != nil {
@@ -538,7 +545,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
 			started_at, ended_at, duration_seconds, model, prompt_chars,
-			exit_code, files_changed, lines_added, lines_removed, commits, pr_url,
+			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
 			status, error, worktree_path
 		FROM pipeline_sessions WHERE design_id = $1
 		ORDER BY started_at ASC
@@ -554,7 +561,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 		if err := rows.Scan(
 			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
 			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
-			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL,
+			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
 			&r.Status, &r.Error, &r.WorktreePath,
 		); err != nil {
 			return nil, err
