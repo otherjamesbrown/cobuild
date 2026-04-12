@@ -3,11 +3,14 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,39 +89,12 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
 		}
 
-		// Determine target repo — multi-repo tasks may specify which repo they target
-		targetRepo, _ := conn.GetMetadata(ctx, taskID, "repo")
-		repoRootForWT := ""
-		if targetRepo != "" {
-			var repoErr error
-			repoRootForWT, repoErr = config.RepoForProject(targetRepo)
-			if repoErr != nil {
-				return fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %v", targetRepo, repoErr)
-			}
-			fmt.Printf("Target repo: %s (from task metadata: repo=%s)\n", repoRootForWT, targetRepo)
-		} else {
-			// Check if this is a multi-repo project — warn loudly if repo metadata is missing
-			if reg, err := config.LoadRepoRegistry(); err == nil {
-				var reposForProject []string
-				for name, entry := range reg.Repos {
-					projYAML := readProjectConfigFromYAML(entry.Path)
-					if projYAML.Project == projectName {
-						reposForProject = append(reposForProject, name)
-					}
-				}
-				if len(reposForProject) > 1 {
-					fmt.Fprintf(cmd.ErrOrStderr(), "\n⚠️  WARNING: Multi-repo project (%s) but task %s has no `repo` metadata!\n", projectName, taskID)
-					fmt.Fprintf(cmd.ErrOrStderr(), "   Repos in this project: %s\n", strings.Join(reposForProject, ", "))
-					fmt.Fprintf(cmd.ErrOrStderr(), "   Defaulting to %s — this may be WRONG.\n", projectName)
-					fmt.Fprintf(cmd.ErrOrStderr(), "   Fix: `cxp shard metadata set %s repo <correct-repo>`\n\n", taskID)
-				}
-			}
-			repoRootForWT, _ = config.RepoForProject(projectName)
-			if repoRootForWT == "" {
-				repoRootForWT = findRepoRoot()
-			}
-			fmt.Printf("Target repo: %s (from project: %s)\n", repoRootForWT, projectName)
+		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, projectName, cmd.ErrOrStderr())
+		if err != nil {
+			return err
 		}
+		repoRootForWT := repoTarget.Root
+		fmt.Printf("Target repo: %s (from %s)\n", repoRootForWT, repoTarget.Source)
 
 		// Get or create worktree
 		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
@@ -780,7 +756,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("Follow the decompose-design skill:\n")
 		b.WriteString("1. Read the design content above\n")
 		b.WriteString("2. **For EACH spec/section in the design, identify its target project AND target repo.** The design may explicitly name them (\"Spec 3 → penfold\") or reference files under a specific path (\"pf-34494b\", \"penf-cli MEMORY.md\"). Write down a spec → (project, repo) map BEFORE creating any tasks. If the design is unclear on target, fail the decomposition gate and ask for clarification.\n")
-		b.WriteString("3. Identify discrete tasks — each completable in a single agent session (1-5 files, ~100-300 lines)\n")
+		b.WriteString("3. Identify discrete tasks — each completable in a single agent session (1-5 files, ~100-300 lines). **One task = one repo. Never create a task that requires edits in multiple repos.**\n")
 		b.WriteString("4. Decide completion path per task: set `completion_mode: direct` only for non-code tasks whose output is expected outside the repo/worktree (KB updates, config/data changes, user-global state). Use `completion_mode: code` for normal repo changes. If unsure, leave it unset and let `cobuild complete` auto-detect.\n")
 		b.WriteString("5. Order by dependency — assign wave numbers (wave 1 has no blockers, wave 2 depends on wave 1)\n")
 		b.WriteString("6. For each task, create a work item in the **correct target project** with scope, acceptance criteria, and code locations:\n")
@@ -800,6 +776,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("- **`--project <name>`** controls the shard's home project — which project's namespace the task shard lives in (determines the ID prefix, which project backlog lists it, etc.). Required when a task will end up owned by a different project's team/pipeline than the parent design's project.\n")
 		b.WriteString("- **`repo` metadata** controls which git repo `cobuild dispatch` will create a worktree in. Required any time a task's code changes land in a repo different from the parent design's default repo.\n\n")
 		b.WriteString("A task may need BOTH (a penfold-owned task targeting the penfold repo), or just repo metadata (a context-palace-owned task targeting the penf-cli repo), or just --project (very rare). **If the design mentions any other project (pf-, my-, etc.) or any other repo, you almost certainly need one or both.** The default (no --project, no repo metadata) means: shard in the CURRENT project, worktree in the CURRENT repo. Do not leave tasks that should target another project/repo with the defaults.\n\n")
+		b.WriteString("Worked example: if the design says \"edit `penfold/internal/session_hook.go` and `context-palace/CLAUDE.md`\", that is NOT one task. Create one penfold task with `repo=penfold`, one context-palace task with `repo=context-palace`, and add a `blocked-by` edge only if the second change depends on the first.\n\n")
 		b.WriteString("Lesson from cp-c2ec47 (2026-04-11): a decompose agent read a multi-project design (specs targeting context-palace, penfold, and penf-cli), created all 8 tasks in context-palace, and set `repo` metadata on only half of them. The decomposition gate passed but the result was unusable — tasks had to be manually re-tagged. **Do not repeat this.** Read every spec and explicitly assign project + repo before creating tasks.\n\n")
 		b.WriteString("**Also:** Assign migration numbers explicitly if multiple tasks create DB migrations.\n")
 
@@ -880,6 +857,160 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("- If a reviewer (Gemini, human) leaves a critical comment on your PR, you MUST address it before the PR can merge\n")
 		b.WriteString("- Check review comments: `gh pr view <pr-number> --comments`\n")
 	}
+}
+
+type dispatchRepoTarget struct {
+	Root   string
+	Source string
+}
+
+func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, taskID, project string, stderr io.Writer) (dispatchRepoTarget, error) {
+	targetRepo := metadataString(task.Metadata, "repo")
+	if conn != nil {
+		if repo, err := conn.GetMetadata(ctx, taskID, "repo"); err == nil && repo != "" {
+			targetRepo = strings.TrimSpace(repo)
+		}
+	}
+	if targetRepo != "" {
+		repoRoot, err := config.RepoForProject(targetRepo)
+		if err != nil {
+			return dispatchRepoTarget{}, fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %v", targetRepo, err)
+		}
+		return dispatchRepoTarget{
+			Root:   repoRoot,
+			Source: fmt.Sprintf("task metadata: repo=%s", targetRepo),
+		}, nil
+	}
+
+	if reg, err := config.LoadRepoRegistry(); err == nil {
+		parentID, referencedRepos, refErr := parentDesignReferencedRepos(ctx, taskID, reg)
+		if refErr == nil && len(referencedRepos) > 1 {
+			return dispatchRepoTarget{}, fmt.Errorf(
+				"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
+				taskID, parentID, strings.Join(referencedRepos, ", "),
+			)
+		}
+
+		reposForProject := reposForProject(reg, project)
+		if len(reposForProject) > 1 {
+			fmt.Fprintf(stderr, "\nWARNING: Multi-repo project (%s) but task %s has no `repo` metadata.\n", project, taskID)
+			fmt.Fprintf(stderr, "Repos in this project: %s\n", strings.Join(reposForProject, ", "))
+			fmt.Fprintf(stderr, "Defaulting to %s — this may be wrong.\n", project)
+			fmt.Fprintf(stderr, "Fix: `cxp shard metadata set %s repo <correct-repo>`\n\n", taskID)
+		}
+	}
+
+	repoRoot, _ := config.RepoForProject(project)
+	if repoRoot == "" {
+		repoRoot = findRepoRoot()
+	}
+	return dispatchRepoTarget{
+		Root:   repoRoot,
+		Source: fmt.Sprintf("project: %s", project),
+	}, nil
+}
+
+func parentDesignReferencedRepos(ctx context.Context, taskID string, reg *config.RepoRegistry) (string, []string, error) {
+	if conn == nil || reg == nil {
+		return "", nil, nil
+	}
+	parentEdges, err := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+	if err != nil || len(parentEdges) == 0 {
+		return "", nil, err
+	}
+	parentID := parentEdges[0].ItemID
+	parentItem, err := conn.Get(ctx, parentID)
+	if err != nil {
+		return parentID, nil, err
+	}
+	if parentItem == nil || parentItem.Type != "design" {
+		return parentID, nil, nil
+	}
+	return parentID, referencedReposInWorkItem(parentItem, reg), nil
+}
+
+func referencedReposInWorkItem(item *connector.WorkItem, reg *config.RepoRegistry) []string {
+	if item == nil || reg == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	addRepo := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		if _, ok := reg.Repos[repo]; ok {
+			seen[repo] = struct{}{}
+		}
+	}
+
+	addRepo(metadataString(item.Metadata, "repo"))
+	for _, repo := range metadataRepos(item.Metadata["repos"]) {
+		addRepo(repo)
+	}
+
+	corpus := strings.ToLower(item.Title + "\n" + item.Content)
+	for repo := range reg.Repos {
+		if strings.Contains(corpus, strings.ToLower(repo)) {
+			seen[repo] = struct{}{}
+		}
+	}
+
+	repos := make([]string, 0, len(seen))
+	for repo := range seen {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+	return repos
+}
+
+func metadataRepos(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		repos := make([]string, 0, len(v))
+		for _, item := range v {
+			repos = append(repos, fmt.Sprintf("%v", item))
+		}
+		return repos
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil
+		}
+		var repos []string
+		if strings.HasPrefix(trimmed, "[") && json.Unmarshal([]byte(trimmed), &repos) == nil {
+			return repos
+		}
+		parts := strings.Split(trimmed, ",")
+		repos = make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				repos = append(repos, part)
+			}
+		}
+		return repos
+	default:
+		return nil
+	}
+}
+
+func reposForProject(reg *config.RepoRegistry, project string) []string {
+	if reg == nil {
+		return nil
+	}
+	var repos []string
+	for name, entry := range reg.Repos {
+		projYAML := readProjectConfigFromYAML(entry.Path)
+		if projYAML.Project == project {
+			repos = append(repos, name)
+		}
+	}
+	sort.Strings(repos)
+	return repos
 }
 
 // inferWorkflowFromType maps a work item to a workflow name.

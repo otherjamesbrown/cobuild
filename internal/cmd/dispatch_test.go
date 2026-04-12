@@ -66,6 +66,113 @@ func TestWritePhasePromptImplementAndFixRequireExplicitExit(t *testing.T) {
 				}
 			}
 		})
+func TestWritePhasePromptDecomposeEnforcesSingleRepoTasks(t *testing.T) {
+	var b strings.Builder
+	writePhasePrompt(&b, "decompose", "cb-parent", "cb-parent", nil)
+	got := b.String()
+
+	for _, want := range []string{
+		"One task = one repo. Never create a task that requires edits in multiple repos.",
+		"that is NOT one task",
+		"one penfold task with `repo=penfold`",
+		"one context-palace task with `repo=context-palace`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decompose prompt missing %q\nprompt:\n%s", want, got)
+		}
+	}
+}
+
+func TestResolveDispatchTargetRepoRejectsMissingRepoForMultiRepoParentDesign(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+
+	writeTestRepoConfig(t, filepath.Join(tempDir, "cobuild"), "cobuild")
+	writeTestRepoConfig(t, filepath.Join(tempDir, "penfold"), "penfold")
+	writeTestRepoConfig(t, filepath.Join(tempDir, "context-palace"), "context-palace")
+
+	registry := "repos:\n" +
+		"  cobuild:\n" +
+		"    path: " + filepath.Join(tempDir, "cobuild") + "\n" +
+		"  penfold:\n" +
+		"    path: " + filepath.Join(tempDir, "penfold") + "\n" +
+		"  context-palace:\n" +
+		"    path: " + filepath.Join(tempDir, "context-palace") + "\n"
+	if err := os.WriteFile(filepath.Join(homeDir, ".cobuild", "repos.yaml"), []byte(registry), 0o644); err != nil {
+		t.Fatalf("write repo registry: %v", err)
+	}
+
+	prevHome := os.Getenv("HOME")
+	prevConn := conn
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	conn = newDispatchWaveTestConnector(
+		dispatchTestItem("task-1", "task", "open", "Dispatch task", "", nil),
+		dispatchTestItem("design-1", "design", "open", "Multi-repo design", "Edit penfold/internal/session_hook.go and context-palace/CLAUDE.md in the same rollout.", nil),
+	)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+		conn = prevConn
+	})
+
+	testConn := conn.(*dispatchWaveTestConnector)
+	testConn.edgesByItem["task-1"] = []connector.Edge{
+		{Direction: "outgoing", EdgeType: "child-of", ItemID: "design-1", Status: "open"},
+	}
+
+	_, err := resolveDispatchTargetRepo(context.Background(), testConn.items["task-1"], "task-1", "cobuild", io.Discard)
+	if err == nil {
+		t.Fatal("expected missing repo metadata error, got nil")
+	}
+	for _, want := range []string{
+		"missing `repo` metadata",
+		"parent design design-1 references multiple repos",
+		"context-palace, penfold",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
+	}
+}
+
+func TestResolveDispatchTargetRepoRejectsUnknownRepoMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+
+	writeTestRepoConfig(t, filepath.Join(tempDir, "cobuild"), "cobuild")
+	registry := "repos:\n" +
+		"  cobuild:\n" +
+		"    path: " + filepath.Join(tempDir, "cobuild") + "\n"
+	if err := os.WriteFile(filepath.Join(homeDir, ".cobuild", "repos.yaml"), []byte(registry), 0o644); err != nil {
+		t.Fatalf("write repo registry: %v", err)
+	}
+
+	prevHome := os.Getenv("HOME")
+	prevConn := conn
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	conn = newDispatchWaveTestConnector(
+		dispatchTestItem("task-1", "task", "open", "Dispatch task", "", map[string]any{"repo": "missing-repo"}),
+	)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+		conn = prevConn
+	})
+
+	_, err := resolveDispatchTargetRepo(context.Background(), conn.(*dispatchWaveTestConnector).items["task-1"], "task-1", "cobuild", io.Discard)
+	if err == nil {
+		t.Fatal("expected invalid repo error, got nil")
+	}
+	if !strings.Contains(err.Error(), `task specifies repo "missing-repo" but it's not in the registry`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -368,7 +475,11 @@ func (c *dispatchWaveTestConnector) GetEdges(ctx context.Context, id string, dir
 }
 
 func (c *dispatchWaveTestConnector) GetMetadata(ctx context.Context, id string, key string) (string, error) {
-	return "", nil
+	item, ok := c.items[id]
+	if !ok {
+		return "", os.ErrNotExist
+	}
+	return metadataString(item.Metadata, key), nil
 }
 
 func (c *dispatchWaveTestConnector) Create(ctx context.Context, req connector.CreateRequest) (string, error) {
@@ -405,6 +516,28 @@ func dispatchWaveTestItem(id, itemType, status string, metadata map[string]any) 
 		Type:     itemType,
 		Status:   status,
 		Metadata: metadata,
+	}
+}
+
+func dispatchTestItem(id, itemType, status, title, content string, metadata map[string]any) *connector.WorkItem {
+	return &connector.WorkItem{
+		ID:       id,
+		Type:     itemType,
+		Status:   status,
+		Title:    title,
+		Content:  content,
+		Metadata: metadata,
+	}
+}
+
+func writeTestRepoConfig(t *testing.T, repoRoot, project string) {
+	t.Helper()
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+	body := "project: " + project + "\nprefix: " + project + "-\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".cobuild.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
 	}
 }
 

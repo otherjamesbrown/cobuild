@@ -270,10 +270,11 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 		return "", fmt.Errorf("missing repo metadata and no project fallback is available")
 	}
 
-	repos, err := reposForProject(project)
+	reg, err := config.LoadRepoRegistry()
 	if err != nil {
 		return "", fmt.Errorf("resolve repos for project %q: %w", project, err)
 	}
+	repos := reposForProject(reg, project)
 	switch len(repos) {
 	case 0:
 		return "", fmt.Errorf("missing repo metadata and project %q has no registered repos", project)
@@ -365,18 +366,3 @@ func cleanRepoList(values []string) []string {
 	return out
 }
 
-func reposForProject(project string) ([]string, error) {
-	reg, err := config.LoadRepoRegistry()
-	if err != nil {
-		return nil, err
-	}
-
-	var repos []string
-	for name, entry := range reg.Repos {
-		if readProjectConfigFromYAML(entry.Path).Project == project {
-			repos = append(repos, name)
-		}
-	}
-	slices.Sort(repos)
-	return repos, nil
-}
