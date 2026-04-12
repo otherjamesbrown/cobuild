@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -897,10 +898,16 @@ Use --phase to specify the target phase (default: the start phase for the work i
 			fmt.Printf("  Cancelled %d stale session(s)\n", cancelled)
 		}
 
-		// Reopen the work item in the connector if it was closed
+		// Kill any lingering tmux windows for this design so dispatch
+		// won't be blocked by stale "window exists" checks (cb-29e7fa)
+		killStaleTmuxWindows(ctx, id)
+
+		// Reopen the work item in the connector if it's closed or in_progress.
+		// Resetting means we're starting fresh — leaving it in_progress would
+		// cause dispatch to hit the "already dispatched" guard.
 		if conn != nil {
 			item, err := conn.Get(ctx, id)
-			if err == nil && item != nil && item.Status == "closed" {
+			if err == nil && item != nil && (item.Status == "closed" || item.Status == "in_progress") {
 				if err := conn.UpdateStatus(ctx, id, "open"); err != nil {
 					fmt.Printf("Warning: failed to reopen work item: %v\n", err)
 				} else {
@@ -966,4 +973,46 @@ func init() {
 	rootCmd.AddCommand(unlockCmd)
 	rootCmd.AddCommand(lockCheckCmd)
 	rootCmd.AddCommand(updateCmd)
+}
+
+// killStaleTmuxWindows kills any tmux windows matching the design ID across
+// all cobuild-* sessions. Used by reset to prevent the dispatch guard from
+// refusing on stale "window exists" checks after a failed/killed orchestrate.
+func killStaleTmuxWindows(ctx context.Context, designID string) {
+	// List all cobuild-* tmux sessions
+	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return
+	}
+	killed := 0
+	for _, sess := range strings.Split(string(out), "\n") {
+		sess = strings.TrimSpace(sess)
+		if !strings.HasPrefix(sess, "cobuild-") {
+			continue
+		}
+		// Find windows in this session matching the designID. Use window IDs
+		// (@123) for killing because window names aren't unique — multiple
+		// windows with the same name (from repeated dispatch) can't be
+		// disambiguated by name alone.
+		winOut, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", sess, "-F", "#{window_id} #{window_name}").Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(winOut), "\n") {
+			line = strings.TrimSpace(line)
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			winID, name := parts[0], parts[1]
+			if name == designID || strings.HasPrefix(name, designID) {
+				if err := exec.CommandContext(ctx, "tmux", "kill-window", "-t", winID).Run(); err == nil {
+					killed++
+				}
+			}
+		}
+	}
+	if killed > 0 {
+		fmt.Printf("  Killed %d stale tmux window(s)\n", killed)
+	}
 }
