@@ -276,6 +276,9 @@ func dispatchForPhase(ctx context.Context, workItemID string) {
 
 // dispatchReadyTasks dispatches ready tasks for a design in the implement phase.
 func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Config, designID string, dryRun bool) {
+	if pCfg == nil {
+		pCfg = config.DefaultConfig()
+	}
 	edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
 	if err != nil {
 		return
@@ -284,15 +287,31 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 	ready := 0
 	inProgress := 0
 	done := 0
+	readyIDs := []string{}
+	activeWave := 0
 
 	for _, e := range edges {
+		item, err := conn.Get(ctx, e.ItemID)
+		if err != nil || item == nil || item.Type != "task" {
+			continue
+		}
+		wave := taskWave(item)
+
+		if resolveWaveStrategy(pCfg) == "serial" && e.Status != "closed" {
+			if activeWave == 0 || (wave > 0 && wave < activeWave) {
+				activeWave = wave
+			}
+		}
+
 		switch e.Status {
 		case "closed":
 			done++
 		case "in_progress":
 			inProgress++
 		case "needs-review":
-			done++ // effectively done
+			if resolveWaveStrategy(pCfg) == "parallel" {
+				done++ // effectively done for parallel dispatch
+			}
 		case "open":
 			// Check if blockers are satisfied
 			blockers, _ := conn.GetEdges(ctx, e.ItemID, "outgoing", []string{"blocked-by"})
@@ -305,6 +324,7 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 			}
 			if allSatisfied {
 				ready++
+				readyIDs = append(readyIDs, e.ItemID)
 				if !dryRun && !hasActiveSession(ctx, e.ItemID) {
 					maxConcurrent := 3
 					if pCfg.Dispatch.MaxConcurrent > 0 {
@@ -314,17 +334,35 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 						dispatchForPhase(ctx, e.ItemID)
 						inProgress++
 					}
-				} else if dryRun {
-					fmt.Printf("  [implement] %s — ready to dispatch\n", e.ItemID)
 				}
 			}
 		}
+	}
+
+	if resolveWaveStrategy(pCfg) == "serial" && activeWave > 0 {
+		filtered := readyIDs[:0]
+		for _, taskID := range readyIDs {
+			item, err := conn.Get(ctx, taskID)
+			if err != nil || item == nil {
+				continue
+			}
+			if taskWave(item) == activeWave {
+				filtered = append(filtered, taskID)
+			}
+		}
+		readyIDs = filtered
+		ready = len(readyIDs)
 	}
 
 	total := ready + inProgress + done
 	if total > 0 {
 		fmt.Printf("  [implement] %s — %d/%d done, %d in-progress, %d ready\n",
 			designID, done, total, inProgress, ready)
+	}
+	if dryRun {
+		for _, taskID := range readyIDs {
+			fmt.Printf("  [implement] %s — ready to dispatch\n", taskID)
+		}
 	}
 }
 

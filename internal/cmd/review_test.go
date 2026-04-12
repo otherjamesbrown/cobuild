@@ -212,6 +212,12 @@ func (f *reviewFakeStore) AddTask(context.Context, string, string, string, *int)
 func (f *reviewFakeStore) ListTasks(context.Context, string) ([]store.PipelineTaskRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+func (f *reviewFakeStore) ListTasksByDesign(context.Context, string) ([]store.PipelineTaskRecord, error) {
+	return nil, nil
+}
+func (f *reviewFakeStore) GetTaskByShardID(context.Context, string) (*store.PipelineTaskRecord, error) {
+	return nil, nil
+}
 func (f *reviewFakeStore) UpdateTaskStatus(context.Context, string, string) error { return nil }
 func (f *reviewFakeStore) CreateSession(context.Context, store.SessionInput) (*store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")

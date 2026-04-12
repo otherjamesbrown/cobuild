@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
@@ -131,13 +133,18 @@ func installTestGlobals(t *testing.T, testConn connector.Connector, testStore st
 	prevConn := conn
 	prevStore := cbStore
 	prevProject := projectName
+	prevClient := cbClient
 	conn = testConn
 	cbStore = testStore
 	projectName = testProject
+	if cbClient == nil {
+		cbClient = &client.Client{}
+	}
 	return func() {
 		conn = prevConn
 		cbStore = prevStore
 		projectName = prevProject
+		cbClient = prevClient
 	}
 }
 
@@ -145,6 +152,7 @@ type fakeConnector struct {
 	items    map[string]*connector.WorkItem
 	metadata map[string]map[string]string
 	parent   map[string]string
+	edges    map[string]map[string][]connector.Edge
 }
 
 func newFakeConnector() *fakeConnector {
@@ -152,6 +160,7 @@ func newFakeConnector() *fakeConnector {
 		items:    map[string]*connector.WorkItem{},
 		metadata: map[string]map[string]string{},
 		parent:   map[string]string{},
+		edges:    map[string]map[string][]connector.Edge{},
 	}
 }
 
@@ -170,6 +179,17 @@ func (f *fakeConnector) List(ctx context.Context, filters connector.ListFilters)
 }
 
 func (f *fakeConnector) GetEdges(ctx context.Context, id string, direction string, types []string) ([]connector.Edge, error) {
+	// If edges map is populated (used by serial wave tests), use it directly.
+	if f.edges[id] != nil {
+		if direction == "" {
+			var out []connector.Edge
+			out = append(out, f.edges[id]["incoming"]...)
+			out = append(out, f.edges[id]["outgoing"]...)
+			return out, nil
+		}
+		return append([]connector.Edge(nil), f.edges[id][direction]...), nil
+	}
+	// Fall back to parent-based edges (used by complete tests).
 	switch direction {
 	case "outgoing":
 		if designID := f.parent[id]; designID != "" {
@@ -204,7 +224,20 @@ func (f *fakeConnector) Create(ctx context.Context, req connector.CreateRequest)
 }
 
 func (f *fakeConnector) UpdateStatus(ctx context.Context, id string, status string) error {
-	f.items[id].Status = status
+	item, ok := f.items[id]
+	if !ok {
+		return fmt.Errorf("missing item %s", id)
+	}
+	item.Status = status
+	for owner, dirs := range f.edges {
+		for dir, edges := range dirs {
+			for i := range edges {
+				if edges[i].ItemID == id {
+					f.edges[owner][dir][i].Status = status
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -235,10 +268,71 @@ func (f *fakeConnector) CreateEdge(ctx context.Context, fromID string, toID stri
 	return nil
 }
 
+func (f *fakeConnector) addItem(item *connector.WorkItem) {
+	if item.Metadata == nil {
+		item.Metadata = map[string]any{}
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now()
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = item.CreatedAt
+	}
+	f.items[item.ID] = item
+}
+
+func (f *fakeConnector) addTask(id, status string, wave int) {
+	f.addItem(&connector.WorkItem{
+		ID:       id,
+		Title:    id,
+		Type:     "task",
+		Status:   status,
+		Metadata: map[string]any{"wave": wave},
+	})
+}
+
+func (f *fakeConnector) setChildTasks(designID string, taskIDs ...string) {
+	for _, taskID := range taskIDs {
+		task := f.items[taskID]
+		if task == nil {
+			continue
+		}
+		f.edges[designID] = ensureDirMap(f.edges[designID])
+		f.edges[designID]["incoming"] = append(f.edges[designID]["incoming"], connector.Edge{
+			Direction: "incoming",
+			EdgeType:  "child-of",
+			ItemID:    taskID,
+			Type:      "task",
+			Status:    task.Status,
+		})
+	}
+}
+
+func (f *fakeConnector) setBlockedBy(taskID string, blockers ...connector.Edge) {
+	f.edges[taskID] = ensureDirMap(f.edges[taskID])
+	f.edges[taskID]["outgoing"] = append([]connector.Edge(nil), blockers...)
+}
+
+func (f *fakeConnector) mustUpdateStatus(ctx context.Context, id, status string) {
+	if err := f.UpdateStatus(ctx, id, status); err != nil {
+		panic(err)
+	}
+}
+
+func ensureDirMap(in map[string][]connector.Edge) map[string][]connector.Edge {
+	if in == nil {
+		return map[string][]connector.Edge{}
+	}
+	return in
+}
+
 type fakeStore struct {
 	runs  map[string]*store.PipelineRun
 	gates []store.PipelineGateInput
 	ended map[string]store.SessionResult
+	// Convenience fields for simpler tests (serial wave tests).
+	run   *store.PipelineRun
+	tasks []store.PipelineTaskRecord
 }
 
 func newFakeStore() *fakeStore {
@@ -257,11 +351,14 @@ func (f *fakeStore) CreateRunWithMode(ctx context.Context, designID, project, ph
 }
 
 func (f *fakeStore) GetRun(ctx context.Context, designID string) (*store.PipelineRun, error) {
-	run, ok := f.runs[designID]
-	if !ok {
-		return nil, fmt.Errorf("missing run %s", designID)
+	if f.runs != nil {
+		run, ok := f.runs[designID]
+		if !ok {
+			return nil, fmt.Errorf("missing run %s", designID)
+		}
+		return run, nil
 	}
-	return run, nil
+	return f.run, nil
 }
 
 func (f *fakeStore) ListRuns(ctx context.Context, project string) ([]store.PipelineRunStatus, error) {
@@ -298,6 +395,17 @@ func (f *fakeStore) AddTask(ctx context.Context, pipelineID, taskShardID, design
 }
 
 func (f *fakeStore) ListTasks(ctx context.Context, pipelineID string) ([]store.PipelineTaskRecord, error) {
+	if f.tasks != nil {
+		return append([]store.PipelineTaskRecord(nil), f.tasks...), nil
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) ListTasksByDesign(ctx context.Context, designID string) ([]store.PipelineTaskRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetTaskByShardID(ctx context.Context, taskShardID string) (*store.PipelineTaskRecord, error) {
 	return nil, nil
 }
 

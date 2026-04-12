@@ -545,6 +545,8 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 
 		designID := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
 
 		// Get all children of the design — includes tasks AND gate review
 		// sub-shards (type=review) AND any other child types. We must filter
@@ -561,12 +563,10 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		var ready []dispatchWaveCandidate
 		var inProgress []string
 		var blocked []string
+		readyWave := map[string]int{}
+		activeWave := 0
 
 		for _, e := range edges {
-			if e.Status == "closed" || e.Status == "needs-review" {
-				continue // already done or in review
-			}
-
 			// Filter by work-item type: only dispatch tasks, not review
 			// sub-shards, investigation reports, or anything else that might
 			// be child-of the design. Skip the edge on any lookup error
@@ -578,9 +578,25 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			if item.Type != "task" {
 				continue
 			}
+			wave := taskWave(item)
+
+			if e.Status == "closed" {
+				continue // fully merged/complete
+			}
+
+			if resolveWaveStrategy(pCfg) == "serial" {
+				if activeWave == 0 || (wave > 0 && wave < activeWave) {
+					activeWave = wave
+				}
+			}
 
 			if e.Status == "in_progress" {
 				inProgress = append(inProgress, e.ItemID)
+				continue
+			}
+			if e.Status == "needs-review" {
+				// Serial mode must wait for closure/merge, not merely review-ready.
+				blocked = append(blocked, e.ItemID)
 				continue
 			}
 
@@ -601,10 +617,13 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 					TaskID: e.ItemID,
 					Wave:   dispatchWaveMetadata(item.Metadata),
 				})
+				readyWave[e.ItemID] = wave
 			} else {
 				blocked = append(blocked, e.ItemID)
 			}
 		}
+
+		// Wave filtering is handled below by filterDispatchWaveCandidates.
 
 		if len(ready) == 0 {
 			if len(inProgress) > 0 {
@@ -617,11 +636,6 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			return nil
 		}
 
-		repoRoot := findRepoRoot()
-		pCfg, _ := config.LoadConfig(repoRoot)
-		if pCfg == nil {
-			pCfg = config.DefaultConfig()
-		}
 		ready = filterDispatchWaveCandidates(ready, pCfg.Dispatch.WaveStrategy)
 		maxConcurrent := 3
 		if pCfg.Dispatch.MaxConcurrent > 0 {
@@ -638,7 +652,11 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			ready = ready[:available]
 		}
 
-		fmt.Printf("Dispatching %d tasks (wave) for %s:\n", len(ready), designID)
+		if resolveWaveStrategy(pCfg) == "serial" {
+			fmt.Printf("Dispatching %d tasks (serial wave) for %s:\n", len(ready), designID)
+		} else {
+			fmt.Printf("Dispatching %d tasks (parallel ready set) for %s:\n", len(ready), designID)
+		}
 		for _, candidate := range ready {
 			taskID := candidate.TaskID
 			if dryRun {
