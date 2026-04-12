@@ -9,6 +9,9 @@ func TestGenerateAgentsContentIncludesDirectCompletionGuidance(t *testing.T) {
 	content := generateAgentsContent("cobuild", "cb", nil, nil, nil)
 
 	for _, want := range []string{
+		"**Preferred path:** run `cobuild orchestrate <id>`",
+		"prefer `cobuild orchestrate <id>`",
+		"| **`cobuild orchestrate <id>`** | **Preferred foreground driver for running a pipeline end-to-end** |",
 		"### Non-code tasks",
 		"`completion_mode: direct`",
 		"CoBuild will use the direct path for `completion_mode: direct`",

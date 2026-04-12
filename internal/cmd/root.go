@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ COMMANDS:
   improve                        Suggest pipeline improvements
 
   init <shard-id>                Initialize pipeline on a design
+  orchestrate <shard-id>         Run a pipeline in the foreground
   show <shard-id>                Display pipeline state
   gate <shard-id> <gate-name>    Record a gate verdict
   review <shard-id>              Phase 1 readiness review
@@ -162,9 +164,75 @@ var versionCmd = &cobra.Command{
 // Execute runs the root command.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		if shouldPrintCommandError(err) {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(commandExitCode(err))
 	}
+}
+
+type commandExitCoder interface {
+	ExitCode() int
+}
+
+type commandExitError struct {
+	err   error
+	code  int
+	print bool
+}
+
+func (e *commandExitError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *commandExitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func (e *commandExitError) ExitCode() int {
+	if e == nil || e.code == 0 {
+		return 1
+	}
+	return e.code
+}
+
+func commandErrorWithExitCode(err error, code int) error {
+	return commandErrorWithExitCodeAndPrint(err, code, true)
+}
+
+func commandErrorWithExitCodeAndPrint(err error, code int, print bool) error {
+	if err == nil {
+		return nil
+	}
+	return &commandExitError{err: err, code: code, print: print}
+}
+
+func commandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var coder commandExitCoder
+	if errors.As(err, &coder) {
+		return coder.ExitCode()
+	}
+	return 1
+}
+
+func shouldPrintCommandError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *commandExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.print
+	}
+	return true
 }
 
 func init() {

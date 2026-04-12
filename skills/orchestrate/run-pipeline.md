@@ -8,6 +8,16 @@ summary: >-
 
 # Skill: Run a CoBuild pipeline end-to-end
 
+## Prefer `cobuild orchestrate <id>`
+
+If the `cobuild orchestrate <id>` command is available, use that first. It is the preferred foreground path and already implements the dispatch, poll, review, and phase-advance loop in Go with structured log output.
+
+Use the manual in-session loop in this skill only when:
+
+- you are on an older build that does not have `cobuild orchestrate`
+- you are debugging the foreground driver itself
+- you need to inspect or intervene in a pipeline step-by-step beyond what `--step` mode provides
+
 You are the **orchestrator agent**. A user has asked you to run a CoBuild pipeline for a work item (design, bug, or task). This skill tells you how to do that from cold start to done — or to a legitimate stopping point — without bothering the user with CoBuild internals.
 
 **Do not interleave your own reasoning about what phase needs what command.** CoBuild already knows. Follow the output of each command, fall back to `cobuild next <id>` when unsure, and only return to the user on real events.

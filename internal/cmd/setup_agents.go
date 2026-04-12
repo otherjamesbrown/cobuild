@@ -182,6 +182,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	// "reasoning from the docs" about which phase needs what — the CLI
 	// already tells them, they just need to follow its output.
 	sb.WriteString("## For orchestrators — the ONLY thing you need to know\n\n")
+	sb.WriteString("**Preferred path:** run `cobuild orchestrate <id>` and let the foreground driver walk the pipeline for you. Use the manual in-session loop below only when the command is unavailable or when you are deliberately debugging pipeline behavior.\n\n")
 	sb.WriteString("Every CoBuild command prints a `Next step:` line telling you exactly what to run next. **Follow it mechanically.** Do not reason about which phase needs which command — that's what the CLI is for.\n\n")
 	sb.WriteString("The loop:\n\n")
 	sb.WriteString("1. `cobuild init <id>` (if the pipeline doesn't exist yet)\n")
@@ -191,7 +192,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("5. **Report back to the user with what shipped.** Not \"dispatched, let me know when you're ready\" — wait for completion, then summarise the outcome.\n\n")
 	sb.WriteString("If you are ever unsure what to run next, run `cobuild next <id>` — it prints the single concrete command for the current state.\n\n")
 	sb.WriteString("Do NOT execute phase work yourself (decompose, review, investigate, etc.) just because you could. **Every phase has a skill and a dispatched CoBuild agent runs it.** Your only job as orchestrator is to type the commands, follow the output, and report the result when it's done.\n\n")
-	sb.WriteString("**When a user asks you to run/orchestrate/complete a shard through CoBuild end-to-end, load the `skills/orchestrate/run-pipeline.md` skill and follow it.** That skill is the single source of truth for the orchestrator loop, per-phase actions, failure modes, and the structured report format. Do not reason about what to do from memory — load the skill and follow it mechanically.\n\n")
+	sb.WriteString("**When a user asks you to run/orchestrate/complete a shard through CoBuild end-to-end, prefer `cobuild orchestrate <id>`.** Load the `skills/orchestrate/run-pipeline.md` skill only when you need the exceptional manual loop or you are diagnosing foreground-driver behavior. Do not reason about what to do from memory.\n\n")
 
 	// Explicit rule — dispatch is NOT the end of your turn
 	sb.WriteString("## Dispatch is not a handoff to the user\n\n")
@@ -241,6 +242,7 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("| Command | When to use |\n")
 	sb.WriteString("|---------|------------|\n")
 	sb.WriteString("| `cobuild init <id>` | Submit a design/bug/task to the pipeline |\n")
+	sb.WriteString("| **`cobuild orchestrate <id>`** | **Preferred foreground driver for running a pipeline end-to-end** |\n")
 	sb.WriteString("| `cobuild dispatch <task-id>` | Dispatch to a dispatched CoBuild agent (works for every phase) |\n")
 	sb.WriteString("| **`cobuild next <id>`** | **Print the single next command to run for a pipeline — use when confused** |\n")
 	sb.WriteString("| `cobuild dispatch-wave <design-id>` | Dispatch all ready tasks in a wave |\n")

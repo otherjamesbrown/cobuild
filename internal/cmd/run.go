@@ -20,12 +20,14 @@ in autonomous mode.
 Use this when you want to hand a design or bug to CoBuild and walk away.
 The poller will dispatch agents, wait for completion, advance phases,
 merge PRs, and run retrospectives.`,
-	Args:    cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	Example: `  cobuild run pf-design-123         # hand to poller for full processing
-  cobuild run pf-bug-456            # investigate → fix → review → done`,
+  cobuild run pf-bug-456            # investigate → fix → review → done
+  cobuild run pf-design-123 --inline # run in the foreground via orchestrate`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		id := args[0]
+		inline, _ := cmd.Flags().GetBool("inline")
 
 		if cbStore == nil {
 			return fmt.Errorf("no store configured")
@@ -34,8 +36,11 @@ merge PRs, and run retrospectives.`,
 		// Check if pipeline run exists
 		run, err := cbStore.GetRun(ctx, id)
 		if err != nil {
-			// No pipeline run — init one in autonomous mode
-			fmt.Printf("No pipeline run found — initialising in autonomous mode...\n")
+			modeLabel := "autonomous"
+			if inline {
+				modeLabel = "manual"
+			}
+			fmt.Printf("No pipeline run found — initialising in %s mode...\n", modeLabel)
 
 			// Determine start phase
 			startPhase := "design"
@@ -54,23 +59,40 @@ merge PRs, and run retrospectives.`,
 				}
 			}
 
-			run, err = cbStore.CreateRunWithMode(ctx, id, projectName, startPhase, "autonomous")
+			runMode := "autonomous"
+			if inline {
+				runMode = "manual"
+			}
+			run, err = cbStore.CreateRunWithMode(ctx, id, projectName, startPhase, runMode)
 			if err != nil {
 				return fmt.Errorf("init pipeline: %w", err)
 			}
-			fmt.Printf("Initialised pipeline on %s (autonomous)\n", id)
+			fmt.Printf("Initialised pipeline on %s (%s)\n", id, runMode)
 			fmt.Printf("  Phase: %s\n", run.CurrentPhase)
 		} else {
-			// Pipeline exists — switch to autonomous
-			if err := cbStore.SetRunMode(ctx, id, "autonomous"); err != nil {
-				return fmt.Errorf("set autonomous mode: %w", err)
+			runMode := "autonomous"
+			if inline {
+				runMode = "manual"
 			}
-			fmt.Printf("Pipeline %s switched to autonomous mode\n", id)
+			// Pipeline exists — switch mode to match the requested driver.
+			if err := cbStore.SetRunMode(ctx, id, runMode); err != nil {
+				return fmt.Errorf("set %s mode: %w", runMode, err)
+			}
+			fmt.Printf("Pipeline %s switched to %s mode\n", id, runMode)
 			fmt.Printf("  Phase: %s\n", run.CurrentPhase)
+		}
+
+		if inline {
+			fmt.Printf("Running %s in the foreground via `cobuild orchestrate %s`.\n", id, id)
+			return orchestrateCmd.RunE(orchestrateCmd, []string{id})
 		}
 
 		printNextStep(id, "", "run")
 
 		return nil
 	},
+}
+
+func init() {
+	runCmd.Flags().Bool("inline", false, "Run in the foreground via `cobuild orchestrate` instead of handing off to the poller")
 }
