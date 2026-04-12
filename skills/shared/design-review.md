@@ -124,3 +124,7 @@ This starts the pipeline. The formal readiness gate will run automatically.
 - Do not flag "no PR" or "no branch" — implementation hasn't started
 - This is a pre-flight check, not a gate. The formal gate runs after `cobuild init`
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+After reporting the readiness verdict and, if confirmed, running `cobuild init <design-id>`, stop here. Do not run `cobuild complete` from this pre-flight review skill. Exit the session with `/exit`.

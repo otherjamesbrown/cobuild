@@ -242,3 +242,6 @@ cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of
 ## Final Step
 
 After you have created the tasks, recorded the gate verdict, and finished all required notes, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly and the runner can continue.
+## Final step
+
+After creating the child tasks and recording the decomposition gate verdict, stop. This gate skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

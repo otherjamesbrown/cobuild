@@ -35,3 +35,7 @@ cobuild wi label add <id> blocked
 - Use `cobuild review`. It creates the audit trail, review sub-shard, and phase transition.
 - Do not manually update the phase from `design`.
 - If the design fails implementability and you cannot state what is missing, escalate.
+
+## Final step
+
+After recording the design verdict and applying any required label, stop. This phase guide is not a dispatched task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

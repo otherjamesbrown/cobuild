@@ -239,3 +239,7 @@ it. Proposed update adds a section describing `retry_limit` accurately.
   complete but the PR introduced something noteworthy that the article omits —
   e.g. a new CLI flag that would help users but isn't mentioned yet.
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+After writing the verdict file and printing the JSON, stop. Do not edit repo files, do not run `cobuild complete`, and do not stay at an interactive prompt. Exit the session with `/exit`.

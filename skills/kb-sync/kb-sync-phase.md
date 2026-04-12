@@ -140,3 +140,5 @@ All verdict values advance the work item to `done`. This phase is non-blocking.
 ## On completion
 
 When all articles are processed and the gate verdict is recorded, this phase is complete. CoBuild will advance the work item to `done`.
+
+Do not run `cobuild complete` from this phase skill. Once the gate verdict is recorded and any required follow-up shards are logged, exit the session with `/exit`.

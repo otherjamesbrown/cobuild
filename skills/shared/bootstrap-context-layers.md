@@ -134,3 +134,7 @@ context:
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+When the context layers are configured and verified, stop here. Do not run `cobuild complete` from this bootstrap skill. Exit the session with `/exit`.

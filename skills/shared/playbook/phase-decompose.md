@@ -41,3 +41,7 @@ cobuild decompose <id> --verdict pass --body "<rationale>"
 - Do not manually update the phase. `cobuild decompose` validates and advances.
 - The integration test task is mandatory. The gate should fail without it.
 - If you find circular dependencies or cannot assign ownership cleanly, escalate.
+
+## Final step
+
+After creating the tasks and recording the decomposition verdict, stop. This phase guide is not a dispatched task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

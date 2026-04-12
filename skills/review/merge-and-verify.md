@@ -44,3 +44,6 @@ Inspect the parent design's task graph. If every child task is now closed, advan
 ## Final Step
 
 After you have finished the merge verification work and recorded the outcome, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.
+## Final step
+
+After merge handling and post-merge verification are recorded, stop. This merge skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

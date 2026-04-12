@@ -218,6 +218,10 @@ Tally the results and produce the verdict.
 
 **Verdict logic**:
 - `fail` — if ANY claim has status `not_found`
+
+## Final step
+
+After writing the verdict JSON and printing it to stdout, stop. Do not modify repo files, do not run `cobuild complete`, and do not wait for more interaction in this session. Exit the session with `/exit`.
 - `pass` — if all claims are `verified` or `ambiguous` (no `not_found`)
 
 Produce the output JSON:

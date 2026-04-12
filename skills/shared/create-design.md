@@ -175,3 +175,7 @@ Format: `<What changes> — <one-line summary>`
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+Once the design or bug has been created and any links or labels are applied, stop here. Do not run `cobuild complete` from this creation skill. Exit the session with `/exit`.

@@ -155,3 +155,6 @@ The implementing agent receives the fix task — it has everything needed to fix
 ## Final Step
 
 After you have appended the investigation report, created any required fix task, and written the gate verdict, exit the session immediately. Run `/exit` so the runner can record completion.
+## Final step
+
+After appending the investigation report and creating any required fix task, stop. This investigation skill is read-only and not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

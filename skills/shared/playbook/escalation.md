@@ -31,3 +31,7 @@ cobuild wi label add <id> blocked
 | Max concurrent agents | 3 | Queue dispatches |
 | Stall timeout | 30m | Run the configured health action |
 | Max retries per task | 3 | Escalate |
+
+## Final step
+
+After appending the escalation note and applying any blocking label, stop routing work in this session. Do not run `cobuild complete` from this escalation guide. Exit the session with `/exit`.

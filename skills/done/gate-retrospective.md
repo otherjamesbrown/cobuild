@@ -107,3 +107,6 @@ cobuild wi links add <retro-id> --references <design-id>
 ## Final Step
 
 After you have created and linked the retrospective knowledge shard, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.
+## Final step
+
+After recording the retrospective findings and any follow-up improvements, stop. This done-phase gate skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

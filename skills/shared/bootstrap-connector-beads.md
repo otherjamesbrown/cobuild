@@ -99,3 +99,7 @@ connectors:
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+When the connector is configured and the verification checklist is complete, stop here. Do not run `cobuild complete` from this bootstrap skill. Exit the session with `/exit`.

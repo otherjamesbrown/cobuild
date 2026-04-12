@@ -171,3 +171,7 @@ This project uses [CoBuild](https://github.com/otherjamesbrown/cobuild) for pipe
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+When `.cobuild/AGENTS.md` and the CLAUDE.md pointer are in place and verified, stop here. Do not run `cobuild complete` from this bootstrap skill. Exit the session with `/exit`.

@@ -48,3 +48,6 @@ Do NOT record implementability separately. Include it in the `--body` of `cobuil
 ## Final Step
 
 This check is part of the readiness-review flow. Once you have finished the readiness review work, exit the session immediately with `/exit`.
+## Final step
+
+After finishing the implementability assessment and handing its findings back to the readiness review flow, stop. Do not run `cobuild complete` from this reference skill. Exit the session with `/exit`.

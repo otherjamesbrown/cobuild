@@ -51,3 +51,7 @@ If the current phase or symptom is unclear after `cobuild show <id>`, read `skil
 - Open one spoke at a time. The point is to keep orchestration context small.
 - Use the phase-specific command that records the audit trail. Do not hand-edit phase state if a gate command exists.
 - If a spoke tells you to escalate, stop routing and follow `skills/shared/playbook/escalation.md`.
+
+## Final step
+
+After taking the one concrete orchestration action for this run and unlocking the pipeline, stop. This playbook is orchestrator guidance, not a dispatched task-completion skill, so do not run `cobuild complete`. Exit the session with `/exit`.
