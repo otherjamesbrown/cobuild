@@ -47,10 +47,13 @@ stage, in plain language. This is "what does my pipeline actually do?"`,
 
 		// Build & test
 		if len(pCfg.Build) > 0 || len(pCfg.Test) > 0 {
-			fmt.Println("---\n")
-			fmt.Println("## Build & Test\n")
+			fmt.Println("---")
+			fmt.Println()
+			fmt.Println("## Build & Test")
+			fmt.Println()
 			if len(pCfg.Build) > 0 {
-				fmt.Println("Agents run these commands after implementing a task:\n")
+				fmt.Println("Agents run these commands after implementing a task:")
+				fmt.Println()
 				fmt.Println("| Step | Command |")
 				fmt.Println("|------|---------|")
 				for _, c := range pCfg.Build {
@@ -65,9 +68,12 @@ stage, in plain language. This is "what does my pipeline actually do?"`,
 
 		// Deploy
 		if len(pCfg.Deploy.Services) > 0 {
-			fmt.Println("---\n")
-			fmt.Println("## Deploy\n")
-			fmt.Println("After PRs merge, CoBuild deploys services whose files changed:\n")
+			fmt.Println("---")
+			fmt.Println()
+			fmt.Println("## Deploy")
+			fmt.Println()
+			fmt.Println("After PRs merge, CoBuild deploys services whose files changed:")
+			fmt.Println()
 			fmt.Println("| Service | Trigger | Deploy | Smoke Test | Rollback |")
 			fmt.Println("|---------|---------|--------|------------|----------|")
 			for _, svc := range pCfg.Deploy.Services {
