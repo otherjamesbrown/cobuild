@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,10 @@ func TestRunDeployReturnsSentinel(t *testing.T) {
 	if deployErr.ShardID != "cb-deploy" || deployErr.Phase != "deploy" {
 		t.Fatalf("deploy error = %+v, want shard/phase populated", deployErr)
 	}
+	report := Report(err)
+	if report.Reason != StopReasonDeployApproval || report.ExitCode != 2 {
+		t.Fatalf("deploy report = %+v, want deploy-approval exit code 2", report)
+	}
 }
 
 func TestRunDispatchesAndWaitsForPhaseAdvance(t *testing.T) {
@@ -104,7 +109,7 @@ func TestRunDispatchesAndWaitsForPhaseAdvance(t *testing.T) {
 	}
 }
 
-func TestRunTimeoutIncludesShardAndPhase(t *testing.T) {
+func TestRunTimeoutIncludesShardAndBlockingTasks(t *testing.T) {
 	source := &fakePhaseSource{phases: []string{"fix", "fix", "fix", "fix"}}
 	dispatcher := &fakeDispatcher{}
 	clock := &fakeClock{current: time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)}
@@ -113,7 +118,14 @@ func TestRunTimeoutIncludesShardAndPhase(t *testing.T) {
 		PhaseTimeout: 2 * time.Second,
 		Now:          clock.Now,
 		Sleep:        clock.Sleep,
-		Reviewer:     ReviewProcessFunc(func(context.Context, string) (ReviewResult, error) { return ReviewResult{}, nil }),
+		Reviewer: ReviewProcessFunc(func(context.Context, string) (ReviewResult, error) { return ReviewResult{}, nil }),
+		Monitor: &fakeMonitor{
+			snapshots: []*ProgressSnapshot{
+				{BlockingTaskIDs: []string{"cb-task-a", "cb-task-b"}},
+				{BlockingTaskIDs: []string{"cb-task-a", "cb-task-b"}},
+				{BlockingTaskIDs: []string{"cb-task-a", "cb-task-b"}},
+			},
+		},
 	})
 
 	err := runner.Run(context.Background(), "cb-timeout")
@@ -126,6 +138,12 @@ func TestRunTimeoutIncludesShardAndPhase(t *testing.T) {
 	}
 	if timeoutErr.ShardID != "cb-timeout" || timeoutErr.Phase != "fix" {
 		t.Fatalf("timeout error = %+v, want shard/phase populated", timeoutErr)
+	}
+	if got := strings.Join(timeoutErr.BlockingTaskIDs, ","); got != "cb-task-a,cb-task-b" {
+		t.Fatalf("blocking task ids = %q, want cb-task-a,cb-task-b", got)
+	}
+	if report := Report(err); report.Reason != StopReasonTimeout || len(report.BlockingTaskIDs) != 2 {
+		t.Fatalf("timeout report = %+v, want timeout with blocking task IDs", report)
 	}
 }
 
@@ -319,6 +337,87 @@ func TestRunReviewProcessesPipelineItem(t *testing.T) {
 	assertMessages(t, logs.events, wantMessages)
 }
 
+func TestRunInterruptedReturnsStructuredStop(t *testing.T) {
+	source := &fakePhaseSource{phases: []string{"fix", "fix"}}
+	dispatcher := &fakeDispatcher{}
+	signalCh := make(chan os.Signal, 1)
+	sleepCalls := 0
+	runner := NewRunner(source, dispatcher, Options{
+		PollInterval: time.Minute,
+		PhaseTimeout: time.Hour,
+		Now:          fixedClock(),
+		SignalCh:     signalCh,
+		Sleep: func(ctx context.Context, _ time.Duration) error {
+			sleepCalls++
+			signalCh <- os.Interrupt
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+
+	err := runner.Run(context.Background(), "cb-interrupt")
+	if err == nil {
+		t.Fatalf("Run() error = nil, want interrupt")
+	}
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("Run() error = %v, want ErrInterrupted", err)
+	}
+	var interruptErr *InterruptedError
+	if !errors.As(err, &interruptErr) {
+		t.Fatalf("Run() error = %v, want InterruptedError", err)
+	}
+	if sleepCalls != 1 {
+		t.Fatalf("sleep calls = %d, want 1", sleepCalls)
+	}
+	report := Report(err)
+	if report.Reason != StopReasonInterrupted || !report.Recoverable {
+		t.Fatalf("interrupt report = %+v, want interrupted recoverable stop", report)
+	}
+}
+
+func TestRunReturnsBlockedErrorFromMonitor(t *testing.T) {
+	source := &fakePhaseSource{phases: []string{"fix", "fix"}}
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(source, dispatcher, Options{
+		PollInterval: time.Second,
+		PhaseTimeout: time.Minute,
+		Now:          fixedClock(),
+		Sleep:        immediateSleep,
+		Monitor: &fakeMonitor{
+			snapshots: []*ProgressSnapshot{
+				{BlockingTaskIDs: []string{"cb-task-1"}},
+				{
+					BlockingTaskIDs: []string{"cb-task-1"},
+					Blocker: &Blocker{
+						Reason:          StopReasonBlockedReview,
+						Message:         "critical review findings require manual resolution",
+						BlockingTaskIDs: []string{"cb-task-1"},
+						Recoverable:     true,
+					},
+				},
+			},
+		},
+	})
+
+	err := runner.Run(context.Background(), "cb-blocked")
+	if err == nil {
+		t.Fatalf("Run() error = nil, want blocked error")
+	}
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("Run() error = %v, want ErrBlocked", err)
+	}
+	var blockedErr *BlockedError
+	if !errors.As(err, &blockedErr) {
+		t.Fatalf("Run() error = %v, want BlockedError", err)
+	}
+	if blockedErr.Reason != StopReasonBlockedReview {
+		t.Fatalf("blocker reason = %s, want %s", blockedErr.Reason, StopReasonBlockedReview)
+	}
+	if got := strings.Join(blockedErr.BlockingTaskIDs, ","); got != "cb-task-1" {
+		t.Fatalf("blocking task ids = %q, want cb-task-1", got)
+	}
+}
+
 type fakePhaseSource struct {
 	phases []string
 	index  int
@@ -343,6 +442,23 @@ type fakeDispatcher struct {
 func (f *fakeDispatcher) Dispatch(_ context.Context, _ string) error {
 	f.calls++
 	return nil
+}
+
+type fakeMonitor struct {
+	snapshots []*ProgressSnapshot
+	index     int
+}
+
+func (f *fakeMonitor) Snapshot(_ context.Context, _, _ string) (*ProgressSnapshot, error) {
+	if len(f.snapshots) == 0 {
+		return nil, nil
+	}
+	if f.index >= len(f.snapshots) {
+		return f.snapshots[len(f.snapshots)-1], nil
+	}
+	snapshot := f.snapshots[f.index]
+	f.index++
+	return snapshot, nil
 }
 
 type capturedEvents struct {

@@ -39,6 +39,7 @@ type Options struct {
 	Reviewer       ReviewProcessor
 	OnEvent        EventHandler
 	BeforeStep     func(ctx context.Context, shardID, phase string) error
+	Monitor        ProgressMonitor
 	SignalCh       <-chan os.Signal
 	Now            func() time.Time
 	Sleep          func(ctx context.Context, d time.Duration) error
@@ -123,6 +124,9 @@ func (r *Runner) step(ctx context.Context, shardID, phase string) error {
 
 	r.emit(shardID, phase, EventDispatch, fmt.Sprintf("Phase: %s -> dispatching", phase))
 	if err := r.dispatcher.Dispatch(ctx, shardID); err != nil {
+		if errors.Is(err, ErrInterrupted) {
+			return &InterruptedError{ShardID: shardID, Phase: phase}
+		}
 		return fmt.Errorf("dispatch %s for shard %s: %w", phase, shardID, err)
 	}
 	return nil
@@ -130,21 +134,26 @@ func (r *Runner) step(ctx context.Context, shardID, phase string) error {
 
 func (r *Runner) waitForPhaseAdvance(ctx context.Context, shardID, phase string) (string, error) {
 	deadline := r.opts.Now().Add(r.opts.PhaseTimeout)
+	lastSnapshot, err := r.snapshot(ctx, shardID, phase)
+	if err != nil {
+		return "", err
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return "", normalizeContextError(ctx, err)
+			return "", wrapStopError(shardID, phase, normalizeContextError(ctx, err))
 		}
 		if !deadline.IsZero() && !r.opts.Now().Before(deadline) {
 			return "", &TimeoutError{
-				ShardID: shardID,
-				Phase:   phase,
-				Timeout: r.opts.PhaseTimeout,
+				ShardID:         shardID,
+				Phase:           phase,
+				Timeout:         r.opts.PhaseTimeout,
+				BlockingTaskIDs: blockingTaskIDs(lastSnapshot, shardID, phase),
 			}
 		}
 
 		if err := r.opts.Sleep(ctx, r.opts.PollInterval); err != nil {
-			return "", normalizeContextError(ctx, err)
+			return "", wrapStopError(shardID, phase, normalizeContextError(ctx, err))
 		}
 
 		currentPhase, err := r.phases.CurrentPhase(ctx, shardID)
@@ -155,6 +164,22 @@ func (r *Runner) waitForPhaseAdvance(ctx context.Context, shardID, phase string)
 		if currentPhase != phase {
 			r.emit(shardID, phase, EventTransition, fmt.Sprintf("Phase: %s -> %s", phase, currentPhase))
 			return currentPhase, nil
+		}
+
+		lastSnapshot, err = r.snapshot(ctx, shardID, phase)
+		if err != nil {
+			return "", err
+		}
+		if lastSnapshot != nil && lastSnapshot.Blocker != nil {
+			blocker := lastSnapshot.Blocker
+			return "", &BlockedError{
+				ShardID:         shardID,
+				Phase:           phase,
+				Reason:          blocker.Reason,
+				Message:         blocker.Message,
+				BlockingTaskIDs: blockingTaskIDs(lastSnapshot, shardID, phase),
+				Recoverable:     blocker.Recoverable,
+			}
 		}
 
 		r.emit(shardID, phase, EventPoll, fmt.Sprintf("Phase: %s -> still waiting", phase))
@@ -205,6 +230,13 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+func (r *Runner) snapshot(ctx context.Context, shardID, phase string) (*ProgressSnapshot, error) {
+	if r.opts.Monitor == nil {
+		return nil, nil
+	}
+	return r.opts.Monitor.Snapshot(ctx, shardID, phase)
+}
+
 func signalAwareContext(ctx context.Context, ch <-chan os.Signal) (context.Context, context.CancelFunc) {
 	if ch == nil {
 		return ctx, func() {}
@@ -228,4 +260,29 @@ func normalizeContextError(ctx context.Context, err error) error {
 		}
 	}
 	return err
+}
+
+func wrapStopError(shardID, phase string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrInterrupted) {
+		return &InterruptedError{ShardID: shardID, Phase: phase}
+	}
+	return err
+}
+
+func blockingTaskIDs(snapshot *ProgressSnapshot, shardID, phase string) []string {
+	if snapshot != nil {
+		if snapshot.Blocker != nil && len(snapshot.Blocker.BlockingTaskIDs) > 0 {
+			return append([]string(nil), snapshot.Blocker.BlockingTaskIDs...)
+		}
+		if len(snapshot.BlockingTaskIDs) > 0 {
+			return append([]string(nil), snapshot.BlockingTaskIDs...)
+		}
+	}
+	if phase == "" || shardID == "" {
+		return nil
+	}
+	return []string{shardID}
 }
