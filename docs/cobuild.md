@@ -445,7 +445,7 @@ Copies these skill files into the repo's skills directory:
 | Skill | Purpose |
 |-------|---------|
 | `shared/create-design.md` | Design authoring guide (structure, implementability) |
-| `shared/playbook.md` | M's decision trees, phase rules, commands |
+| `shared/playbook.md` + `shared/playbook/*.md` | M's routing hub plus phase-specific decision trees |
 | `design/gate-readiness-review.md` | Phase 1 readiness + implementability evaluation |
 | `design/implementability.md` | Implementability criteria reference |
 | `implement/dispatch-task.md` | Phase 3 task dispatch procedure |

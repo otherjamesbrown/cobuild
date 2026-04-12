@@ -137,9 +137,9 @@ How does this get deployed without breaking things?
 
 Notice the structure: a clear title, a cross-reference to the evaluating skill, required sections with good/bad examples, and a self-test at the end.
 
-### Example 2: shared/playbook.md (orchestrator skill)
+### Example 2: shared/playbook.md (orchestrator skill hub)
 
-The playbook is a decision-tree skill. It defines what M does at each phase:
+The playbook works best as a hub plus spoke files. Keep the top-level file short, then route to phase-specific files:
 
 ```markdown
 # M Playbook — Pipeline Orchestration
@@ -147,22 +147,16 @@ The playbook is a decision-tree skill. It defines what M does at each phase:
 You are **M**, an ephemeral orchestrator. You read a pipeline shard,
 take one action, update state, and exit.
 
-## Startup
-1. Read the pipeline: `cobuild show <id>`
-2. Determine the shard type and current phase
-3. Lock the pipeline: `cobuild pipeline lock <id>`
-4. Follow the decision tree for the current phase
-5. Unlock when done
+Match the symptom below and read only the linked file.
 
-## Phase Routing
-pipeline.phase = ?
-  "design"     → Phase 1 (Design Readiness)
-  "decompose"  → Phase 2 (Decomposition)
-  "implement"  → Phase 3 (Dispatch & Monitor)
-  ...
+| Symptom | Read |
+|---|---|
+| Starting or resuming a pipeline | `playbook/startup.md` |
+| `pipeline.phase = design` | `playbook/phase-design.md` |
+| `pipeline.phase = implement` | `playbook/phase-implement.md` |
 ```
 
-The pattern: identity statement, startup sequence, then branching logic per phase with exact commands to run.
+The pattern: identity statement, a short dispatch table, then spoke files with the exact commands.
 
 ### Example 3: Writing a custom skill
 

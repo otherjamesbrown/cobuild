@@ -24,6 +24,13 @@ var defaultSkills = []string{
 	"review/merge-and-verify.md",
 	"done/gate-retrospective.md",
 	"shared/playbook.md",
+	"shared/playbook/startup.md",
+	"shared/playbook/phase-design.md",
+	"shared/playbook/phase-decompose.md",
+	"shared/playbook/phase-implement.md",
+	"shared/playbook/phase-review.md",
+	"shared/playbook/phase-done.md",
+	"shared/playbook/escalation.md",
 	"shared/create-design.md",
 	"shared/design-review.md",
 }
@@ -64,16 +71,32 @@ Existing files are not overwritten unless --force or --update is specified.`,
 
 		destDir := filepath.Join(repoRoot, skillsDir)
 
-		// Source directories — check cobuild repo, global, context-palace
+		// Source directories — prefer the current git worktree when available,
+		// then fall back to the registered cobuild repo and global installs.
 		home, _ := os.UserHomeDir()
-		sourceDirs := []string{
-			filepath.Join(home, ".cobuild", "skills"),
+		sourceDirs := []string{}
+		cwd, _ := os.Getwd()
+		if cwd != "" {
+			if cwdRepo, err := client.GitRepoRoot(cwd); err == nil {
+				sourceDirs = append(sourceDirs, filepath.Join(cwdRepo, "skills"))
+			}
 		}
 		// Add cobuild repo itself as source (for development)
 		cobuildRepo, _ := config.RepoForProject("cobuild")
 		if cobuildRepo != "" {
-			sourceDirs = append([]string{filepath.Join(cobuildRepo, "skills")}, sourceDirs...)
+			sourcePath := filepath.Join(cobuildRepo, "skills")
+			seen := false
+			for _, existing := range sourceDirs {
+				if existing == sourcePath {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				sourceDirs = append(sourceDirs, sourcePath)
+			}
 		}
+		sourceDirs = append(sourceDirs, filepath.Join(home, ".cobuild", "skills"))
 
 		if dryRun {
 			fmt.Printf("Would create: %s/\n", destDir)
