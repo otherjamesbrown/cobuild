@@ -41,11 +41,10 @@ func (r *Runtime) PreDispatch(_ context.Context, worktreePath string) error {
 	return ensureClaudeTrust(worktreePath)
 }
 
-// settingsLocalJSON is the static JSON body written to
-// <worktree>/.claude/settings.local.json. It registers a Stop hook that runs
-// `cobuild complete --auto` when the agent session ends, and denies all
-// edits to the .claude directory so the agent can't disable its own hooks.
-const settingsLocalJSON = `{
+// settingsLocalImplement is written for implementation phases (implement, fix).
+// The Stop hook fires `cobuild complete --auto` so any uncommitted work is
+// pushed and a PR is created.
+const settingsLocalImplement = `{
   "hooks": {
     "Stop": [{
       "matcher": "",
@@ -64,17 +63,41 @@ const settingsLocalJSON = `{
   }
 }`
 
-// WriteSettings writes .claude/settings.local.json into the worktree. The
-// hook registration makes the Stop event fire `cobuild complete --auto` on
-// session end, and the deny list prevents the agent from editing its own
-// hook configuration.
+// settingsLocalGate is written for gate phases (design, decompose, review,
+// investigate, done). No Stop hook — gate verdict processing is handled by
+// the runner script after the agent exits, reading .cobuild/gate-verdict.json.
+// Running `cobuild complete` on a gate phase would misidentify the session as
+// a direct-mode task (no code changes) and skip the real gate logic.
+const settingsLocalGate = `{
+  "permissions": {
+    "deny": [
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "MultiEdit(.claude/**)"
+    ]
+  }
+}`
+
+// WriteSettings writes .claude/settings.local.json into the worktree. For
+// implementation phases, the Stop hook fires `cobuild complete --auto`; for
+// gate phases the hook is omitted (the runner script handles gate verdicts).
 func (r *Runtime) WriteSettings(worktreePath string) error {
 	settingsDir := filepath.Join(worktreePath, ".claude")
 	if err := os.MkdirAll(settingsDir, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", settingsDir, err)
 	}
 	path := filepath.Join(settingsDir, "settings.local.json")
-	if err := os.WriteFile(path, []byte(settingsLocalJSON), 0644); err != nil {
+
+	body := settingsLocalImplement
+	phaseFile := filepath.Join(worktreePath, ".cobuild", "phase")
+	if data, err := os.ReadFile(phaseFile); err == nil {
+		phase := strings.TrimSpace(string(data))
+		if runtime.IsGatePhase(phase) {
+			body = settingsLocalGate
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -83,20 +106,24 @@ func (r *Runtime) WriteSettings(worktreePath string) error {
 // BuildRunnerScript returns the full bash script that dispatch writes to a
 // temp file and spawns inside a tmux window. The script:
 //
-//  1. exports the COBUILD_* env vars (session id, task id, repo root, hooks dir)
-//     so the cobuild-event.sh hook script can link events to pipeline_sessions
-//  2. loads the prompt from the temp prompt file, saves a copy to
+//  1. exports the COBUILD_* env vars (session id, task id, repo root, hooks
+//     dir, phase) so hooks and post-completion logic know the dispatch context
+//  2. writes .cobuild/phase so WriteSettings can select the right settings
+//     template (Stop hook for implement/fix, no hook for gate phases)
+//  3. loads the prompt from the temp prompt file, saves a copy to
 //     .cobuild/last-prompt.md for debugging, and deletes the temp file
-//  3. runs `claude <flags> "$PROMPT"` in interactive mode (proven reliable
-//     for multi-turn work)
-//  4. post-hoc parses the newest ~/.claude/projects/*.jsonl transcript for
+//  4. runs `claude <flags> "$PROMPT"` in interactive mode
+//  5. post-hoc parses the newest ~/.claude/projects/*.jsonl transcript for
 //     usage data and appends it to .cobuild/dispatch.log
-//  5. removes itself ($0) and runs `cobuild complete <task-id>` from
-//     $COBUILD_REPO_ROOT (so the connector finds its config)
+//  6. phase-aware completion:
+//     - implement/fix: runs `cobuild complete <task-id>` (commit→PR→needs-review)
+//     - gate phases: reads .cobuild/gate-verdict.json and records the gate
+//       verdict via the appropriate cobuild subcommand (review, decompose, etc.)
 //
-// The Stop hook registered by WriteSettings will also invoke cobuild complete,
-// but with --auto — the trailing call in this script is the non-auto path
-// used when the Stop hook doesn't fire (e.g. agent exits with error).
+// For implement/fix phases, the Stop hook also invokes cobuild complete --auto
+// as a belt-and-braces measure. For gate phases, the Stop hook is omitted to
+// prevent cobuild complete from misidentifying the session as a direct-mode
+// task (no code changes) and short-circuiting the pipeline.
 func (r *Runtime) BuildRunnerScript(in runtime.RunnerInput) (string, error) {
 	if in.WorktreePath == "" {
 		return "", fmt.Errorf("BuildRunnerScript: WorktreePath required")
@@ -111,14 +138,17 @@ func (r *Runtime) BuildRunnerScript(in runtime.RunnerInput) (string, error) {
 		return "", fmt.Errorf("BuildRunnerScript: RepoRoot required")
 	}
 
-	// Resolve the final claude invocation flags. Default is interactive mode
-	// with skip-permissions; ExtraFlags overrides this if set from config.
-	// Byte-identical to the pre-refactor inline assembly — the `--model`
-	// argument is appended without shell quoting because claude model names
-	// are simple alphanumeric tokens.
+	// Resolve the final claude invocation flags.
+	// Gate phases use -p (print/headless) mode so the process exits
+	// automatically when the agent finishes — no reliance on the agent
+	// typing /exit. Implementation phases keep interactive mode for
+	// multi-turn editing work.
 	flags := "--dangerously-skip-permissions"
 	if in.ExtraFlags != "" {
 		flags = in.ExtraFlags
+	}
+	if runtime.IsGatePhase(in.Phase) {
+		flags += " -p --output-format json --max-turns 200"
 	}
 	if in.Model != "" {
 		flags += " --model " + in.Model
@@ -134,10 +164,12 @@ export COBUILD_SESSION_ID='%s'
 export COBUILD_HOOKS_DIR='%s'
 export COBUILD_TASK_ID='%s'
 export COBUILD_REPO_ROOT='%s'
+export COBUILD_PHASE='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
+echo "$COBUILD_PHASE" > .cobuild/phase
 echo "$COBUILD_SESSION_ID" > .cobuild/session_id
-echo "[$(date)] Dispatch starting (session: $COBUILD_SESSION_ID)" >> "$LOGFILE"
+echo "[$(date)] Dispatch starting (session: $COBUILD_SESSION_ID, phase: $COBUILD_PHASE)" >> "$LOGFILE"
 
 # Load prompt from temp file
 PROMPT_FILE='%s'
@@ -152,8 +184,19 @@ PROMPT=$(cat "$PROMPT_FILE")
 echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
 rm -f "$PROMPT_FILE"
 
-# Run claude in interactive mode (proven reliable for multi-turn work)
-claude %s "$PROMPT"
+# Run claude — gate phases use -p (headless) mode for auto-exit;
+# implement/fix use interactive mode for multi-turn work.
+if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
+    claude %s "$PROMPT"
+else
+    claude %s "$PROMPT" > .cobuild/session-result.json 2>&1
+    if [ -f .cobuild/session-result.json ] && command -v jq &>/dev/null; then
+        STOP=$(jq -r '.subtype // .stop_reason // "unknown"' .cobuild/session-result.json 2>/dev/null)
+        TURNS=$(jq -r '.num_turns // "?"' .cobuild/session-result.json 2>/dev/null)
+        COST=$(jq -r '.total_cost_usd // .cost_usd // "?"' .cobuild/session-result.json 2>/dev/null)
+        echo "[$(date)] Headless session: stop=$STOP turns=$TURNS cost=$COST" >> "$LOGFILE"
+    fi
+fi
 echo "[$(date)] Claude session ended" >> "$LOGFILE"
 
 # Parse transcript for token/cost data after session ends
@@ -172,19 +215,61 @@ fi
 # running process alive even after the file is unlinked on Unix.
 rm -f "$0"
 
-# Run completion from the main repo root (not worktree) so the connector
-# can find the Beads/Dolt database or CP config. The Stop hook does the
-# same via $COBUILD_REPO_ROOT.
-cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
-cobuild complete '%s'
+# Gate phases (design, decompose, review, done, investigate) don't produce
+# code — the agent writes its verdict to .cobuild/gate-verdict.json and
+# the runner records it post-exit. Implementation phases (implement, fix)
+# use cobuild complete for the commit→PR→needs-review flow.
+# The Stop hook handles cobuild complete for implement/fix; for gate phases
+# the Stop hook is omitted so we handle it here.
+if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
+    cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
+    cobuild complete '%s'
+elif [ -f .cobuild/gate-verdict.json ]; then
+    echo "[$(date)] Gate phase ($COBUILD_PHASE) — recording verdict from gate-verdict.json" >> "$LOGFILE"
+    cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
+    VERDICT_FILE="$OLDPWD/.cobuild/gate-verdict.json"
+
+    if command -v jq &>/dev/null; then
+        GATE=$(jq -r '.gate' "$VERDICT_FILE" 2>/dev/null)
+        SHARD_ID=$(jq -r '.shard_id' "$VERDICT_FILE" 2>/dev/null)
+        VERDICT=$(jq -r '.verdict' "$VERDICT_FILE" 2>/dev/null)
+        READINESS=$(jq -r '.readiness // empty' "$VERDICT_FILE" 2>/dev/null)
+        BODY=$(jq -r '.body' "$VERDICT_FILE" 2>/dev/null)
+
+        case "$GATE" in
+            readiness-review)
+                RCMD="cobuild review $SHARD_ID --verdict $VERDICT --readiness ${READINESS:-3} --body"
+                $RCMD "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            decomposition-review)
+                cobuild decompose "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            investigation)
+                cobuild investigate "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            retrospective)
+                cobuild retro "$SHARD_ID" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            *)
+                echo "[$(date)] Unknown gate type: $GATE" >> "$OLDPWD/$LOGFILE"
+                ;;
+        esac
+    else
+        echo "[$(date)] jq not found — cannot parse gate-verdict.json" >> "$OLDPWD/$LOGFILE"
+    fi
+else
+    echo "[$(date)] Gate phase ($COBUILD_PHASE) — no gate-verdict.json found" >> "$LOGFILE"
+fi
 `,
 		shellQuote(in.WorktreePath),
 		in.SessionID, // already safe (store-generated id, no special chars)
 		shellQuote(in.HooksDir),
 		shellQuote(in.TaskID),
 		shellQuote(in.RepoRoot),
+		shellQuote(in.Phase),
 		shellQuote(in.PromptFile),
-		flags,
+		flags, // interactive (implement/fix)
+		flags, // headless (gate phases)
 		shellQuote(in.TaskID),
 	)
 	return script, nil

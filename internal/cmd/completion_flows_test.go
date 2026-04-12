@@ -576,6 +576,19 @@ func (f *completionFakeStore) UpdateRunPhase(_ context.Context, designID, phase 
 	return nil
 }
 
+func (f *completionFakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
+	run, ok := f.runs[designID]
+	if !ok {
+		return fmt.Errorf("no pipeline run for %s", designID)
+	}
+	if run.CurrentPhase != expectedCurrent {
+		return fmt.Errorf("expected phase %q but pipeline is in %q: %w", expectedCurrent, run.CurrentPhase, store.ErrPhaseConflict)
+	}
+	run.CurrentPhase = nextPhase
+	run.UpdatedAt = time.Now()
+	return nil
+}
+
 func (f *completionFakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
 	run, ok := f.runs[designID]
 	if !ok {
@@ -592,6 +605,18 @@ func (f *completionFakeStore) SetRunMode(_ context.Context, designID, mode strin
 		return fmt.Errorf("no pipeline run for %s", designID)
 	}
 	run.Mode = mode
+	return nil
+}
+
+func (f *completionFakeStore) ResetRun(_ context.Context, designID, phase string) error {
+	run, ok := f.runs[designID]
+	if !ok {
+		return fmt.Errorf("no pipeline run for %s", designID)
+	}
+	run.CurrentPhase = phase
+	run.Status = "active"
+	delete(f.gates, designID)
+	delete(f.tasks, designID)
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/runtime"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,23 @@ Steps:
 		ctx := context.Background()
 		taskID := args[0]
 		autoFlag, _ := cmd.Flags().GetBool("auto")
+
+		// Phase guard: complete is only valid for implementation phases
+		// (implement, fix). Gate phases (design, decompose, investigate,
+		// review, done) use gate verdicts, not the commit→PR→needs-review
+		// flow. Firing complete on a gate phase would skip phases.
+		if cbStore != nil {
+			if run, err := cbStore.GetRun(ctx, taskID); err == nil {
+				if runtime.IsGatePhase(run.CurrentPhase) {
+					if autoFlag {
+						fmt.Fprintf(os.Stderr, "Warning: --auto: skipping complete for %s (gate phase %q)\n", taskID, run.CurrentPhase)
+						return nil
+					}
+					return fmt.Errorf("cannot complete %s: pipeline is in gate phase %q (use gate commands instead)", taskID, run.CurrentPhase)
+				}
+			}
+			// If no run found, proceed — may be a direct dispatch without pipeline tracking
+		}
 
 		task, err := conn.Get(ctx, taskID)
 		if err != nil {
@@ -204,13 +222,16 @@ Steps:
 		syncPipelineTaskStatus(ctx, taskID, "needs-review")
 
 		// Transition the pipeline run to the review phase so `cobuild status`
-		// reflects where the work actually is (cb-2e5044). Best-effort — a missing
-		// run is fine (direct dispatches without auto-create).
+		// reflects where the work actually is (cb-2e5044). Uses AdvancePhase
+		// with expected phase validation — the phase guard at the top already
+		// verified we're in an implementation phase.
 		if cbStore != nil {
-			if err := cbStore.UpdateRunPhase(ctx, taskID, "review"); err != nil {
-				// Silent on "no pipeline run" — happens for tasks with no tracked run
-				if !strings.Contains(err.Error(), "no pipeline run") {
-					fmt.Printf("Warning: failed to update pipeline run phase: %v\n", err)
+			run, _ := cbStore.GetRun(ctx, taskID)
+			if run != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, taskID, run.CurrentPhase, "review"); err != nil {
+					if !strings.Contains(err.Error(), "no pipeline run") {
+						fmt.Printf("Warning: failed to advance pipeline phase: %v\n", err)
+					}
 				}
 			}
 		}

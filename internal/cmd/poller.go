@@ -371,7 +371,13 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 				fmt.Printf("  [needs-review] %s — all tasks done, would advance %s to review\n", item.ID, designID)
 			} else {
 				fmt.Printf("  [needs-review] %s — all tasks done, advancing %s\n", item.ID, designID)
-				cbStore.UpdateRunPhase(ctx, designID, "review")
+				if run, err := cbStore.GetRun(ctx, designID); err == nil {
+					repoRoot, _ := config.RepoForProject(projectName)
+					pCfg, _ := config.LoadConfig(repoRoot)
+					if _, err := advancePipelinePhase(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase); err != nil {
+						fmt.Printf("  Warning: could not advance %s: %v\n", designID, err)
+					}
+				}
 			}
 		} else {
 			// Check if this task's wave is complete — dispatch next wave

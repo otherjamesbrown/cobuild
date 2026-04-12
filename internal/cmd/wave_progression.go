@@ -195,11 +195,12 @@ func completeDesignRun(ctx context.Context, designID string) error {
 	if cbStore == nil {
 		return nil
 	}
-	if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-		return fmt.Errorf("advance %s to done: %w", designID, err)
+	run, err := cbStore.GetRun(ctx, designID)
+	if err != nil {
+		return fmt.Errorf("get run for %s: %w", designID, err)
 	}
-	if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
-		return fmt.Errorf("mark %s completed: %w", designID, err)
-	}
+	repoRoot, _ := config.RepoForProject(projectName)
+	pCfg, _ := config.LoadConfig(repoRoot)
+	advanceDesignToCompleted(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase)
 	return nil
 }

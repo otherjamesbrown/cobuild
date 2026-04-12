@@ -18,6 +18,11 @@ import (
 // ErrNotFound is returned by Get* methods when the requested record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrPhaseConflict is returned by AdvancePhase when the pipeline's current
+// phase does not match the caller's expectedCurrentPhase. This prevents
+// stale or concurrent callers from advancing the pipeline out of order.
+var ErrPhaseConflict = errors.New("phase conflict")
+
 // Store abstracts CoBuild's internal data persistence.
 type Store interface {
 	// --- Pipeline Runs ---
@@ -27,8 +32,15 @@ type Store interface {
 	GetRun(ctx context.Context, designID string) (*PipelineRun, error)
 	ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error)
 	UpdateRunPhase(ctx context.Context, designID, phase string) error
+	// AdvancePhase atomically advances the pipeline phase, but only if the
+	// current phase matches expectedCurrent. Returns ErrPhaseConflict if
+	// another caller already advanced the phase. This is the preferred method
+	// for all normal phase transitions — UpdateRunPhase should only be used
+	// by admin/reset tools that intentionally force a phase.
+	AdvancePhase(ctx context.Context, designID, expectedCurrent, nextPhase string) error
 	UpdateRunStatus(ctx context.Context, designID, status string) error
 	SetRunMode(ctx context.Context, designID, mode string) error
+	ResetRun(ctx context.Context, designID, phase string) error
 
 	// --- Pipeline Gates ---
 

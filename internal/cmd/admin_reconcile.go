@@ -94,6 +94,8 @@ without going through cobuild merge.`,
 				action := "would advance"
 				if !dryRun {
 					action = "advancing"
+					// Admin tool: intentionally uses UpdateRunPhase (force) to repair
+					// pipelines that are stuck in an inconsistent state.
 					if err := cbStore.UpdateRunPhase(ctx, r.DesignID, "done"); err != nil {
 						fmt.Printf("  %-12s error advancing phase: %v\n", r.DesignID, err)
 						continue

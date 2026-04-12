@@ -509,10 +509,13 @@ func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
 	}
 	if allDone && cbStore != nil {
 		fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-		if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-			fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-		} else {
+		if run, err := cbStore.GetRun(ctx, designID); err == nil {
+			repoRoot, _ := config.RepoForProject(projectName)
+			pCfg, _ := config.LoadConfig(repoRoot)
+			advanceDesignToCompleted(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase)
 			reconciled = true
+		} else {
+			fmt.Printf("  Warning: no pipeline run for %s: %v\n", designID, err)
 		}
 	}
 

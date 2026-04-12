@@ -178,6 +178,19 @@ func (f *reviewFakeStore) UpdateRunPhase(_ context.Context, designID, phase stri
 	return nil
 }
 
+func (f *reviewFakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
+	run, ok := f.runs[designID]
+	if !ok {
+		return fmt.Errorf("no pipeline run for design %s", designID)
+	}
+	if run.CurrentPhase != expectedCurrent {
+		return fmt.Errorf("expected phase %q but pipeline is in %q: %w", expectedCurrent, run.CurrentPhase, store.ErrPhaseConflict)
+	}
+	run.CurrentPhase = nextPhase
+	f.updatePhases = append(f.updatePhases, struct{ designID, phase string }{designID: designID, phase: nextPhase})
+	return nil
+}
+
 func (f *reviewFakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
 	f.updateStatus = append(f.updateStatus, struct{ designID, status string }{designID: designID, status: status})
 	if run, ok := f.runs[designID]; ok {
@@ -187,6 +200,7 @@ func (f *reviewFakeStore) UpdateRunStatus(_ context.Context, designID, status st
 }
 
 func (f *reviewFakeStore) SetRunMode(context.Context, string, string) error { return nil }
+func (f *reviewFakeStore) ResetRun(context.Context, string, string) error   { return nil }
 
 func (f *reviewFakeStore) RecordGate(_ context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)

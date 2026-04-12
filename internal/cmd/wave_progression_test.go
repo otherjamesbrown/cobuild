@@ -21,9 +21,13 @@ func (s stubWaveStore) GetRun(context.Context, string) (*store.PipelineRun, erro
 func (s stubWaveStore) ListRuns(context.Context, string) ([]store.PipelineRunStatus, error) {
 	panic("not used")
 }
-func (s stubWaveStore) UpdateRunPhase(context.Context, string, string) error  { panic("not used") }
+func (s stubWaveStore) UpdateRunPhase(context.Context, string, string) error { panic("not used") }
+func (s stubWaveStore) AdvancePhase(context.Context, string, string, string) error {
+	panic("not used")
+}
 func (s stubWaveStore) UpdateRunStatus(context.Context, string, string) error { panic("not used") }
 func (s stubWaveStore) SetRunMode(context.Context, string, string) error      { panic("not used") }
+func (s stubWaveStore) ResetRun(context.Context, string, string) error        { panic("not used") }
 func (s stubWaveStore) RecordGate(context.Context, store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	panic("not used")
 }

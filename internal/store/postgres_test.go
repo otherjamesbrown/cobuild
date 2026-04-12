@@ -131,6 +131,56 @@ func TestPostgresStoreIsWaveClosed(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreAdvancePhase(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := newTestPostgresStore(t, ctx)
+	designID := fmt.Sprintf("cb-store-advance-%d", time.Now().UnixNano())
+
+	run, err := s.CreateRun(ctx, designID, "cobuild-test", "design")
+	if err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	_ = run
+
+	t.Cleanup(func() {
+		cleanupTestRun(t, ctx, s, designID)
+	})
+
+	// Happy path: advance design → decompose
+	if err := s.AdvancePhase(ctx, designID, "design", "decompose"); err != nil {
+		t.Fatalf("AdvancePhase(design→decompose) error = %v", err)
+	}
+	got, err := s.GetRun(ctx, designID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if got.CurrentPhase != "decompose" {
+		t.Fatalf("phase after advance = %q, want decompose", got.CurrentPhase)
+	}
+
+	// Conflict: try to advance from "design" again (stale caller)
+	err = s.AdvancePhase(ctx, designID, "design", "implement")
+	if err == nil {
+		t.Fatal("AdvancePhase(stale) error = nil, want ErrPhaseConflict")
+	}
+	if !strings.Contains(err.Error(), "phase conflict") {
+		t.Fatalf("AdvancePhase(stale) error = %v, want phase conflict", err)
+	}
+
+	// Correct advance from current phase works
+	if err := s.AdvancePhase(ctx, designID, "decompose", "implement"); err != nil {
+		t.Fatalf("AdvancePhase(decompose→implement) error = %v", err)
+	}
+
+	// Non-existent design
+	err = s.AdvancePhase(ctx, "cb-nonexistent", "design", "decompose")
+	if err == nil {
+		t.Fatal("AdvancePhase(nonexistent) error = nil, want error")
+	}
+}
+
 func newTestPostgresStore(t *testing.T, ctx context.Context) *PostgresStore {
 	t.Helper()
 

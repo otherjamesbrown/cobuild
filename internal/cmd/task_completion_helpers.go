@@ -161,11 +161,12 @@ func closeTaskAndAdvance(ctx context.Context, taskID string) {
 		if err := cbStore.UpdateTaskStatus(ctx, taskID, "closed"); err != nil {
 			fmt.Printf("Warning: failed to update pipeline task status: %v\n", err)
 		}
-		if err := cbStore.UpdateRunPhase(ctx, taskID, "done"); err != nil && !strings.Contains(err.Error(), "no pipeline run") {
-			fmt.Printf("Warning: failed to update task run phase: %v\n", err)
-		}
-		if err := cbStore.UpdateRunStatus(ctx, taskID, "completed"); err != nil && !strings.Contains(err.Error(), "no pipeline run") {
-			fmt.Printf("Warning: failed to update task run status: %v\n", err)
+		// Advance task's own pipeline run to done (if it has one).
+		// Use AdvancePhase so concurrent closures don't stomp each other.
+		if run, err := cbStore.GetRun(ctx, taskID); err == nil {
+			repoRoot, _ := config.RepoForProject(projectName)
+			pCfg, _ := config.LoadConfig(repoRoot)
+			advanceDesignToCompleted(ctx, cbStore, conn, pCfg, taskID, run.CurrentPhase)
 		}
 	}
 
@@ -188,11 +189,12 @@ func closeTaskAndAdvance(ctx context.Context, taskID string) {
 	}
 	if cbStore != nil {
 		fmt.Printf("\nAll tasks for %s are closed. Advancing to done phase.\n", designID)
-		if err := cbStore.UpdateRunPhase(ctx, designID, "done"); err != nil {
-			fmt.Printf("  Warning: failed to advance phase: %v\n", err)
-		}
-		if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
-			fmt.Printf("  Warning: failed to mark completed: %v\n", err)
+		if run, err := cbStore.GetRun(ctx, designID); err == nil {
+			repoRoot, _ := config.RepoForProject(projectName)
+			pCfg, _ := config.LoadConfig(repoRoot)
+			advanceDesignToCompleted(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase)
+		} else {
+			fmt.Printf("  Warning: no pipeline run for %s: %v\n", designID, err)
 		}
 	}
 }

@@ -1,0 +1,141 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/store"
+)
+
+// advancePipelinePhase is the single entry point for all normal phase
+// transitions. It resolves the next phase from the workflow config and
+// atomically advances the pipeline, failing if the current phase doesn't
+// match expectations.
+//
+// Every code path that advances a pipeline phase should call this function
+// instead of store.UpdateRunPhase directly. UpdateRunPhase is reserved for
+// admin/reset tools that intentionally force a phase.
+func advancePipelinePhase(
+	ctx context.Context,
+	st store.Store,
+	cn connector.Connector,
+	pCfg *config.Config,
+	designID string,
+	expectedCurrentPhase string,
+) (nextPhase string, err error) {
+	if st == nil {
+		return "", fmt.Errorf("no store configured")
+	}
+
+	nextPhase, err = resolveNextPhase(ctx, cn, pCfg, designID, expectedCurrentPhase)
+	if err != nil {
+		return "", err
+	}
+	if nextPhase == "" {
+		return "", fmt.Errorf("no next phase after %q for %s", expectedCurrentPhase, designID)
+	}
+
+	if err := st.AdvancePhase(ctx, designID, expectedCurrentPhase, nextPhase); err != nil {
+		return "", err
+	}
+	return nextPhase, nil
+}
+
+// advancePipelinePhaseTo advances to a specific target phase, still
+// validating the current phase matches expectations. Use this when
+// the caller knows the exact target (e.g. complete → review).
+func advancePipelinePhaseTo(
+	ctx context.Context,
+	st store.Store,
+	designID string,
+	expectedCurrentPhase string,
+	targetPhase string,
+) error {
+	if st == nil {
+		return fmt.Errorf("no store configured")
+	}
+	return st.AdvancePhase(ctx, designID, expectedCurrentPhase, targetPhase)
+}
+
+// resolveNextPhase determines the next phase using the workflow config.
+// Falls back to hardcoded gate-name mapping when config/connector unavailable.
+func resolveNextPhase(
+	ctx context.Context,
+	cn connector.Connector,
+	pCfg *config.Config,
+	designID string,
+	currentPhase string,
+) (string, error) {
+	// Primary: resolve from workflow config
+	if pCfg != nil && cn != nil {
+		if item, err := cn.Get(ctx, designID); err == nil && item != nil {
+			workflow := inferWorkflowFromType(item)
+			if next := pCfg.NextPhaseInWorkflow(workflow, currentPhase); next != "" {
+				return next, nil
+			}
+		}
+	}
+
+	// Fallback: hardcoded phase ordering for when config/connector unavailable.
+	// This matches the default workflows in config.DefaultConfig.
+	switch currentPhase {
+	case "design":
+		return "decompose", nil
+	case "decompose":
+		return "implement", nil
+	case "investigate":
+		return "implement", nil
+	case "fix":
+		return "review", nil
+	case "implement":
+		return "review", nil
+	case "review":
+		return "done", nil
+	case "kb-sync":
+		return "done", nil
+	default:
+		return "", fmt.Errorf("unknown phase %q for %s", currentPhase, designID)
+	}
+}
+
+// advanceDesignToCompleted marks a parent design's pipeline as done/completed.
+// Uses AdvancePhase with optimistic locking — if the design isn't in the
+// expected phase, it logs a warning instead of failing.
+func advanceDesignToCompleted(ctx context.Context, st store.Store, cn connector.Connector, pCfg *config.Config, designID, expectedPhase string) {
+	if st == nil {
+		return
+	}
+
+	// Already done — just ensure status is marked completed
+	if expectedPhase == "done" {
+		if err := st.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+			fmt.Printf("  Warning: failed to mark %s completed: %v\n", designID, err)
+		}
+		return
+	}
+
+	// Try workflow-aware advance first
+	next, err := advancePipelinePhase(ctx, st, cn, pCfg, designID, expectedPhase)
+	if err != nil {
+		// If the phase already moved past our expectation, that's fine —
+		// another path (poller, orchestrator) already advanced it.
+		fmt.Printf("  Warning: could not advance %s from %s: %v\n", designID, expectedPhase, err)
+		return
+	}
+
+	// If we advanced to an intermediate phase, keep going until done
+	for next != "done" && next != "" {
+		var err error
+		next, err = advancePipelinePhase(ctx, st, cn, pCfg, designID, next)
+		if err != nil {
+			fmt.Printf("  Warning: could not advance %s past %s: %v\n", designID, next, err)
+			return
+		}
+	}
+
+	if err := st.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+		fmt.Printf("  Warning: failed to mark %s completed: %v\n", designID, err)
+	}
+}

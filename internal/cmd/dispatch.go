@@ -231,7 +231,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
 			currentPhase = "fix"
 			if cbStore != nil {
-				if err := cbStore.UpdateRunPhase(ctx, task.ID, "fix"); err != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, "investigate", "fix"); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
 				}
 			}
@@ -655,12 +655,37 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		} else {
 			fmt.Printf("Dispatching %d tasks (parallel ready set) for %s:\n", len(ready), designID)
 		}
+		// Look up the parent design's pipeline run so we can register tasks
+		var pipelineID string
+		if cbStore != nil {
+			if run, err := cbStore.GetRun(ctx, designID); err == nil {
+				pipelineID = run.ID
+			}
+		}
+
 		for _, candidate := range ready {
 			taskID := candidate.TaskID
 			if dryRun {
 				fmt.Printf("  [dry-run] %s\n", taskID)
 				continue
 			}
+
+			// Register the task in pipeline_tasks so the orchestrator's
+			// implement loop can track it via ListTasksByDesign.
+			if cbStore != nil && pipelineID != "" {
+				wave := candidate.Wave
+				var wavePtr *int
+				if wave > 0 {
+					wavePtr = &wave
+				}
+				if err := cbStore.AddTask(ctx, pipelineID, taskID, designID, wavePtr); err != nil {
+					// Ignore duplicates — task may already be registered from a prior run
+					if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already exists") {
+						fmt.Printf("  Warning: failed to register task %s: %v\n", taskID, err)
+					}
+				}
+			}
+
 			// Run dispatch for each task via the existing dispatch command logic
 			fmt.Printf("  %s ", taskID)
 			dispatchArgs := []string{"dispatch", taskID}
