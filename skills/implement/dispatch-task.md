@@ -80,3 +80,7 @@ If no `repo` metadata is set, the worktree is created from the current project's
 - If an agent exits without running `cobuild complete`, the task stays `in_progress` — use the stall-check skill
 - `cobuild wait` blocks the calling session — use it in the orchestrating agent, not in a dispatch agent
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+This skill is for the orchestrator flow. Once you have finished dispatching or monitoring work with this skill, exit the session immediately with `/exit`.

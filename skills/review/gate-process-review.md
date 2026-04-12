@@ -143,3 +143,7 @@ cobuild wi append <task-id> --body "## Review Feedback — Round N
 <!-- Add failure patterns here as they're discovered -->
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+After you have recorded the review verdict and appended any required feedback, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.

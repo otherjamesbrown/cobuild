@@ -40,3 +40,7 @@ Inspect the parent design's task graph. If every child task is now closed, advan
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+After you have finished the merge verification work and recorded the outcome, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.

@@ -72,3 +72,7 @@ Use a consistent note format that captures:
 - retry count
 - diagnosis
 - action taken
+
+## Final Step
+
+After you have appended the health check result and taken the required status action, exit the session immediately. Run `/exit` so the dispatched session ends cleanly.
