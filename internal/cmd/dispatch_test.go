@@ -1,8 +1,26 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 )
+
+func TestWritePhasePromptDecomposeMentionsCompletionModeDirect(t *testing.T) {
+	var b strings.Builder
+	writePhasePrompt(&b, "decompose", "cb-parent", "cb-parent", nil)
+	got := b.String()
+
+	for _, want := range []string{
+		"set `completion_mode: direct` only for non-code tasks",
+		"leave it unset and let `cobuild complete` auto-detect",
+		"`cxp shard metadata set <task-id> completion_mode direct`",
+		"tasks tagged `completion_mode: direct`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decompose prompt missing %q\nprompt:\n%s", want, got)
+		}
+	}
+}
 
 func TestHasInvestigationContent(t *testing.T) {
 	tests := []struct {

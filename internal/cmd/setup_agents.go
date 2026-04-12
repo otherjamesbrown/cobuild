@@ -319,6 +319,9 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString(fmt.Sprintf("%d. **Run `cobuild complete <task-id>`**\n\n", step))
 	sb.WriteString("The Stop hook will run `cobuild complete` automatically when you finish.\n")
 	sb.WriteString("If it fails, run it manually as your last action.\n\n")
+	sb.WriteString("### Non-code tasks\n\n")
+	sb.WriteString("If the task was tagged `completion_mode: direct`, it is a non-code task. Use this only for work expected outside the repo/worktree, such as KB updates, config/data changes, or user-global state.\n\n")
+	sb.WriteString("Your completion step does not change: still run `cobuild complete <task-id>` as the last action. CoBuild will use the direct path for `completion_mode: direct`; otherwise `code` remains the normal path, and if no mode was set CoBuild falls back to auto-detection. This does not change deploy behavior.\n\n")
 
 	// Orchestrator lifecycle
 	sb.WriteString("## Orchestrator Protocol\n\n")
