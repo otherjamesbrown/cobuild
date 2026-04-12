@@ -3,10 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	llmreview "github.com/otherjamesbrown/cobuild/internal/review"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -139,6 +142,7 @@ func (f *reviewFakeConnector) CreateEdge(_ context.Context, fromID string, toID 
 
 type reviewFakeStore struct {
 	runs          map[string]*store.PipelineRun
+	sessions      map[string]*store.SessionRecord
 	gates         []store.PipelineGateInput
 	updatePhases  []struct{ designID, phase string }
 	updateStatus  []struct{ designID, status string }
@@ -223,8 +227,16 @@ func (f *reviewFakeStore) CreateSession(context.Context, store.SessionInput) (*s
 	return nil, fmt.Errorf("not implemented")
 }
 func (f *reviewFakeStore) EndSession(context.Context, string, store.SessionResult) error { return nil }
-func (f *reviewFakeStore) GetSession(context.Context, string) (*store.SessionRecord, error) {
-	return nil, fmt.Errorf("not implemented")
+func (f *reviewFakeStore) GetSession(_ context.Context, taskID string) (*store.SessionRecord, error) {
+	if f.sessions == nil {
+		return nil, store.ErrNotFound
+	}
+	rec, ok := f.sessions[taskID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	cp := *rec
+	return &cp, nil
 }
 func (f *reviewFakeStore) ListSessions(context.Context, string) ([]store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
@@ -252,6 +264,86 @@ func (f *reviewFakeStore) IsWaveClosed(_ context.Context, _ string, _ int) (bool
 }
 func (f *reviewFakeStore) Migrate(context.Context) error { return nil }
 func (f *reviewFakeStore) Close() error                  { return nil }
+
+type stubReviewer struct {
+	result *llmreview.ReviewResult
+	err    error
+	inputs []llmreview.ReviewInput
+}
+
+func (s *stubReviewer) Review(_ context.Context, input llmreview.ReviewInput) (*llmreview.ReviewResult, error) {
+	s.inputs = append(s.inputs, input)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.result, nil
+}
+
+func installReviewCommandTestGlobals(t *testing.T, fc *reviewFakeConnector, fs *reviewFakeStore) func() {
+	t.Helper()
+	origConn, origStore, origProject := conn, cbStore, projectName
+	origOutput, origCombined := reviewCommandOutput, reviewCommandCombinedOutput
+	origConfigLoader, origFactory := reviewConfigLoader, reviewerFactory
+
+	conn = fc
+	cbStore = fs
+	projectName = "cobuild"
+
+	return func() {
+		conn = origConn
+		cbStore = origStore
+		projectName = origProject
+		reviewCommandOutput = origOutput
+		reviewCommandCombinedOutput = origCombined
+		reviewConfigLoader = origConfigLoader
+		reviewerFactory = origFactory
+	}
+}
+
+func newPRReviewFixture() (*reviewFakeConnector, *reviewFakeStore) {
+	fc := &reviewFakeConnector{
+		items: map[string]*connector.WorkItem{
+			"cb-task": {
+				ID:      "cb-task",
+				Title:   "Integrate review flow",
+				Type:    "task",
+				Status:  "needs-review",
+				Content: "## Scope\nWire built-in review.\n\n## Acceptance Criteria\n- [ ] Posts review findings\n- [ ] Records LLM gate body\n",
+				Metadata: map[string]any{
+					"pr_url": "https://github.com/acme/cobuild/pull/42",
+				},
+			},
+			"cb-design": {
+				ID:      "cb-design",
+				Title:   "Built-in review design",
+				Type:    "design",
+				Status:  "review",
+				Content: "Parent design context",
+			},
+		},
+		edges: map[string][]connector.Edge{
+			"cb-task|outgoing": {
+				{Direction: "outgoing", EdgeType: "child-of", ItemID: "cb-design"},
+			},
+			"cb-design|incoming": {
+				{Direction: "incoming", EdgeType: "child-of", ItemID: "cb-task"},
+			},
+		},
+	}
+	fs := &reviewFakeStore{
+		runs: map[string]*store.PipelineRun{
+			"cb-task":   {ID: "run-task", DesignID: "cb-task", CurrentPhase: "review", Status: "active", Mode: "manual", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+			"cb-design": {ID: "run-design", DesignID: "cb-design", CurrentPhase: "review", Status: "active", Mode: "manual", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		},
+		sessions: map[string]*store.SessionRecord{
+			"cb-task": {ID: "sess-task", TaskID: "cb-task", Runtime: "codex", Model: strPtr("gpt-5.4"), Status: "completed"},
+		},
+		latestGateKey: map[string]int{},
+	}
+	return fc, fs
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 	origConn, origStore, origProject := conn, cbStore, projectName
@@ -400,5 +492,228 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 	}
 	if !foundDesignDone {
 		t.Fatalf("expected parent design phase to advance to done, updates = %+v", fs.updatePhases)
+	}
+}
+
+func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) {
+	fc, fs := newPRReviewFixture()
+	restore := installReviewCommandTestGlobals(t, fc, fs)
+	defer restore()
+
+	cfg := config.DefaultConfig()
+	cfg.Review.Provider = "auto"
+	postTrue := true
+	cfg.Review.PostComments = &postTrue
+	cfg.Review.WaitForCI = true
+	reviewConfigLoader = func() *config.Config { return cfg }
+
+	reviewer := &stubReviewer{
+		result: &llmreview.ReviewResult{
+			Verdict: "request-changes",
+			Summary: "Misses PR comment posting.",
+			Findings: []llmreview.Finding{
+				{File: "internal/cmd/review.go", Line: 123, Severity: "critical", Body: "Post the comment before recording the gate."},
+			},
+		},
+	}
+	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {
+		if provider != "claude" {
+			t.Fatalf("provider = %q, want claude", provider)
+		}
+		return reviewer, nil
+	}
+
+	var combinedCalls [][]string
+	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
+			return []byte("OPEN\n"), nil
+		case "gh pr diff 42 --repo acme/cobuild":
+			return []byte("diff --git a/internal/cmd/review.go b/internal/cmd/review.go\n"), nil
+		case "gh pr view 42 --repo acme/cobuild --json headRefOid --jq .headRefOid":
+			return []byte("abc123\n"), nil
+		case "gh api repos/acme/cobuild/commits/abc123/check-runs --jq .check_runs":
+			return []byte(`[{"name":"test","status":"completed","conclusion":"success"}]`), nil
+		default:
+			t.Fatalf("unexpected Output command: %s", key)
+			return nil, nil
+		}
+	}
+	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		combinedCalls = append(combinedCalls, append([]string{name}, args...))
+		key := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(key, "gh pr comment https://github.com/acme/cobuild/pull/42 --body "):
+			return []byte("commented\n"), nil
+		case key == "cobuild dispatch cb-task":
+			return []byte("dispatched\n"), nil
+		default:
+			t.Fatalf("unexpected CombinedOutput command: %s", key)
+			return nil, nil
+		}
+	}
+
+	processReviewCmd.Flags().Set("dry-run", "false")
+	processReviewCmd.Flags().Set("review-timeout", "10")
+	if err := processReviewCmd.RunE(processReviewCmd, []string{"cb-task"}); err != nil {
+		t.Fatalf("process-review returned error: %v", err)
+	}
+
+	if len(reviewer.inputs) != 1 {
+		t.Fatalf("reviewer inputs = %d, want 1", len(reviewer.inputs))
+	}
+	input := reviewer.inputs[0]
+	if input.ParentDesignID != "cb-design" {
+		t.Fatalf("input.ParentDesignID = %q, want cb-design", input.ParentDesignID)
+	}
+	if len(input.AcceptanceCriteria) != 2 {
+		t.Fatalf("acceptance criteria = %v, want 2 items", input.AcceptanceCriteria)
+	}
+	if len(combinedCalls) != 2 {
+		t.Fatalf("combined calls = %v, want comment + dispatch", combinedCalls)
+	}
+	if got := fc.items["cb-task"].Status; got != "in_progress" {
+		t.Fatalf("task status = %q, want in_progress", got)
+	}
+	if !strings.Contains(fc.items["cb-task"].Content, "Post the comment before recording the gate.") {
+		t.Fatalf("task feedback missing built-in finding: %q", fc.items["cb-task"].Content)
+	}
+	if len(fs.gates) != 1 {
+		t.Fatalf("recorded %d gates, want 1", len(fs.gates))
+	}
+	body := ""
+	if fs.gates[0].Body != nil {
+		body = *fs.gates[0].Body
+	}
+	if !strings.Contains(body, "**LLM verdict:** request-changes") {
+		t.Fatalf("gate body missing LLM verdict: %q", body)
+	}
+	if !strings.Contains(body, "Misses PR comment posting.") {
+		t.Fatalf("gate body missing LLM summary: %q", body)
+	}
+}
+
+func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
+	fc, fs := newPRReviewFixture()
+	restore := installReviewCommandTestGlobals(t, fc, fs)
+	defer restore()
+
+	cfg := config.DefaultConfig()
+	cfg.Review.Provider = "claude"
+	postTrue := true
+	cfg.Review.PostComments = &postTrue
+	cfg.Review.WaitForCI = true
+	reviewConfigLoader = func() *config.Config { return cfg }
+
+	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {
+		return &stubReviewer{err: fmt.Errorf("model unavailable: no API key")}, nil
+	}
+
+	var combinedCalls [][]string
+	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
+			return []byte("OPEN\n"), nil
+		case "gh pr diff 42 --repo acme/cobuild":
+			return []byte("diff --git a/internal/cmd/review.go b/internal/cmd/review.go\n"), nil
+		case "gh pr view 42 --repo acme/cobuild --json headRefOid --jq .headRefOid":
+			return []byte("abc123\n"), nil
+		case "gh api repos/acme/cobuild/commits/abc123/check-runs --jq .check_runs":
+			return []byte(`[{"name":"test","status":"completed","conclusion":"failure"}]`), nil
+		case "gh api repos/acme/cobuild/actions/runs?branch=main&status=completed&per_page=1 --jq .workflow_runs[0].id":
+			return []byte("main-run\n"), nil
+		case "gh api repos/acme/cobuild/actions/runs/main-run/jobs --jq .jobs[] | .name + \":\" + .conclusion":
+			return []byte("lint:success\n"), nil
+		default:
+			t.Fatalf("unexpected Output command: %s", key)
+			return nil, nil
+		}
+	}
+	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		combinedCalls = append(combinedCalls, append([]string{name}, args...))
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "cobuild dispatch cb-task":
+			return []byte("dispatched\n"), nil
+		default:
+			t.Fatalf("unexpected CombinedOutput command: %s", key)
+			return nil, nil
+		}
+	}
+
+	processReviewCmd.Flags().Set("dry-run", "false")
+	processReviewCmd.Flags().Set("review-timeout", "10")
+	if err := processReviewCmd.RunE(processReviewCmd, []string{"cb-task"}); err != nil {
+		t.Fatalf("process-review returned error: %v", err)
+	}
+
+	if len(combinedCalls) != 1 || strings.Join(combinedCalls[0], " ") != "cobuild dispatch cb-task" {
+		t.Fatalf("combined calls = %v, want only redispatch", combinedCalls)
+	}
+	if len(fs.gates) != 1 {
+		t.Fatalf("recorded %d gates, want 1", len(fs.gates))
+	}
+	body := ""
+	if fs.gates[0].Body != nil {
+		body = *fs.gates[0].Body
+	}
+	if !strings.Contains(body, "built-in claude review failed") {
+		t.Fatalf("gate body missing provider warning: %q", body)
+	}
+	if !strings.Contains(body, "**Reviewer:** ci-fallback") {
+		t.Fatalf("gate body missing fallback reviewer: %q", body)
+	}
+}
+
+func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
+	fc, fs := newPRReviewFixture()
+	restore := installReviewCommandTestGlobals(t, fc, fs)
+	defer restore()
+
+	cfg := config.DefaultConfig()
+	cfg.Review.Provider = "external"
+	reviewConfigLoader = func() *config.Config { return cfg }
+
+	reviewerCalled := false
+	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {
+		reviewerCalled = true
+		return &stubReviewer{}, nil
+	}
+
+	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
+			return []byte("OPEN\n"), nil
+		case "gh api repos/acme/cobuild/pulls/42/reviews":
+			return []byte("[]"), nil
+		case "gh pr view https://github.com/acme/cobuild/pull/42 --json createdAt --jq .createdAt":
+			return []byte(time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)), nil
+		default:
+			t.Fatalf("unexpected Output command: %s", key)
+			return nil, nil
+		}
+	}
+	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("unexpected CombinedOutput command: %s %s", name, strings.Join(args, " "))
+		return nil, nil
+	}
+
+	processReviewCmd.Flags().Set("dry-run", "false")
+	processReviewCmd.Flags().Set("review-timeout", "10")
+	if err := processReviewCmd.RunE(processReviewCmd, []string{"cb-task"}); err != nil {
+		t.Fatalf("process-review returned error: %v", err)
+	}
+
+	if reviewerCalled {
+		t.Fatalf("built-in reviewer should not be called for external provider")
+	}
+	if len(fs.gates) != 0 {
+		t.Fatalf("recorded %d gates, want 0 while waiting", len(fs.gates))
+	}
+	if got := fc.items["cb-task"].Status; got != "needs-review" {
+		t.Fatalf("task status = %q, want needs-review", got)
 	}
 }

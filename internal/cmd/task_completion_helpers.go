@@ -19,6 +19,11 @@ type directCompletionDecision struct {
 	reason string
 }
 
+type completionPathDecision struct {
+	Direct bool
+	Note   string
+}
+
 func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, worktreePath string) (directCompletionDecision, error) {
 	if task != nil && task.Metadata != nil {
 		if mode := metadataString(task.Metadata, "completion_mode"); mode == "direct" {
@@ -48,15 +53,27 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 		return directCompletionDecision{}, err
 	}
 	if strings.TrimSpace(string(statusOut)) == "" {
-		return directCompletionDecision{direct: true, reason: "no repo changes detected in worktree"}, nil
+		return directCompletionDecision{direct: true, reason: "git worktree has no tracked changes"}, nil
 	}
 	return directCompletionDecision{}, nil
 }
 
-func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string, pCfg *config.Config) error {
+func determineCompletionPath(ctx context.Context, task *connector.WorkItem, _ string, worktreePath, _ string) (completionPathDecision, error) {
+	decision, err := detectDirectCompletion(ctx, task, worktreePath)
+	if err != nil {
+		return completionPathDecision{}, err
+	}
+	return completionPathDecision{Direct: decision.direct, Note: decision.reason}, nil
+}
+
+func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string, pCfg ...*config.Config) error {
 	fmt.Printf("Direct completion for %s: %s\n", taskID, reason)
 
-	body := fmt.Sprintf("## Auto-completion evidence\n\nDirect close: %s\nPR: none\n", reason)
+	bodyReason := reason
+	if reason == "git worktree has no tracked changes" {
+		bodyReason = "no repo changes detected in worktree"
+	}
+	body := fmt.Sprintf("## Auto-completion evidence\n\nDirect close: %s\nPR: none\n", bodyReason)
 	if conn != nil {
 		if err := conn.AppendContent(ctx, taskID, body); err != nil {
 			fmt.Printf("Warning: failed to append evidence: %v\n", err)
@@ -64,16 +81,21 @@ func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string
 	}
 
 	if cbStore != nil {
-		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", "Direct-mode task, no PR review required.", 0, pCfg); err != nil {
+		var cfg *config.Config
+		if len(pCfg) > 0 {
+			cfg = pCfg[0]
+		}
+		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, cfg); err != nil {
 			fmt.Printf("Warning: failed to record direct completion gate: %v\n", err)
 		}
 	}
 
 	endTaskSession(ctx, taskID, worktreePath, store.SessionResult{
-		ExitCode:     0,
-		FilesChanged: 0,
-		Commits:      0,
-		Status:       "completed",
+		ExitCode:       0,
+		FilesChanged:   0,
+		Commits:        0,
+		Status:         "completed",
+		CompletionNote: reason,
 	})
 
 	cleanupTaskWorktree(ctx, taskID, worktreePath)
@@ -100,6 +122,9 @@ func maybeProcessDirectReview(ctx context.Context, taskID string, task *connecto
 
 	if task != nil && task.Status == "closed" {
 		fmt.Printf("Task %s already closed directly, no PR review required.\n", taskID)
+		if err := handlePostCloseProgress(ctx, taskID); err != nil {
+			return true, err
+		}
 		return true, nil
 	}
 
@@ -112,7 +137,7 @@ func maybeProcessDirectReview(ctx context.Context, taskID string, task *connecto
 	if cbStore != nil {
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
-		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", "Direct-mode task, no PR review required.", 0, pCfg); err != nil {
+		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, pCfg); err != nil {
 			fmt.Printf("Warning: failed to record direct review gate: %v\n", err)
 		}
 	}
@@ -198,6 +223,9 @@ func cleanupTaskWorktree(ctx context.Context, taskID, worktreePath string) {
 	archiveSessionLogs(worktreePath, taskID)
 	repoForCleanup, err := config.RepoForProject(projectName)
 	if err != nil || repoForCleanup == "" {
+		if err := os.RemoveAll(worktreePath); err != nil {
+			fmt.Printf("Warning: failed to remove worktree: %v\n", err)
+		}
 		return
 	}
 	if err := worktree.Remove(ctx, repoForCleanup, worktreePath, taskID); err != nil {

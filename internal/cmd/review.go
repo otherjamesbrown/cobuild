@@ -11,12 +11,35 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
+	llmreview "github.com/otherjamesbrown/cobuild/internal/review"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
 const geminiBotLogin = "gemini-code-assist[bot]"
 const directReviewPassBody = "Direct-mode task, no PR review required"
+
+var (
+	reviewCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).Output()
+	}
+	reviewCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	}
+	reviewConfigLoader = func() *config.Config {
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
+		}
+		return pCfg
+	}
+	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {
+		return llmreview.NewReviewer(provider, cfg)
+	}
+)
 
 var processReviewCmd = &cobra.Command{
 	Use:   "process-review <task-id>",
@@ -78,8 +101,8 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// phase if appropriate. Previously this branch silently returned
 		// nil, which left cp-64af0f wedged with status=needs-review even
 		// though PR #3 was already merged on GitHub.
-		stateOut, err := exec.CommandContext(ctx, "gh", "pr", "view", prURL,
-			"--json", "state", "--jq", ".state").Output()
+		stateOut, err := reviewCommandOutput(ctx, "gh", "pr", "view", prURL,
+			"--json", "state", "--jq", ".state")
 		if err == nil {
 			state := strings.TrimSpace(string(stateOut))
 			if state == "MERGED" {
@@ -98,77 +121,78 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		reviewTimeout, _ := cmd.Flags().GetInt("review-timeout")
+		pCfg := reviewConfigLoader()
+		session := getReviewSession(ctx, taskID)
 
-		// Step 1: Check for Gemini review
-		reviews, err := getGeminiReviews(ctx, repo, prNumber)
-		if err != nil {
-			return fmt.Errorf("check reviews: %w", err)
-		}
+		var (
+			findings      []reviewFinding
+			reviewResult  *llmreview.ReviewResult
+			reviewSource  string
+			reviewWarning string
+		)
 
-		var findings []reviewFinding
-		reviewSource := "gemini"
-
-		if len(reviews) == 0 {
-			// Check PR age to decide: wait or fallback
-			prAge := getPRAge(ctx, prURL)
-			timeoutDuration := time.Duration(reviewTimeout) * time.Minute
-
-			if prAge < timeoutDuration {
-				remaining := timeoutDuration - prAge
-				fmt.Printf("No Gemini review yet for %s (PR #%d, %s old, timeout %dm). Waiting %s.\n",
-					taskID, prNumber, formatDuration(prAge), reviewTimeout, formatDuration(remaining))
+		writerRuntime, writerModel := sessionRuntimeModel(session)
+		spec := llmreview.ResolveReviewer(pCfg.Review, writerRuntime, writerModel)
+		if spec.Provider == "external" {
+			external, err := runExternalReview(ctx, repo, prNumber, taskID, prURL, reviewTimeout)
+			if err != nil {
+				return err
+			}
+			if external.waiting {
 				printNextStep(taskID, "waiting", "process-review")
 				return nil
 			}
-
-			// Timeout exceeded — fall back to orchestrator review (CI-based)
-			fmt.Printf("No Gemini review after %s for %s (PR #%d). Falling back to CI-based review.\n",
-				formatDuration(prAge), taskID, prNumber)
-			reviewSource = "ci-fallback"
+			findings = external.findings
+			reviewSource = external.source
+			reviewWarning = external.warning
 		} else {
-			// Step 2: Get inline comments from Gemini
-			findings = getGeminiFindings(ctx, repo, prNumber)
+			input, err := buildReviewInput(ctx, taskID, task, repo, prNumber)
+			if err != nil {
+				return fmt.Errorf("build review input: %w", err)
+			}
+			providerCfg := llmreview.ProviderConfig{
+				Model:   spec.Model,
+				Timeout: pCfg.Review.ReviewTimeout(),
+			}
+			reviewer, err := reviewerFactory(spec.Provider, providerCfg)
+			if err != nil {
+				return fmt.Errorf("configure reviewer: %w", err)
+			}
+			if reviewer == nil {
+				return fmt.Errorf("review provider %q did not return a reviewer", spec.Provider)
+			}
+			reviewResult, err = reviewer.Review(ctx, input)
+			if err != nil {
+				reviewSource = "ci-fallback"
+				reviewWarning = fmt.Sprintf("built-in %s review failed: %v", spec.Provider, err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s. Falling back to CI-only review.\n", reviewWarning)
+			} else {
+				reviewSource = spec.Provider
+				findings = reviewResultToFindings(reviewResult)
+				if pCfg.Review.PostCommentsEnabled() {
+					if err := postReviewComment(ctx, prURL, reviewResult); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to post review comment: %v\n", err)
+					}
+				}
+			}
 		}
 
 		// Step 3: Check CI
 		ciResult := checkCI(ctx, repo, prNumber)
 
 		// CI still pending — wait regardless of review source
-		if ciResult.summary == "pending" {
+		if pCfg.Review.WaitForCI && ciResult.summary == "pending" {
 			fmt.Printf("CI checks still pending for %s (PR #%d). Waiting.\n", taskID, prNumber)
 			printNextStep(taskID, "waiting", "process-review")
 			return nil
 		}
 
 		// Step 4: Decide verdict
-		mustFix := 0
-		medium := 0
-		low := 0
-		for _, f := range findings {
-			switch f.Priority {
-			case "high", "critical":
-				mustFix++
-			case "medium":
-				medium++
-			default:
-				low++
-			}
-		}
-
 		hasNewCIFailures := len(ciResult.newFailures) > 0
-		verdict := "approve"
-		if mustFix > 0 || hasNewCIFailures {
-			verdict = "request-changes"
-		}
+		verdict := determineReviewVerdict(reviewResult, findings, hasNewCIFailures)
 
 		// Build summary
-		var summary string
-		if reviewSource == "gemini" {
-			summary = fmt.Sprintf("Gemini review: %d high, %d medium, %d low finding(s). CI: %s",
-				mustFix, medium, low, ciResult.summary)
-		} else {
-			summary = fmt.Sprintf("CI-based review (Gemini unavailable): CI: %s", ciResult.summary)
-		}
+		summary := buildReviewSummary(reviewSource, reviewResult, findings, ciResult, reviewWarning)
 
 		fmt.Printf("Review for %s (PR #%d): %s → %s\n", taskID, prNumber, summary, verdict)
 
@@ -176,7 +200,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			if verdict == "request-changes" {
 				fmt.Println("\n[dry-run] Would send back for fixes:")
 				for _, f := range findings {
-					if f.Priority == "high" || f.Priority == "critical" {
+					if f.Priority == "high" || f.Priority == "critical" || reviewSource == "claude" || reviewSource == "openai" {
 						fmt.Printf("  [%s] %s:%d — %s\n", f.Priority, f.Path, f.Line, truncate(f.Body, 100))
 					}
 				}
@@ -199,9 +223,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			gateVerdict = "pass"
 		}
 		if cbStore != nil {
-			repoRoot := findRepoRoot()
-			pCfg, _ := config.LoadConfig(repoRoot)
-			body := buildVerdictBody(verdict, findings, ciResult)
+			body := buildVerdictBody(verdict, reviewSource, reviewResult, findings, ciResult, reviewWarning)
 			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", gateVerdict, body, 0, pCfg)
 			if gateErr != nil {
 				fmt.Printf("Warning: failed to record gate verdict: %v\n", gateErr)
@@ -215,7 +237,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			printNextStep(taskID, "merged", "process-review")
 			return nil
 		}
-		if err := doRequestChanges(ctx, taskID, findings, ciResult); err != nil {
+		if err := doRequestChanges(ctx, taskID, findings, ciResult, reviewSource); err != nil {
 			return err
 		}
 		printNextStep(taskID, "redispatched", "process-review")
@@ -247,8 +269,8 @@ type ciCheckResult struct {
 }
 
 func getGeminiReviews(ctx context.Context, repo string, prNumber int) ([]ghReview, error) {
-	out, err := exec.CommandContext(ctx, "gh", "api",
-		fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, prNumber)).Output()
+	out, err := reviewCommandOutput(ctx, "gh", "api",
+		fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, prNumber))
 	if err != nil {
 		return nil, err
 	}
@@ -281,8 +303,8 @@ type ghComment struct {
 var priorityRe = regexp.MustCompile(`(high|medium|low|critical)-priority\.svg`)
 
 func getGeminiFindings(ctx context.Context, repo string, prNumber int) []reviewFinding {
-	out, err := exec.CommandContext(ctx, "gh", "api",
-		fmt.Sprintf("repos/%s/pulls/%d/comments", repo, prNumber)).Output()
+	out, err := reviewCommandOutput(ctx, "gh", "api",
+		fmt.Sprintf("repos/%s/pulls/%d/comments", repo, prNumber))
 	if err != nil {
 		return nil
 	}
@@ -315,17 +337,17 @@ func getGeminiFindings(ctx context.Context, repo string, prNumber int) []reviewF
 
 func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	// Get check runs via API (gh pr checks doesn't support all fields)
-	headOut, err := exec.CommandContext(ctx, "gh", "pr", "view",
+	headOut, err := reviewCommandOutput(ctx, "gh", "pr", "view",
 		strconv.Itoa(prNumber), "--repo", repo,
-		"--json", "headRefOid", "--jq", ".headRefOid").Output()
+		"--json", "headRefOid", "--jq", ".headRefOid")
 	if err != nil {
 		return ciCheckResult{summary: "no checks (could not get commit)"}
 	}
 	commitSHA := strings.TrimSpace(string(headOut))
 
-	out, err := exec.CommandContext(ctx, "gh", "api",
+	out, err := reviewCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/commits/%s/check-runs", repo, commitSHA),
-		"--jq", ".check_runs").Output()
+		"--jq", ".check_runs")
 	if err != nil {
 		return ciCheckResult{summary: "no checks (API error)"}
 	}
@@ -364,17 +386,17 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	}
 
 	// Compare against main to find NEW failures only
-	mainOut, err := exec.CommandContext(ctx, "gh", "api",
+	mainOut, err := reviewCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/actions/runs?branch=main&status=completed&per_page=1", repo),
-		"--jq", ".workflow_runs[0].id").Output()
+		"--jq", ".workflow_runs[0].id")
 
 	newFailures := prFailures // assume all are new if we can't check main
 	if err == nil {
 		runID := strings.TrimSpace(string(mainOut))
 		if runID != "" {
-			jobsOut, err := exec.CommandContext(ctx, "gh", "api",
+			jobsOut, err := reviewCommandOutput(ctx, "gh", "api",
 				fmt.Sprintf("repos/%s/actions/runs/%s/jobs", repo, runID),
-				"--jq", `.jobs[] | .name + ":" + .conclusion`).Output()
+				"--jq", `.jobs[] | .name + ":" + .conclusion`)
 			if err == nil {
 				mainFails := map[string]bool{}
 				for _, line := range strings.Split(string(jobsOut), "\n") {
@@ -405,19 +427,31 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	}
 }
 
-func buildVerdictBody(verdict string, findings []reviewFinding, ci ciCheckResult) string {
+func buildVerdictBody(verdict, reviewSource string, reviewResult *llmreview.ReviewResult, findings []reviewFinding, ci ciCheckResult, warning string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Automated Review\n\n")
+	if reviewSource != "" {
+		fmt.Fprintf(&b, "**Reviewer:** %s\n", reviewSource)
+	}
 	fmt.Fprintf(&b, "**CI:** %s\n\n", ci.summary)
+	if warning != "" {
+		fmt.Fprintf(&b, "**Warning:** %s\n\n", warning)
+	}
+	if reviewResult != nil {
+		if reviewResult.Summary != "" {
+			fmt.Fprintf(&b, "**LLM summary:** %s\n\n", reviewResult.Summary)
+		}
+		fmt.Fprintf(&b, "**LLM verdict:** %s\n\n", reviewResult.Verdict)
+	}
 
 	if len(findings) > 0 {
-		fmt.Fprintf(&b, "**Gemini findings:**\n")
+		fmt.Fprintf(&b, "**Findings:**\n")
 		for _, f := range findings {
 			fmt.Fprintf(&b, "- [%s] `%s:%d` — %s\n", f.Priority, f.Path, f.Line, firstLine(f.Body))
 		}
 		fmt.Fprintln(&b)
 	} else {
-		fmt.Fprintf(&b, "**Gemini findings:** none\n\n")
+		fmt.Fprintf(&b, "**Findings:** none\n\n")
 	}
 
 	fmt.Fprintf(&b, "**Verdict:** %s\n", verdict)
@@ -492,8 +526,8 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	cleanupTaskWorktree(ctx, taskID, wtPath)
 
 	fmt.Printf("Merging %s...\n", prURL)
-	mergeOut, err := exec.CommandContext(ctx, "gh", "pr", "merge", prURL,
-		"--squash", "--delete-branch").CombinedOutput()
+	mergeOut, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
+		"--squash", "--delete-branch")
 	if err != nil {
 		return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
 	}
@@ -505,7 +539,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	return nil
 }
 
-func doRequestChanges(ctx context.Context, taskID string, findings []reviewFinding, ci ciCheckResult) error {
+func doRequestChanges(ctx context.Context, taskID string, findings []reviewFinding, ci ciCheckResult, reviewSource string) error {
 	// Build feedback for the agent
 	var fb strings.Builder
 	fmt.Fprintf(&fb, "## Review Feedback\n\n")
@@ -519,9 +553,9 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 	}
 
 	actionable := false
-	fmt.Fprintf(&fb, "### Gemini Findings\n")
+	fmt.Fprintf(&fb, "### %s Findings\n", reviewSectionTitle(reviewSource))
 	for _, f := range findings {
-		if f.Priority == "high" || f.Priority == "critical" {
+		if f.Priority == "high" || f.Priority == "critical" || reviewSource == "claude" || reviewSource == "openai" {
 			actionable = true
 			// Strip the priority badge image from the body for readability
 			body := priorityRe.ReplaceAllString(f.Body, "")
@@ -557,7 +591,7 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 
 	// Re-dispatch
 	fmt.Printf("Re-dispatching %s for fixes...\n", taskID)
-	out, err := exec.CommandContext(ctx, "cobuild", "dispatch", taskID).CombinedOutput()
+	out, err := reviewCommandCombinedOutput(ctx, "cobuild", "dispatch", taskID)
 	if err != nil {
 		return fmt.Errorf("re-dispatch failed: %v\n%s", err, string(out))
 	}
@@ -602,8 +636,8 @@ func truncate(s string, n int) string {
 }
 
 func getPRAge(ctx context.Context, prURL string) time.Duration {
-	out, err := exec.CommandContext(ctx, "gh", "pr", "view", prURL,
-		"--json", "createdAt", "--jq", ".createdAt").Output()
+	out, err := reviewCommandOutput(ctx, "gh", "pr", "view", prURL,
+		"--json", "createdAt", "--jq", ".createdAt")
 	if err != nil {
 		return 0
 	}
@@ -622,6 +656,248 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
 	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+type providerReviewResult struct {
+	findings []reviewFinding
+	source   string
+	warning  string
+	waiting  bool
+}
+
+func getReviewSession(ctx context.Context, taskID string) *store.SessionRecord {
+	if cbStore == nil {
+		return nil
+	}
+	rec, err := cbStore.GetSession(ctx, taskID)
+	if err != nil {
+		return nil
+	}
+	return rec
+}
+
+func sessionRuntimeModel(session *store.SessionRecord) (string, string) {
+	if session == nil {
+		return "", ""
+	}
+	model := ""
+	if session.Model != nil {
+		model = *session.Model
+	}
+	return session.Runtime, model
+}
+
+func runExternalReview(ctx context.Context, repo string, prNumber int, taskID, prURL string, reviewTimeout int) (providerReviewResult, error) {
+	reviews, err := getGeminiReviews(ctx, repo, prNumber)
+	if err != nil {
+		return providerReviewResult{}, fmt.Errorf("check reviews: %w", err)
+	}
+	if len(reviews) == 0 {
+		prAge := getPRAge(ctx, prURL)
+		timeoutDuration := time.Duration(reviewTimeout) * time.Minute
+		if prAge < timeoutDuration {
+			remaining := timeoutDuration - prAge
+			fmt.Printf("No Gemini review yet for %s (PR #%d, %s old, timeout %dm). Waiting %s.\n",
+				taskID, prNumber, formatDuration(prAge), reviewTimeout, formatDuration(remaining))
+			return providerReviewResult{source: "gemini", waiting: true}, nil
+		}
+		fmt.Printf("No Gemini review after %s for %s (PR #%d). Falling back to CI-based review.\n",
+			formatDuration(prAge), taskID, prNumber)
+		return providerReviewResult{
+			source:  "ci-fallback",
+			warning: "external review unavailable; using CI-only fallback",
+		}, nil
+	}
+	return providerReviewResult{
+		findings: getGeminiFindings(ctx, repo, prNumber),
+		source:   "gemini",
+	}, nil
+}
+
+func buildReviewInput(ctx context.Context, taskID string, task *connector.WorkItem, repo string, prNumber int) (llmreview.ReviewInput, error) {
+	diffOut, err := reviewCommandOutput(ctx, "gh", "pr", "diff", strconv.Itoa(prNumber), "--repo", repo)
+	if err != nil {
+		return llmreview.ReviewInput{}, fmt.Errorf("gh pr diff %d: %w", prNumber, err)
+	}
+
+	input := llmreview.ReviewInput{
+		TaskID:             taskID,
+		TaskTitle:          task.Title,
+		TaskSpec:           strings.TrimSpace(task.Content),
+		AcceptanceCriteria: extractAcceptanceCriteria(task.Content),
+		Diff:               strings.TrimSpace(string(diffOut)),
+		PRDiff:             strings.TrimSpace(string(diffOut)),
+	}
+
+	designID, err := parentDesignID(ctx, taskID)
+	if err != nil {
+		return llmreview.ReviewInput{}, err
+	}
+	if designID == "" || conn == nil {
+		return input, nil
+	}
+	parent, err := conn.Get(ctx, designID)
+	if err != nil {
+		return llmreview.ReviewInput{}, fmt.Errorf("get parent design %s: %w", designID, err)
+	}
+	input.ParentDesignID = parent.ID
+	input.ParentDesignTitle = parent.Title
+	input.ParentDesignContext = strings.TrimSpace(parent.Content)
+	return input, nil
+}
+
+func extractAcceptanceCriteria(content string) []string {
+	lines := strings.Split(content, "\n")
+	var criteria []string
+	inSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			inSection = strings.EqualFold(trimmed, "## Acceptance Criteria")
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "- [ ] "):
+			criteria = append(criteria, strings.TrimSpace(strings.TrimPrefix(trimmed, "- [ ] ")))
+		case strings.HasPrefix(trimmed, "- "):
+			criteria = append(criteria, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+		}
+	}
+	return criteria
+}
+
+func reviewResultToFindings(result *llmreview.ReviewResult) []reviewFinding {
+	if result == nil {
+		return nil
+	}
+	findings := make([]reviewFinding, 0, len(result.Findings))
+	for _, f := range result.Findings {
+		findings = append(findings, reviewFinding{
+			Path:     f.File,
+			Line:     f.Line,
+			Priority: mapSeverityToPriority(f.Severity),
+			Body:     f.Body,
+		})
+	}
+	return findings
+}
+
+func mapSeverityToPriority(severity string) string {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical", "high":
+		return "critical"
+	case "suggestion", "medium":
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func determineReviewVerdict(reviewResult *llmreview.ReviewResult, findings []reviewFinding, hasNewCIFailures bool) string {
+	if hasNewCIFailures {
+		return "request-changes"
+	}
+	if reviewResult != nil {
+		if strings.EqualFold(reviewResult.Verdict, "request-changes") {
+			return "request-changes"
+		}
+		return "approve"
+	}
+	for _, f := range findings {
+		if f.Priority == "high" || f.Priority == "critical" {
+			return "request-changes"
+		}
+	}
+	return "approve"
+}
+
+func buildReviewSummary(reviewSource string, reviewResult *llmreview.ReviewResult, findings []reviewFinding, ci ciCheckResult, warning string) string {
+	var summary string
+	switch reviewSource {
+	case "claude", "openai":
+		llmSummary := ""
+		if reviewResult != nil {
+			llmSummary = strings.TrimSpace(reviewResult.Summary)
+		}
+		if llmSummary == "" {
+			llmSummary = fmt.Sprintf("%d finding(s)", len(findings))
+		}
+		summary = fmt.Sprintf("%s review: %s. CI: %s", strings.Title(reviewSource), llmSummary, ci.summary)
+	case "gemini":
+		critical, medium, low := countFindings(findings)
+		summary = fmt.Sprintf("Gemini review: %d high, %d medium, %d low finding(s). CI: %s", critical, medium, low, ci.summary)
+	default:
+		summary = fmt.Sprintf("CI-based review: CI: %s", ci.summary)
+	}
+	if warning != "" {
+		summary += fmt.Sprintf(" (%s)", warning)
+	}
+	return summary
+}
+
+func countFindings(findings []reviewFinding) (critical, medium, low int) {
+	for _, f := range findings {
+		switch f.Priority {
+		case "high", "critical":
+			critical++
+		case "medium":
+			medium++
+		default:
+			low++
+		}
+	}
+	return critical, medium, low
+}
+
+func formatPRComment(result *llmreview.ReviewResult) string {
+	if result == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Automated Review\n\n")
+	if result.Summary != "" {
+		fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(result.Summary))
+	}
+	fmt.Fprintf(&b, "**Verdict:** %s\n\n", result.Verdict)
+	if len(result.Findings) == 0 {
+		b.WriteString("No findings.\n")
+		return b.String()
+	}
+	b.WriteString("**Findings**\n")
+	for _, f := range result.Findings {
+		ref := f.File
+		if f.Line > 0 {
+			ref = fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+		fmt.Fprintf(&b, "- [%s] `%s` %s\n", f.Severity, ref, strings.TrimSpace(f.Body))
+	}
+	return b.String()
+}
+
+func postReviewComment(ctx context.Context, prURL string, result *llmreview.ReviewResult) error {
+	body := formatPRComment(result)
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	out, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "comment", prURL, "--body", body)
+	if err != nil {
+		return fmt.Errorf("gh pr comment failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func reviewSectionTitle(source string) string {
+	switch source {
+	case "claude", "openai":
+		return "Built-in Review"
+	case "gemini":
+		return "Gemini"
+	default:
+		return "Review"
+	}
 }
 
 func init() {

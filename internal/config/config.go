@@ -279,6 +279,7 @@ type ReviewCfg struct {
 	Model             string   `yaml:"model,omitempty"`
 	CrossModel        *bool    `yaml:"cross_model,omitempty"`
 	PostComments      *bool    `yaml:"post_comments,omitempty"`
+	WaitForCI         bool     `yaml:"wait_for_ci,omitempty"`
 	Timeout           string   `yaml:"timeout,omitempty"`
 }
 
@@ -360,6 +361,7 @@ func DefaultConfig() *Config {
 			Model:        "haiku",
 			CrossModel:   &defaultTrue,
 			PostComments: &defaultTrue,
+			WaitForCI:    true,
 			Timeout:      "120s",
 		},
 		SkillsDir: "skills",
@@ -557,6 +559,9 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Review.PostComments != nil {
 		value := *override.Review.PostComments
 		out.Review.PostComments = &value
+	}
+	if override.Review.WaitForCI {
+		out.Review.WaitForCI = true
 	}
 	if override.Review.Timeout != "" {
 		out.Review.Timeout = override.Review.Timeout

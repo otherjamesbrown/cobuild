@@ -26,10 +26,10 @@ func TestCompleteDirectOutsideWorktreeClosesWithoutPRAndRecordsPipelineState(t *
 	designID := "cb-design"
 
 	wtPath := newGitWorktree(t, env.repoRoot, taskID)
-	writeFile(t, filepath.Join(wtPath, ".cobuild", "session.log"), "direct task log\n")
-	writeFile(t, filepath.Join(t.TempDir(), "outside.txt"), "outside-only side effect\n")
+	completionWriteFile(t, filepath.Join(wtPath, ".cobuild", "session.log"), "direct task log\n")
+	completionWriteFile(t, filepath.Join(t.TempDir(), "outside.txt"), "outside-only side effect\n")
 
-	connectorStub := newFakeConnector()
+	connectorStub := newCompletionFakeConnector()
 	connectorStub.addItem(&connector.WorkItem{
 		ID:      designID,
 		Title:   "Mixed design",
@@ -58,7 +58,7 @@ func TestCompleteDirectOutsideWorktreeClosesWithoutPRAndRecordsPipelineState(t *
 	connectorStub.addChild(taskID, designID)
 	connectorStub.addChild(codeTaskID, designID)
 
-	storeStub := newFakeStore()
+	storeStub := newCompletionFakeStore()
 	storeStub.runs[taskID] = &store.PipelineRun{ID: "run-task-direct", DesignID: taskID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.runs[designID] = &store.PipelineRun{ID: "run-design", DesignID: designID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.tasks["run-design"] = []store.PipelineTaskRecord{
@@ -117,11 +117,11 @@ func TestCompleteWithRepoChangesStaysOnPRPathEvenWithOutsideEffects(t *testing.T
 	taskID := "cb-mixed-task"
 	designID := "cb-design-pr"
 	wtPath := newGitWorktree(t, env.repoRoot, taskID)
-	writeFile(t, filepath.Join(wtPath, ".cobuild", "session.log"), "code task log\n")
-	writeFile(t, filepath.Join(wtPath, "tracked.txt"), "changed in repo\n")
-	writeFile(t, filepath.Join(t.TempDir(), "outside.txt"), "outside effect\n")
+	completionWriteFile(t, filepath.Join(wtPath, ".cobuild", "session.log"), "code task log\n")
+	completionWriteFile(t, filepath.Join(wtPath, "tracked.txt"), "changed in repo\n")
+	completionWriteFile(t, filepath.Join(t.TempDir(), "outside.txt"), "outside effect\n")
 
-	connectorStub := newFakeConnector()
+	connectorStub := newCompletionFakeConnector()
 	connectorStub.addItem(&connector.WorkItem{
 		ID:      designID,
 		Title:   "Parent design",
@@ -142,7 +142,7 @@ func TestCompleteWithRepoChangesStaysOnPRPathEvenWithOutsideEffects(t *testing.T
 	})
 	connectorStub.addChild(taskID, designID)
 
-	storeStub := newFakeStore()
+	storeStub := newCompletionFakeStore()
 	storeStub.runs[taskID] = &store.PipelineRun{ID: "run-task-code", DesignID: taskID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.runs[designID] = &store.PipelineRun{ID: "run-design-code", DesignID: designID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.tasks["run-design-code"] = []store.PipelineTaskRecord{
@@ -195,7 +195,7 @@ func TestNextAndShowAdvanceAfterDirectChildClosesInMixedTaskSet(t *testing.T) {
 	designID := "cb-mixed-design"
 	wtPath := newGitWorktree(t, env.repoRoot, taskID)
 
-	connectorStub := newFakeConnector()
+	connectorStub := newCompletionFakeConnector()
 	connectorStub.addItem(&connector.WorkItem{ID: designID, Title: "Mixed design", Type: "design", Status: "in_progress"})
 	connectorStub.addItem(&connector.WorkItem{
 		ID:     taskID,
@@ -210,7 +210,7 @@ func TestNextAndShowAdvanceAfterDirectChildClosesInMixedTaskSet(t *testing.T) {
 	connectorStub.addChild(taskID, designID)
 	connectorStub.addChild(codeTaskID, designID)
 
-	storeStub := newFakeStore()
+	storeStub := newCompletionFakeStore()
 	storeStub.runs[taskID] = &store.PipelineRun{ID: "run-task-last", DesignID: taskID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.runs[designID] = &store.PipelineRun{ID: "run-design-mixed", DesignID: designID, CurrentPhase: "implement", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	storeStub.tasks["run-design-mixed"] = []store.PipelineTaskRecord{
@@ -279,25 +279,25 @@ func newBareRemoteRepo(t *testing.T) string {
 	origin := filepath.Join(root, "origin.git")
 	repo := filepath.Join(root, "repo")
 
-	runGit(t, root, "init", "--bare", origin)
-	runGit(t, root, "clone", origin, repo)
-	runGit(t, repo, "config", "user.email", "test@example.com")
-	runGit(t, repo, "config", "user.name", "Test User")
-	writeFile(t, filepath.Join(repo, "tracked.txt"), "base\n")
-	writeFile(t, filepath.Join(repo, "CLAUDE.md"), "base claude\n")
-	writeFile(t, filepath.Join(repo, ".cobuild", "pipeline.yaml"), "github:\n  owner_repo: example/repo\n")
-	runGit(t, repo, "add", "tracked.txt", "CLAUDE.md")
-	runGit(t, repo, "commit", "-m", "initial")
-	runGit(t, repo, "branch", "-M", "main")
-	runGit(t, repo, "push", "-u", "origin", "main")
+	completionRunGit(t, root, "init", "--bare", origin)
+	completionRunGit(t, root, "clone", origin, repo)
+	completionRunGit(t, repo, "config", "user.email", "test@example.com")
+	completionRunGit(t, repo, "config", "user.name", "Test User")
+	completionWriteFile(t, filepath.Join(repo, "tracked.txt"), "base\n")
+	completionWriteFile(t, filepath.Join(repo, "CLAUDE.md"), "base claude\n")
+	completionWriteFile(t, filepath.Join(repo, ".cobuild", "pipeline.yaml"), "github:\n  owner_repo: example/repo\n")
+	completionRunGit(t, repo, "add", "tracked.txt", "CLAUDE.md")
+	completionRunGit(t, repo, "commit", "-m", "initial")
+	completionRunGit(t, repo, "branch", "-M", "main")
+	completionRunGit(t, repo, "push", "-u", "origin", "main")
 	return repo
 }
 
 func newGitWorktree(t *testing.T, repoRoot, branch string) string {
 	t.Helper()
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	runGit(t, repoRoot, "worktree", "add", "-b", branch, wtPath, "main")
-	writeFile(t, filepath.Join(wtPath, ".cobuild", ".keep"), "")
+	completionRunGit(t, repoRoot, "worktree", "add", "-b", branch, wtPath, "main")
+	completionWriteFile(t, filepath.Join(wtPath, ".cobuild", ".keep"), "")
 	return wtPath
 }
 
@@ -306,7 +306,7 @@ func installFakeGH(t *testing.T, prURL string) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "gh")
 	content := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"create\" ]; then\n  echo %q\n  exit 0\nfi\nprintf 'unsupported gh invocation: %%s\\n' \"$*\" >&2\nexit 1\n", prURL)
-	writeFile(t, script, content)
+	completionWriteFile(t, script, content)
 	if err := os.Chmod(script, 0o755); err != nil {
 		t.Fatalf("chmod gh shim: %v", err)
 	}
@@ -378,7 +378,7 @@ func runCommandWithOutputs(t *testing.T, command *cobra.Command, args []string) 
 	return out.String(), err
 }
 
-func runGit(t *testing.T, dir string, args ...string) {
+func completionRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -388,7 +388,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func writeFile(t *testing.T, path, body string) {
+func completionWriteFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
@@ -398,22 +398,22 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-type fakeConnector struct {
+type completionFakeConnector struct {
 	items   map[string]*connector.WorkItem
 	childOf map[string]string
 	nextID  int
 }
 
-func newFakeConnector() *fakeConnector {
-	return &fakeConnector{
+func newCompletionFakeConnector() *completionFakeConnector {
+	return &completionFakeConnector{
 		items:   map[string]*connector.WorkItem{},
 		childOf: map[string]string{},
 	}
 }
 
-func (f *fakeConnector) Name() string { return "fake" }
+func (f *completionFakeConnector) Name() string { return "fake" }
 
-func (f *fakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, error) {
+func (f *completionFakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, error) {
 	item, ok := f.items[id]
 	if !ok {
 		return nil, fmt.Errorf("not found")
@@ -423,11 +423,11 @@ func (f *fakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, 
 	return &copyItem, nil
 }
 
-func (f *fakeConnector) List(_ context.Context, _ connector.ListFilters) (*connector.ListResult, error) {
+func (f *completionFakeConnector) List(_ context.Context, _ connector.ListFilters) (*connector.ListResult, error) {
 	return &connector.ListResult{}, nil
 }
 
-func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string, types []string) ([]connector.Edge, error) {
+func (f *completionFakeConnector) GetEdges(_ context.Context, id string, direction string, types []string) ([]connector.Edge, error) {
 	if len(types) > 0 && types[0] != "child-of" {
 		return nil, nil
 	}
@@ -454,7 +454,7 @@ func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string,
 	}
 }
 
-func (f *fakeConnector) GetMetadata(_ context.Context, id string, key string) (string, error) {
+func (f *completionFakeConnector) GetMetadata(_ context.Context, id string, key string) (string, error) {
 	item, ok := f.items[id]
 	if !ok || item.Metadata == nil {
 		return "", nil
@@ -462,20 +462,20 @@ func (f *fakeConnector) GetMetadata(_ context.Context, id string, key string) (s
 	return metadataString(item.Metadata, key), nil
 }
 
-func (f *fakeConnector) Create(_ context.Context, req connector.CreateRequest) (string, error) {
+func (f *completionFakeConnector) Create(_ context.Context, req connector.CreateRequest) (string, error) {
 	f.nextID++
 	id := fmt.Sprintf("review-%d", f.nextID)
 	f.items[id] = &connector.WorkItem{ID: id, Title: req.Title, Content: req.Content, Type: req.Type, Status: "closed", Metadata: cloneMetadata(req.Metadata)}
 	return id, nil
 }
 
-func (f *fakeConnector) UpdateStatus(_ context.Context, id string, status string) error {
+func (f *completionFakeConnector) UpdateStatus(_ context.Context, id string, status string) error {
 	item := f.items[id]
 	item.Status = status
 	return nil
 }
 
-func (f *fakeConnector) AppendContent(_ context.Context, id string, content string) error {
+func (f *completionFakeConnector) AppendContent(_ context.Context, id string, content string) error {
 	item := f.items[id]
 	if item.Content != "" && !strings.HasSuffix(item.Content, "\n") {
 		item.Content += "\n"
@@ -484,7 +484,7 @@ func (f *fakeConnector) AppendContent(_ context.Context, id string, content stri
 	return nil
 }
 
-func (f *fakeConnector) SetMetadata(_ context.Context, id string, key string, value any) error {
+func (f *completionFakeConnector) SetMetadata(_ context.Context, id string, key string, value any) error {
 	item := f.items[id]
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
@@ -493,7 +493,7 @@ func (f *fakeConnector) SetMetadata(_ context.Context, id string, key string, va
 	return nil
 }
 
-func (f *fakeConnector) UpdateMetadataMap(_ context.Context, id string, patch map[string]any) error {
+func (f *completionFakeConnector) UpdateMetadataMap(_ context.Context, id string, patch map[string]any) error {
 	item := f.items[id]
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
@@ -504,39 +504,39 @@ func (f *fakeConnector) UpdateMetadataMap(_ context.Context, id string, patch ma
 	return nil
 }
 
-func (f *fakeConnector) AddLabel(_ context.Context, id string, label string) error {
+func (f *completionFakeConnector) AddLabel(_ context.Context, id string, label string) error {
 	item := f.items[id]
 	item.Labels = append(item.Labels, label)
 	return nil
 }
 
-func (f *fakeConnector) CreateEdge(_ context.Context, fromID string, toID string, edgeType string) error {
+func (f *completionFakeConnector) CreateEdge(_ context.Context, fromID string, toID string, edgeType string) error {
 	if edgeType == "child-of" {
 		f.childOf[fromID] = toID
 	}
 	return nil
 }
 
-func (f *fakeConnector) addItem(item *connector.WorkItem) {
+func (f *completionFakeConnector) addItem(item *connector.WorkItem) {
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
 	}
 	f.items[item.ID] = item
 }
 
-func (f *fakeConnector) addChild(taskID, designID string) {
+func (f *completionFakeConnector) addChild(taskID, designID string) {
 	f.childOf[taskID] = designID
 }
 
-type fakeStore struct {
+type completionFakeStore struct {
 	runs     map[string]*store.PipelineRun
 	gates    map[string][]store.PipelineGateRecord
 	tasks    map[string][]store.PipelineTaskRecord
 	sessions map[string]*store.SessionRecord
 }
 
-func newFakeStore() *fakeStore {
-	return &fakeStore{
+func newCompletionFakeStore() *completionFakeStore {
+	return &completionFakeStore{
 		runs:     map[string]*store.PipelineRun{},
 		gates:    map[string][]store.PipelineGateRecord{},
 		tasks:    map[string][]store.PipelineTaskRecord{},
@@ -544,17 +544,17 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (f *fakeStore) CreateRun(context.Context, string, string, string) (*store.PipelineRun, error) {
+func (f *completionFakeStore) CreateRun(context.Context, string, string, string) (*store.PipelineRun, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeStore) CreateRunWithMode(_ context.Context, designID, project, phase, mode string) (*store.PipelineRun, error) {
+func (f *completionFakeStore) CreateRunWithMode(_ context.Context, designID, project, phase, mode string) (*store.PipelineRun, error) {
 	run := &store.PipelineRun{ID: "run-" + designID, DesignID: designID, Project: project, CurrentPhase: phase, Status: "active", Mode: mode, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	f.runs[designID] = run
 	return run, nil
 }
 
-func (f *fakeStore) GetRun(_ context.Context, designID string) (*store.PipelineRun, error) {
+func (f *completionFakeStore) GetRun(_ context.Context, designID string) (*store.PipelineRun, error) {
 	run, ok := f.runs[designID]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -562,11 +562,11 @@ func (f *fakeStore) GetRun(_ context.Context, designID string) (*store.PipelineR
 	return run, nil
 }
 
-func (f *fakeStore) ListRuns(_ context.Context, _ string) ([]store.PipelineRunStatus, error) {
+func (f *completionFakeStore) ListRuns(_ context.Context, _ string) ([]store.PipelineRunStatus, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) UpdateRunPhase(_ context.Context, designID, phase string) error {
+func (f *completionFakeStore) UpdateRunPhase(_ context.Context, designID, phase string) error {
 	run, ok := f.runs[designID]
 	if !ok {
 		return fmt.Errorf("no pipeline run for %s", designID)
@@ -576,7 +576,7 @@ func (f *fakeStore) UpdateRunPhase(_ context.Context, designID, phase string) er
 	return nil
 }
 
-func (f *fakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
+func (f *completionFakeStore) UpdateRunStatus(_ context.Context, designID, status string) error {
 	run, ok := f.runs[designID]
 	if !ok {
 		return fmt.Errorf("no pipeline run for %s", designID)
@@ -586,7 +586,7 @@ func (f *fakeStore) UpdateRunStatus(_ context.Context, designID, status string) 
 	return nil
 }
 
-func (f *fakeStore) SetRunMode(_ context.Context, designID, mode string) error {
+func (f *completionFakeStore) SetRunMode(_ context.Context, designID, mode string) error {
 	run, ok := f.runs[designID]
 	if !ok {
 		return fmt.Errorf("no pipeline run for %s", designID)
@@ -595,7 +595,7 @@ func (f *fakeStore) SetRunMode(_ context.Context, designID, mode string) error {
 	return nil
 }
 
-func (f *fakeStore) RecordGate(_ context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
+func (f *completionFakeStore) RecordGate(_ context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	rec := store.PipelineGateRecord{
 		ID:            fmt.Sprintf("gate-%d", len(f.gates[input.DesignID])+1),
 		PipelineID:    input.PipelineID,
@@ -612,11 +612,11 @@ func (f *fakeStore) RecordGate(_ context.Context, input store.PipelineGateInput)
 	return &rec, nil
 }
 
-func (f *fakeStore) GetGateHistory(_ context.Context, designID string) ([]store.PipelineGateRecord, error) {
+func (f *completionFakeStore) GetGateHistory(_ context.Context, designID string) ([]store.PipelineGateRecord, error) {
 	return append([]store.PipelineGateRecord(nil), f.gates[designID]...), nil
 }
 
-func (f *fakeStore) GetLatestGateRound(_ context.Context, pipelineID, gateName string) (int, error) {
+func (f *completionFakeStore) GetLatestGateRound(_ context.Context, pipelineID, gateName string) (int, error) {
 	maxRound := 0
 	for _, list := range f.gates {
 		for _, gate := range list {
@@ -628,7 +628,7 @@ func (f *fakeStore) GetLatestGateRound(_ context.Context, pipelineID, gateName s
 	return maxRound, nil
 }
 
-func (f *fakeStore) AddTask(_ context.Context, pipelineID, taskShardID, designID string, wave *int) error {
+func (f *completionFakeStore) AddTask(_ context.Context, pipelineID, taskShardID, designID string, wave *int) error {
 	f.tasks[pipelineID] = append(f.tasks[pipelineID], store.PipelineTaskRecord{
 		ID:          fmt.Sprintf("pt-%d", len(f.tasks[pipelineID])+1),
 		PipelineID:  pipelineID,
@@ -642,11 +642,60 @@ func (f *fakeStore) AddTask(_ context.Context, pipelineID, taskShardID, designID
 	return nil
 }
 
-func (f *fakeStore) ListTasks(_ context.Context, pipelineID string) ([]store.PipelineTaskRecord, error) {
+func (f *completionFakeStore) ListTasks(_ context.Context, pipelineID string) ([]store.PipelineTaskRecord, error) {
 	return append([]store.PipelineTaskRecord(nil), f.tasks[pipelineID]...), nil
 }
 
-func (f *fakeStore) UpdateTaskStatus(_ context.Context, taskShardID, status string) error {
+func (f *completionFakeStore) ListTasksByDesign(_ context.Context, designID string) ([]store.PipelineTaskRecord, error) {
+	var out []store.PipelineTaskRecord
+	for _, tasks := range f.tasks {
+		for _, task := range tasks {
+			if task.DesignID == designID {
+				out = append(out, task)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f *completionFakeStore) GetTaskByShardID(_ context.Context, taskShardID string) (*store.PipelineTaskRecord, error) {
+	for _, tasks := range f.tasks {
+		for _, task := range tasks {
+			if task.TaskShardID == taskShardID {
+				cp := task
+				return &cp, nil
+			}
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (f *completionFakeStore) GetTasksByWave(_ context.Context, designID string, wave int) ([]store.PipelineTaskRecord, error) {
+	var out []store.PipelineTaskRecord
+	for _, tasks := range f.tasks {
+		for _, task := range tasks {
+			if task.DesignID == designID && task.Wave != nil && *task.Wave == wave {
+				out = append(out, task)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f *completionFakeStore) IsWaveClosed(_ context.Context, designID string, wave int) (bool, error) {
+	tasks, _ := f.GetTasksByWave(context.Background(), designID, wave)
+	if len(tasks) == 0 {
+		return false, nil
+	}
+	for _, task := range tasks {
+		if task.Status != "closed" {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (f *completionFakeStore) UpdateTaskStatus(_ context.Context, taskShardID, status string) error {
 	for pipelineID := range f.tasks {
 		for i := range f.tasks[pipelineID] {
 			if f.tasks[pipelineID][i].TaskShardID == taskShardID {
@@ -658,13 +707,13 @@ func (f *fakeStore) UpdateTaskStatus(_ context.Context, taskShardID, status stri
 	return nil
 }
 
-func (f *fakeStore) CreateSession(_ context.Context, input store.SessionInput) (*store.SessionRecord, error) {
+func (f *completionFakeStore) CreateSession(_ context.Context, input store.SessionInput) (*store.SessionRecord, error) {
 	rec := &store.SessionRecord{ID: "sess-" + input.TaskID, TaskID: input.TaskID, Status: "running"}
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
 
-func (f *fakeStore) EndSession(_ context.Context, id string, result store.SessionResult) error {
+func (f *completionFakeStore) EndSession(_ context.Context, id string, result store.SessionResult) error {
 	session, ok := f.sessions[id]
 	if !ok {
 		return fmt.Errorf("session not found")
@@ -686,7 +735,7 @@ func (f *fakeStore) EndSession(_ context.Context, id string, result store.Sessio
 	return nil
 }
 
-func (f *fakeStore) GetSession(_ context.Context, taskID string) (*store.SessionRecord, error) {
+func (f *completionFakeStore) GetSession(_ context.Context, taskID string) (*store.SessionRecord, error) {
 	for _, session := range f.sessions {
 		if session.TaskID == taskID {
 			return session, nil
@@ -695,35 +744,35 @@ func (f *fakeStore) GetSession(_ context.Context, taskID string) (*store.Session
 	return nil, store.ErrNotFound
 }
 
-func (f *fakeStore) ListSessions(_ context.Context, _ string) ([]store.SessionRecord, error) {
+func (f *completionFakeStore) ListSessions(_ context.Context, _ string) ([]store.SessionRecord, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetRunStatusCounts(_ context.Context, _ string) (map[string]int, error) {
+func (f *completionFakeStore) GetRunStatusCounts(_ context.Context, _ string) (map[string]int, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetTaskStatusCounts(_ context.Context, _ string) (map[string]int, error) {
+func (f *completionFakeStore) GetTaskStatusCounts(_ context.Context, _ string) (map[string]int, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetGatePassRates(_ context.Context, _ string) ([]store.GatePassRate, error) {
+func (f *completionFakeStore) GetGatePassRates(_ context.Context, _ string) ([]store.GatePassRate, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetGateFailures(_ context.Context, _ string) ([]store.PipelineGateRecord, error) {
+func (f *completionFakeStore) GetGateFailures(_ context.Context, _ string) ([]store.PipelineGateRecord, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetAvgTaskDuration(_ context.Context, _ string) (*float64, error) {
+func (f *completionFakeStore) GetAvgTaskDuration(_ context.Context, _ string) (*float64, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) Migrate(context.Context) error { return nil }
+func (f *completionFakeStore) Migrate(context.Context) error { return nil }
 
-func (f *fakeStore) Close() error { return nil }
+func (f *completionFakeStore) Close() error { return nil }
 
-func (f *fakeStore) taskStatus(pipelineID, taskID string) string {
+func (f *completionFakeStore) taskStatus(pipelineID, taskID string) string {
 	for _, task := range f.tasks[pipelineID] {
 		if task.TaskShardID == taskID {
 			return task.Status
