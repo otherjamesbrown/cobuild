@@ -124,6 +124,7 @@ Exit codes:
 			fmt.Printf("  cobuild dispatch %s\n", id)
 			fmt.Printf("  (Spawns a dispatched CoBuild agent to run the %s skill)\n", run.CurrentPhase)
 		case "implement":
+			strategy := currentWaveStrategy()
 			// pipeline_tasks is populated by `cobuild dispatch-wave` when
 			// it starts a wave — NOT by `cobuild wi create` from the
 			// decompose agent. So an empty pipeline_tasks slice in the
@@ -132,7 +133,11 @@ Exit codes:
 			// below would incorrectly claim).
 			if len(tasks) == 0 {
 				fmt.Printf("  cobuild dispatch-wave %s\n", id)
-				fmt.Println("  (Implement phase entered — dispatch the first wave of tasks)")
+				if strategy == "serial" {
+					fmt.Println("  (Implement phase entered — dispatch the first serial wave, not every future-ready task)")
+				} else {
+					fmt.Println("  (Implement phase entered — dispatch all currently ready tasks in parallel)")
+				}
 				break
 			}
 			// If there are pending tasks, dispatch the wave; if tasks are
@@ -155,7 +160,11 @@ Exit codes:
 			switch {
 			case pending > 0:
 				fmt.Printf("  cobuild dispatch-wave %s\n", id)
-				fmt.Printf("  (%d task(s) still pending — dispatch the next wave of dispatched CoBuild agents)\n", pending)
+				if strategy == "serial" {
+					fmt.Printf("  (%d task(s) still pending — dispatch only the current serial wave after earlier tasks close, avoiding the unsafe dispatch-everything-then-rebase-later path)\n", pending)
+				} else {
+					fmt.Printf("  (%d task(s) still pending — dispatch all currently ready tasks in parallel)\n", pending)
+				}
 			case inReview > 0:
 				fmt.Printf("  cobuild process-review <task-id>\n")
 				fmt.Printf("  (%d task(s) awaiting review — run for each)\n", inReview)

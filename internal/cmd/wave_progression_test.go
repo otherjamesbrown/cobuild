@@ -76,6 +76,15 @@ func (s stubWaveStore) GetGateFailures(context.Context, string) ([]store.Pipelin
 func (s stubWaveStore) GetAvgTaskDuration(context.Context, string) (*float64, error) {
 	panic("not used")
 }
+func (s stubWaveStore) IsWaveClosed(_ context.Context, _ string, wave int) (bool, error) {
+	tasks := s.waveTasks[wave]
+	for _, t := range tasks {
+		if t.Status != "closed" {
+			return false, nil
+		}
+	}
+	return len(tasks) > 0, nil
+}
 func (s stubWaveStore) Migrate(context.Context) error { panic("not used") }
 func (s stubWaveStore) Close() error                  { panic("not used") }
 

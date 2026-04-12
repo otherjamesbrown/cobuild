@@ -23,7 +23,11 @@ func printNextStep(workItemID, phase, action string) {
 
 	case "dispatch-wave":
 		fmt.Printf("  cobuild audit %s\n", workItemID)
-		fmt.Println("  (Check progress of the dispatched wave — dispatched agents run in parallel)")
+		if currentWaveStrategy() == "serial" {
+			fmt.Println("  (Check progress of the current serial wave — wave N+1 waits until wave N closes, avoiding the unsafe dispatch-everything-then-rebase-later path)")
+		} else {
+			fmt.Println("  (Check progress of the dispatched wave — all currently ready tasks run in parallel)")
+		}
 		fmt.Printf("  When all tasks reach needs-review: run `cobuild process-review <task-id>` for each")
 
 	case "wait-complete":
