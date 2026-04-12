@@ -721,7 +721,6 @@ func (f *completionFakeStore) EndSession(_ context.Context, id string, result st
 	now := time.Now()
 	session.EndedAt = &now
 	session.Status = result.Status
-	session.WorktreePath = session.WorktreePath
 	sessionLog := result.SessionLog
 	if sessionLog != "" {
 		session.Error = &sessionLog

@@ -185,15 +185,16 @@ func (f *fakeConnector) GetEdges(ctx context.Context, id string, direction strin
 			var out []connector.Edge
 			out = append(out, f.edges[id]["incoming"]...)
 			out = append(out, f.edges[id]["outgoing"]...)
-			return out, nil
+			return filterEdgesByType(out, types), nil
 		}
-		return append([]connector.Edge(nil), f.edges[id][direction]...), nil
+		return filterEdgesByType(append([]connector.Edge(nil), f.edges[id][direction]...), types), nil
 	}
 	// Fall back to parent-based edges (used by complete tests).
 	switch direction {
 	case "outgoing":
 		if designID := f.parent[id]; designID != "" {
-			return []connector.Edge{{Direction: "outgoing", EdgeType: "child-of", ItemID: designID, Status: f.items[designID].Status}}, nil
+			edges := []connector.Edge{{Direction: "outgoing", EdgeType: "child-of", ItemID: designID, Status: f.items[designID].Status}}
+			return filterEdgesByType(edges, types), nil
 		}
 	case "incoming":
 		var edges []connector.Edge
@@ -207,16 +208,23 @@ func (f *fakeConnector) GetEdges(ctx context.Context, id string, direction strin
 				})
 			}
 		}
-		return edges, nil
+		return filterEdgesByType(edges, types), nil
 	}
 	return nil, nil
 }
 
 func (f *fakeConnector) GetMetadata(ctx context.Context, id string, key string) (string, error) {
-	if f.metadata[id] == nil {
-		return "", nil
+	if f.metadata[id] != nil {
+		if value, ok := f.metadata[id][key]; ok {
+			return value, nil
+		}
 	}
-	return f.metadata[id][key], nil
+	if item := f.items[id]; item != nil && item.Metadata != nil {
+		if value, ok := item.Metadata[key]; ok {
+			return fmt.Sprintf("%v", value), nil
+		}
+	}
+	return "", nil
 }
 
 func (f *fakeConnector) Create(ctx context.Context, req connector.CreateRequest) (string, error) {
@@ -324,6 +332,22 @@ func ensureDirMap(in map[string][]connector.Edge) map[string][]connector.Edge {
 		return map[string][]connector.Edge{}
 	}
 	return in
+}
+
+func filterEdgesByType(edges []connector.Edge, types []string) []connector.Edge {
+	if len(types) == 0 {
+		return edges
+	}
+	filtered := make([]connector.Edge, 0, len(edges))
+	for _, edge := range edges {
+		for _, edgeType := range types {
+			if edge.EdgeType == edgeType {
+				filtered = append(filtered, edge)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 type fakeStore struct {

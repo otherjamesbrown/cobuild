@@ -93,7 +93,3 @@ func TestMergeConfig_ReviewBoolAndTimeoutOverrides(t *testing.T) {
 		t.Fatalf("timeout = %s, want 30s", got)
 	}
 }
-
-func boolPtr(v bool) *bool {
-	return &v
-}

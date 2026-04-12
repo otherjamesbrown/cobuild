@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 func TestWritePhasePromptDecomposeMentionsCompletionModeDirect(t *testing.T) {
@@ -66,6 +68,9 @@ func TestWritePhasePromptImplementAndFixRequireExplicitExit(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
 func TestWritePhasePromptDecomposeEnforcesSingleRepoTasks(t *testing.T) {
 	var b strings.Builder
 	writePhasePrompt(&b, "decompose", "cb-parent", "cb-parent", nil)
@@ -310,6 +315,108 @@ func TestInvestigationContentDowngrade(t *testing.T) {
 	}
 }
 
+func TestDispatchDryRunUsesTaskRepoMetadataForWorktreeTargeting(t *testing.T) {
+	cpRepo, pfRepo := setupDispatchRepoRegistry(t)
+
+	fc := newFakeConnector()
+	fs := newFakeStore()
+	fs.runs["cb-task-pf"] = &store.PipelineRun{
+		ID:           "run-1",
+		DesignID:     "cb-task-pf",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-design",
+		Title:   "Cross-repo design",
+		Type:    "design",
+		Status:  "open",
+		Content: "Edit context-palace dispatch code and penfold worker code in separate tasks.",
+	})
+	fc.addItem(&connector.WorkItem{
+		ID:       "cb-task-pf",
+		Title:    "Penfold-only task",
+		Type:     "task",
+		Status:   "open",
+		Content:  "Change only penfold files.",
+		Metadata: map[string]any{"repo": "penfold"},
+	})
+	fc.parent["cb-task-pf"] = "cb-design"
+
+	restore := installTestGlobals(t, fc, fs, "context-palace")
+	defer restore()
+
+	_ = dispatchCmd.Flags().Set("dry-run", "true")
+	t.Cleanup(func() {
+		_ = dispatchCmd.Flags().Set("dry-run", "false")
+	})
+
+	out := captureStdout(t, func() {
+		if err := dispatchCmd.RunE(dispatchCmd, []string{"cb-task-pf"}); err != nil {
+			t.Fatalf("dispatch returned error: %v", err)
+		}
+	})
+
+	assertContains(t, out, "Target repo: "+pfRepo+" (from task metadata: repo=penfold)")
+	assertContains(t, out, "[dry-run] Would create worktree for cb-task-pf in "+pfRepo)
+	assertNotContains(t, out, cpRepo+" (from project: context-palace)")
+}
+
+func TestDispatchRefusesMissingRepoMetadataWhenParentDesignReferencesMultipleRepos(t *testing.T) {
+	_, _ = setupDispatchRepoRegistry(t)
+
+	fc := newFakeConnector()
+	fs := newFakeStore()
+	fs.runs["cb-task-missing"] = &store.PipelineRun{
+		ID:           "run-2",
+		DesignID:     "cb-task-missing",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-design",
+		Title:   "Cross-repo design",
+		Type:    "design",
+		Status:  "open",
+		Content: "This work spans context-palace and penfold. Split it into one task per repo.",
+	})
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-task-missing",
+		Title:   "Unsafe task",
+		Type:    "task",
+		Status:  "open",
+		Content: "Do not let this default to the wrong checkout.",
+	})
+	fc.parent["cb-task-missing"] = "cb-design"
+
+	restore := installTestGlobals(t, fc, fs, "context-palace")
+	defer restore()
+
+	_ = dispatchCmd.Flags().Set("dry-run", "true")
+	t.Cleanup(func() {
+		_ = dispatchCmd.Flags().Set("dry-run", "false")
+	})
+
+	err := dispatchCmd.RunE(dispatchCmd, []string{"cb-task-missing"})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want unsafe targeting refusal")
+	}
+
+	msg := err.Error()
+	for _, want := range []string{
+		"cb-task-missing has no `repo` metadata",
+		"parent design cb-design references multiple repos",
+		"context-palace, penfold",
+		"set `repo` metadata on this task before dispatching",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error missing %q:\n%s", want, msg)
+		}
+	}
+}
+
 func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {
 	testDir := setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
 
@@ -347,6 +454,54 @@ func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {
 	assertContains(t, output, "[dry-run] task-2")
 	assertNotContains(t, output, "[dry-run] task-3")
 	_ = testDir
+}
+
+func setupDispatchRepoRegistry(t *testing.T) (string, string) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	cpRepo := filepath.Join(tempDir, "context-palace")
+	pfRepo := filepath.Join(tempDir, "penfold")
+
+	for _, dir := range []string{homeDir, cpRepo, pfRepo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cpRepo, ".cobuild.yaml"), []byte("project: context-palace\nprefix: cp-\n"), 0o644); err != nil {
+		t.Fatalf("write context-palace config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pfRepo, ".cobuild.yaml"), []byte("project: penfold\nprefix: pf-\n"), 0o644); err != nil {
+		t.Fatalf("write penfold config: %v", err)
+	}
+
+	prevHome := os.Getenv("HOME")
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	if err := os.Chdir(cpRepo); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+		_ = os.Chdir(prevWD)
+	})
+
+	if err := config.SaveRepoRegistry(&config.RepoRegistry{
+		Repos: map[string]config.RepoEntry{
+			"context-palace": {Path: cpRepo},
+			"penfold":        {Path: pfRepo},
+		},
+	}); err != nil {
+		t.Fatalf("save repo registry: %v", err)
+	}
+
+	return cpRepo, pfRepo
 }
 
 func TestDispatchWaveParallelKeepsMultiWaveDispatch(t *testing.T) {
