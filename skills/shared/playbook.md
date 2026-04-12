@@ -1,278 +1,53 @@
 ---
 name: playbook
-version: "0.1"
-description: Pipeline orchestration decision tree. Trigger when a pipeline event occurs — phase transition, gate result, task completion, or health check.
+version: "0.2"
+description: Pipeline orchestration hub. Trigger when a pipeline event occurs and route to the phase-specific playbook file for the current symptom or phase.
 summary: >-
-  The orchestrator's decision tree. Reads the pipeline state, determines what action to take (run a gate, dispatch tasks, process reviews, handle escalations), takes one action, and exits. The next orchestrator picks up where this one left off.
+  The orchestrator hub. Read the pipeline state, match the current phase or symptom
+  in the dispatch table, open only the linked spoke file, take one action, update
+  state, and exit.
 ---
 
 # Playbook — Pipeline Orchestration
 
-You are the **pipeline orchestrator**. You read a pipeline work item, take one action, update state, and exit. The work item is the state — if you die, the next orchestrator reads the same item and picks up.
+You are the **pipeline orchestrator**. Read the work item, take one concrete action, update state, and exit. Do not load every playbook file up front. Use the table below to open only the spoke that matches the current situation.
 
 Full system reference: `docs/cobuild.md`
-
----
 
 ## Startup
 
 1. Read the pipeline shard: `cobuild show <id>`
-2. Read the shard itself: `cobuild show <id>`
-3. Determine the shard type (design, bug, task) and current phase
-4. Lock the pipeline: `cobuild lock <id>` — if locked, exit
-5. Follow the decision tree for the current phase below
+2. Determine the shard type and current phase
+3. Lock the pipeline: `cobuild lock <id>` — if already locked, exit
+4. Match the current symptom or phase in the dispatch table
+5. Read that one spoke file and follow it
 6. Unlock when done: `cobuild unlock <id>`
 
----
+## Dispatch Table
 
-## Phase Routing
+| Current symptom or phase | Read |
+|---|---|
+| You are starting fresh and need the common loop, routing, or workflow map | `skills/shared/playbook/startup.md` |
+| `pipeline.phase = design` and you need the readiness decision tree | `skills/shared/playbook/phase-design.md` |
+| `pipeline.phase = decompose` and you need task creation rules | `skills/shared/playbook/phase-decompose.md` |
+| `pipeline.phase = implement`, tasks need dispatching, or a task looks stalled/crashed | `skills/shared/playbook/phase-implement.md` |
+| `pipeline.phase = review` and you need the review or merge procedure | `skills/shared/playbook/phase-review.md` |
+| `pipeline.phase = done` and you need the retrospective procedure | `skills/shared/playbook/phase-done.md` |
+| You hit ambiguity, retry limits, circular deps, or need escalation text/budgets | `skills/shared/playbook/escalation.md` |
+
+## Routing Summary
 
 ```
 shard.type = ?
-  "design" → full workflow: design → decompose → implement → review → done
-  "bug"    → bugfix workflow: implement → review → done
-  "task"   → task workflow: implement → review → done
-
-pipeline.phase = ?
-  "design"     → Phase 1 (Design Readiness)
-  "decompose"  → Phase 2 (Decomposition)
-  "implement"  → Phase 3 (Dispatch & Monitor)
-  "review"     → Phase 4 (Review Gate)
-  "done"       → Phase 5 (Retrospective). Then exit.
+  "design" → design → decompose → implement → review → done
+  "bug"    → implement → review → done
+  "task"   → implement → review → done
 ```
 
----
-
-## Phase 1: Design Readiness
-
-Follow `skills/design/gate-readiness-review.md` for the full procedure.
-
-### Decision: Skip or full C/D/S?
-
-```
-Does the design:
-  - Touch multiple subsystems?          → full C/D/S (not in v1 — escalate)
-  - Have label "needs-cds"?             → full C/D/S (not in v1 — escalate)
-  - Otherwise                           → FAST PATH
-```
-
-### Fast path (default)
-
-1. Read the design and evaluate 5 readiness criteria + implementability check
-2. Record the verdict:
-   ```bash
-   cobuild review <id> --verdict pass|fail --readiness <N> --body "<findings>"
-   ```
-3. If fail: `cobuild wi label add <id> blocked`. Unlock. Exit.
-4. If pass: phase auto-advances to `decompose`. Unlock. Exit.
-
-**Use the review command — it creates the audit trail, sub-shard, and advances the phase.**
-
----
-
-## Phase 2: Decomposition
-
-### Decision: Which domain agent?
-
-Read the pipeline config for the agent roster. Route tasks to agents based on domain. If the project has multiple agents configured, assign by matching task domain to agent domains. If unclear, flag the developer.
-
-### Steps
-
-1. **Structure pass**: Domain agent produces task tree (titles, scope, deps)
-2. **Detail review**: Verify each task is single-session sized, has testable criteria, code locations
-3. **Create tasks** with edges:
-   ```bash
-   cobuild wi create --type task --title "<title>" --parent <design-id> --body "<spec>"
-   cobuild wi links add <dependent-id> --blocked-by <blocker-id>
-   ```
-4. **Create integration test task** (required — gate rejects without it):
-   ```bash
-   cobuild wi create --type task --title "Integration test: <design>" --parent <design-id> --label integration-test --body "<test spec>"
-   cobuild wi links add <test-id> --blocked-by <all-other-task-ids>
-   ```
-5. **Register tasks**: `cobuild update <id> --add-task <task-id>` for each
-6. **Record verdict**:
-   ```bash
-   cobuild decompose <id> --verdict pass --body "<rationale>"
-   ```
-7. Unlock. Exit. Poller picks up Phase 3.
-
-**Do NOT manually update the phase.** The decompose command validates and advances.
-
----
-
-## Phase 3: Dispatch & Monitor
-
-### Decision: What to do?
-
-```bash
-cobuild deps <design-id>
-```
-
-```
-Any tasks in "dispatchable" list?
-  YES → dispatch them (up to max_concurrent from config)
-  NO  → Are all tasks closed?
-    YES → advance to review phase
-    NO  → Are any tasks stalled? (health monitor handles this)
-      YES → see stall handling below
-      NO  → exit (poller will respawn when a task completes)
-```
-
-### Dispatch
-
-```bash
-cobuild task dispatch <task-id>
-```
-
-This:
-- Creates a worktree from the registered repo
-- Generates a CLAUDE.md from context layers (dispatch mode)
-- Spawns an agent in tmux with `COBUILD_DISPATCH=true`
-- Sets task to `in_progress`
-- Captures output via `tmux pipe-pane`
-- Appends `cobuild task complete <id>` to the tmux command
-
-The agent's prompt includes: task spec, design context, and completion instructions. The model comes from the `implement` phase config (default: sonnet).
-
-### Post-agent completion
-
-When the agent finishes, `cobuild task complete` runs automatically:
-1. Restores original CLAUDE.md (undoes dispatch injection)
-2. Commits remaining changes
-3. Pushes branch
-4. Creates PR if missing
-5. Appends evidence to shard
-6. Marks `needs-review`
-
-### Stall and crash handling
-
-Configured in `monitoring:` section of pipeline.yaml. The poller detects:
-- **Crash**: tmux window gone, task still `in_progress` → action from `on_crash` (usually `redispatch`)
-- **Stall**: no shard update for `stall_timeout` → action from `on_stall` (usually `skill:implement/stall-check`)
-- **Max retries**: retry count exceeds `max_retries` → action from `on_max_retries` (usually `escalate`)
-
-### All tasks complete
-
-When all tasks are closed:
-```bash
-cobuild update <id> --phase review
-```
-
----
-
-## Phase 4: Review Gate
-
-### Review strategy
-
-Read from pipeline config `review.strategy`:
-
-**strategy: external** (e.g. Gemini reviews PRs)
-1. Wait for CI completion (if `review.ci.wait: true`)
-2. Wait for external reviewer comments
-3. Follow `skills/review/gate-process-review.md` to evaluate:
-   - CI: compare against main (pr-only mode), flag new failures only
-   - Gemini comments: classify as must-fix, nice-to-have, or noise
-   - Reply to each comment on GitHub
-4. Record verdict: `cobuild task review-verdict <task-id> approve|request-changes|escalate`
-
-**strategy: agent** (no external reviewer)
-1. Spawn review agent with `review_skill` (e.g. `review/gate-review-pr`)
-2. Agent evaluates PR against task spec and design
-3. Records verdict
-
-### Merge
-
-```bash
-gh pr merge <pr-number> --squash
-cobuild worktree remove <task-id>
-cobuild wi status <task-id> closed
-```
-
-This squash-merges the PR, then cleans up the worktree and closes the task. Deploys affected services from `deploy:` config.
-
-### Design-level verification
-
-When all tasks merged:
-1. Check design success criteria against what was built
-2. Gaps → file new tasks, back to Phase 3
-3. Complete → `cobuild update <id> --phase done`
-
----
-
-## Phase 5: Done
-
-Run the retrospective gate (if configured):
-```bash
-cobuild gate <id> retrospective --verdict pass --body "<findings>"
-```
-
-Follow `skills/done/gate-retrospective.md`:
-1. Review the audit trail: `cobuild audit <id>`
-2. Review insights: `cobuild insights`
-3. Generate improvements: `cobuild improve`
-4. Record findings as a knowledge shard
-5. Close the design: `cobuild wi status <id> closed`
-
----
-
-## Escalation Criteria
-
-Escalate to the developer (label work item `blocked`) when:
-
-- Design fails implementability and you can't identify what's missing
-- Task stalled > 10 iterations
-- Review round 3 still requesting changes
-- Circular dependency in task graph
-- Agent crashes repeatedly on same task (max_retries exceeded)
-- Post-merge tests fail
-- Any ambiguity you can't resolve
-
-Format:
-```bash
-cobuild wi append <id> --body "## Escalation
-**Issue:** <one sentence>
-**Context:** <what you tried>
-**Decision needed:** <specific question for the developer>"
-cobuild wi label add <id> blocked
-```
-
----
-
-## Iteration Budgets
-
-| Limit | Default | Action when exceeded |
-|-------|---------|---------------------|
-| Review rounds per gate | 5 | Close loop, proceed |
-| Review rounds per PR | 3 | Re-scope or escalate |
-| Max concurrent agents | 3 | Queue dispatches |
-| Stall timeout | 30m | Health action (from config) |
-| Max retries per task | 3 | Escalate |
-
----
-
-## Commands Reference
-
-| Action | Command |
-|--------|---------|
-| Read pipeline state | `cobuild show <id>` |
-| Record Phase 1 review | `cobuild review <id> --verdict pass\|fail --readiness N --body "..."` |
-| Record Phase 2 decompose | `cobuild decompose <id> --verdict pass\|fail --body "..."` |
-| Record any gate | `cobuild gate <id> <gate-name> --verdict pass\|fail --body "..."` |
-| View audit trail | `cobuild audit <id>` |
-| Lock / unlock | `cobuild lock <id>` / `unlock <id>` |
-| View task deps | `cobuild deps <design-id>` |
-| Dispatch task | `cobuild task dispatch <task-id>` |
-| Complete task | `cobuild task complete <task-id>` |
-| Review verdict | `cobuild task review-verdict <task-id> approve\|request-changes\|escalate` |
-| Merge PR | `gh pr merge <pr-number> --squash` |
-| Dashboard | `cobuild dashboard` |
-| Pipeline insights | `cobuild insights` |
-| Suggest improvements | `cobuild improve` |
-| Set status | `cobuild wi status <id> <status>` |
-| Add label | `cobuild wi label add <id> <label>` |
-| Append to work item | `cobuild wi append <id> --body "..."` |
+If the current phase or symptom is unclear after `cobuild show <id>`, read `skills/shared/playbook/startup.md` first.
 
 ## Gotchas
 
-<!-- Add failure patterns here as they're discovered -->
+- Open one spoke at a time. The point is to keep orchestration context small.
+- Use the phase-specific command that records the audit trail. Do not hand-edit phase state if a gate command exists.
+- If a spoke tells you to escalate, stop routing and follow `skills/shared/playbook/escalation.md`.

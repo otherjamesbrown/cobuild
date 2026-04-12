@@ -24,7 +24,7 @@ skills/
     implement/    dispatch-task.md, stall-check.md
     review/       gate-review-pr.md, gate-process-review.md, merge-and-verify.md
     done/         gate-retrospective.md
-    shared/       playbook.md, create-design.md, bootstrap.md, bootstrap-*.md
+    shared/       playbook.md, playbook/*.md, create-design.md, bootstrap.md, bootstrap-*.md
 ```
 
 If skills already exist (from a previous setup), ask:
@@ -56,10 +56,11 @@ This defines what "ready to implement" means. Customize:
 
 ### shared/playbook.md
 
-The orchestrator's decision tree. Customize:
+The orchestrator hub. Customize:
 - Add project-specific phase rules if needed
 - Update command references if the project uses non-standard patterns
 - Adjust dispatch settings (concurrency, model preferences per phase)
+- Keep the hub short; move detailed procedures into `shared/playbook/*.md`
 
 ---
 
@@ -86,6 +87,8 @@ Check that skill references in the pipeline config resolve correctly:
 ls skills/design/gate-readiness-review.md
 ls skills/done/gate-retrospective.md
 ls skills/shared/playbook.md
+ls skills/shared/playbook/startup.md
+ls skills/shared/playbook/phase-implement.md
 ls skills/review/gate-review-pr.md      # if agent review strategy
 ls skills/review/gate-process-review.md # if external review strategy
 ls skills/implement/stall-check.md
@@ -99,7 +102,7 @@ ls skills/implement/stall-check.md
 - [ ] `skills/` directory has all phase subfolders
 - [ ] `shared/create-design.md` reviewed and customized
 - [ ] `design/gate-readiness-review.md` reviewed and customized
-- [ ] `shared/playbook.md` agent routing updated
+- [ ] `shared/playbook.md` hub and spoke routing updated
 - [ ] Review strategy skills reviewed
 - [ ] All skill paths referenced in pipeline.yaml resolve to existing files
 
