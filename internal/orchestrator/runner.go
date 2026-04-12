@@ -30,15 +30,18 @@ func (f DispatchFunc) Dispatch(ctx context.Context, shardID string) error {
 
 // Options configures the orchestration loop.
 type Options struct {
-	PollInterval time.Duration
-	PhaseTimeout time.Duration
-	StepMode     bool
-	Output       io.Writer
-	OnEvent      EventHandler
-	BeforeStep   func(ctx context.Context, shardID, phase string) error
-	SignalCh     <-chan os.Signal
-	Now          func() time.Time
-	Sleep        func(ctx context.Context, d time.Duration) error
+	PollInterval   time.Duration
+	PhaseTimeout   time.Duration
+	StepMode       bool
+	Output         io.Writer
+	Tasks          TaskSource
+	WaveDispatcher WaveDispatcher
+	Reviewer       ReviewProcessor
+	OnEvent        EventHandler
+	BeforeStep     func(ctx context.Context, shardID, phase string) error
+	SignalCh       <-chan os.Signal
+	Now            func() time.Time
+	Sleep          func(ctx context.Context, d time.Duration) error
 }
 
 // Runner drives a pipeline from its current phase.
@@ -86,6 +89,16 @@ func (r *Runner) Run(ctx context.Context, shardID string) error {
 		case "deploy":
 			r.emit(shardID, phase, EventTerminal, "Deploy requires human approval.")
 			return &DeployRequiredError{ShardID: shardID, Phase: phase}
+		case "implement":
+			if err := r.runImplement(ctx, shardID); err != nil {
+				return err
+			}
+			continue
+		case "review":
+			if err := r.runReview(ctx, shardID); err != nil {
+				return err
+			}
+			continue
 		default:
 			if _, ok := nonImplementPhases[phase]; !ok {
 				return &UnknownPhaseError{ShardID: shardID, Phase: phase}
