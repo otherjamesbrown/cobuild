@@ -62,9 +62,12 @@ Exit codes:
 		}
 		gates, _ := cbStore.GetGateHistory(ctx, id)
 		var tasks []store.PipelineTaskRecord
+		var sessions []store.SessionRecord
 		if run != nil {
 			tasks, _ = cbStore.ListTasks(ctx, run.ID)
+			sessions, _ = cbStore.ListSessions(ctx, id)
 		}
+		latestSessions := latestSessionByTask(sessions)
 
 		// Compact header — "you are here"
 		if title != "" {
@@ -145,12 +148,21 @@ Exit codes:
 			pending := 0
 			inReview := 0
 			closed := 0
+			redispatch := 0
 			for _, t := range tasks {
 				switch t.Status {
 				case "pending":
 					pending++
+					if redispatchableSession(sessionPtr(latestSessions[t.TaskShardID])) {
+						redispatch++
+					}
 				case "in_progress":
-					pending++
+					if shouldMarkTaskForRedispatch(t.Status, sessionPtr(latestSessions[t.TaskShardID])) {
+						pending++
+						redispatch++
+					} else {
+						pending++
+					}
 				case "needs-review":
 					inReview++
 				case "completed", "closed":
@@ -164,6 +176,9 @@ Exit codes:
 					fmt.Printf("  (%d task(s) still pending — dispatch only the current serial wave after earlier tasks close, avoiding the unsafe dispatch-everything-then-rebase-later path)\n", pending)
 				} else {
 					fmt.Printf("  (%d task(s) still pending — dispatch all currently ready tasks in parallel)\n", pending)
+				}
+				if redispatch > 0 {
+					fmt.Printf("  (%d task(s) are pending redispatch after a stale-killed/orphaned session)\n", redispatch)
 				}
 			case inReview > 0:
 				fmt.Printf("  cobuild process-review <task-id>\n")
