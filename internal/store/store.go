@@ -40,6 +40,8 @@ type Store interface {
 
 	AddTask(ctx context.Context, pipelineID, taskShardID, designID string, wave *int) error
 	ListTasks(ctx context.Context, pipelineID string) ([]PipelineTaskRecord, error)
+	GetTasksByWave(ctx context.Context, designID string, wave int) ([]PipelineTaskRecord, error)
+	IsWaveClosed(ctx context.Context, designID string, wave int) (bool, error)
 	UpdateTaskStatus(ctx context.Context, taskShardID, status string) error
 
 	// --- Pipeline Sessions ---

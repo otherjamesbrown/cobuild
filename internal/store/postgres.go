@@ -340,7 +340,7 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
 		FROM pipeline_tasks WHERE pipeline_id = $1
-		ORDER BY wave NULLS LAST, created_at ASC
+		ORDER BY wave NULLS LAST, created_at ASC, id ASC
 	`, pipelineID)
 	if err != nil {
 		return nil, fmt.Errorf("list pipeline tasks: %w", err)
@@ -358,6 +358,50 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+func (s *PostgresStore) GetTasksByWave(ctx context.Context, designID string, wave int) ([]PipelineTaskRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		FROM pipeline_tasks
+		WHERE design_id = $1 AND wave = $2
+		ORDER BY created_at ASC, id ASC
+	`, designID, wave)
+	if err != nil {
+		return nil, fmt.Errorf("get pipeline tasks by wave: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []PipelineTaskRecord
+	for rows.Next() {
+		var t PipelineTaskRecord
+		if err := rows.Scan(
+			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pipeline task: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+func (s *PostgresStore) IsWaveClosed(ctx context.Context, designID string, wave int) (bool, error) {
+	var total int
+	var closed int
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status IN ('closed', 'completed', 'done'))
+		FROM pipeline_tasks
+		WHERE design_id = $1 AND wave = $2
+	`, designID, wave).Scan(&total, &closed)
+	if err != nil {
+		return false, fmt.Errorf("check pipeline wave closure: %w", err)
+	}
+	if total == 0 {
+		return false, nil
+	}
+	return total == closed, nil
 }
 
 func (s *PostgresStore) UpdateTaskStatus(ctx context.Context, taskShardID, status string) error {
