@@ -663,7 +663,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			}
 		}
 
-		for _, candidate := range ready {
+		for i, candidate := range ready {
 			taskID := candidate.TaskID
 			if dryRun {
 				fmt.Printf("  [dry-run] %s\n", taskID)
@@ -686,7 +686,13 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 				}
 			}
 
-			// Run dispatch for each task via the existing dispatch command logic
+			// Run dispatch for each task via the existing dispatch command logic.
+			// Stagger dispatches by 3 seconds to avoid overwhelming the Codex
+			// app-server — simultaneous codex exec processes contend for the
+			// local server and later ones silently fail to start (cb-357c42).
+			if i > 0 {
+				time.Sleep(3 * time.Second)
+			}
 			fmt.Printf("  %s ", taskID)
 			dispatchArgs := []string{"dispatch", taskID}
 			subCmd, _, err := rootCmd.Find(dispatchArgs)
