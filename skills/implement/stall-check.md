@@ -18,18 +18,12 @@ You are the pipeline orchestrator, diagnosing a task that may be stalled, crashe
 
 ## Step 1: Determine status
 
-```bash
-cobuild show <task-id> -o json
-```
+Inspect the task record and the agent session for this shard.
 
-Check:
+Confirm:
 - `status` — should be `in_progress`
 - `updated_at` — when was the last update?
-
-Check tmux:
-```bash
-tmux list-windows -t <tmux-session> | grep <task-id>
-```
+- whether the expected tmux window still exists for the task
 
 ## Step 2: Diagnose
 
@@ -37,38 +31,15 @@ tmux list-windows -t <tmux-session> | grep <task-id>
 
 The agent session exited — could be rate limit, OOM, context overflow, or bug.
 
-**If retry count < max_retries:**
-```bash
-# Reset and re-dispatch
-cobuild wi status <task-id> open
-cobuild worktree remove <task-id>
-# Wait for cooldown (handled by poller)
-# Poller will re-dispatch on next cycle
-```
+If retry count is still below the retry limit, reset the task to a dispatchable state, remove any stale worktree/session state, and let the normal cooldown and poller flow re-dispatch it. Record that a crash was detected and which retry this is.
 
-Append to work item:
-```bash
-cobuild wi append <task-id> --body "## Health Check — Crash detected
-Agent session exited. Retry #<N>. Re-dispatching after cooldown."
-```
-
-**If retry count >= max_retries:**
-```bash
-cobuild wi append <task-id> --body "## Health Check — Max retries exceeded
-Agent crashed <N> times. Escalating to the developer.
-Last status: <status>
-Last update: <updated_at>"
-cobuild wi label add <task-id> blocked
-```
+If the task has already exhausted its retries, append an escalation note with the last known status and timestamp, then mark the shard blocked so a human can re-scope or unblock it.
 
 ### Agent stalled (tmux window exists, no progress for > stall_timeout)
 
 The agent is running but not making progress — could be stuck in a loop, waiting for input, or hitting repeated failures.
 
-**Check the tmux pane for clues:**
-```bash
-tmux capture-pane -t <session>:<window> -p | tail -20
-```
+Inspect the recent terminal output from the tmux pane for clues.
 
 Look for:
 - Rate limit messages → wait for cooldown, agent should recover
@@ -76,47 +47,15 @@ Look for:
 - "thinking" for > 5 min → might be a complex problem, give it more time
 - Idle prompt → agent finished but didn't mark needs-review
 
-**If idle prompt (agent finished but forgot to update status):**
-```bash
-# Check if there's evidence of completion in the shard
-cobuild show <task-id> -o json
-# If evidence exists, mark it done
-cobuild wi status <task-id> needs-review
-```
+If the agent appears to be finished and is sitting at an idle prompt, check the shard for completion evidence. When the evidence is there, move the task to `needs-review`.
 
-**If stuck in error loop (> 5 iterations with no progress):**
-```bash
-cobuild wi append <task-id> --body "## Health Check — Stall detected
-Agent stuck after <N> iterations. Possible causes:
-- <diagnosis from tmux output>
+If the pane shows a repeated error loop with no forward progress, append the diagnosis to the task and mark it blocked for re-scoping or manual intervention.
 
-Action: re-scoping or manual intervention needed."
-cobuild wi label add <task-id> blocked
-```
-
-**If rate limited:**
-```bash
-cobuild wi append <task-id> --body "## Health Check — Rate limited
-Agent hit rate limits. Will recover on next cycle."
-# No action needed — agent will resume when limits clear
-```
+If the agent is rate limited, record that in the shard and leave the task alone so it can recover on the next cycle.
 
 ### Retry exhausted (max retries hit)
 
-```bash
-cobuild wi append <task-id> --body "## Health Check — Escalation
-Task failed after <max_retries> dispatch attempts.
-Design: <design-id>
-Task: <task-title>
-
-Possible causes:
-1. Task scope too large for single session
-2. Missing information in task spec
-3. Codebase issue blocking implementation
-
-Action needed: Developer to review and re-scope or unblock."
-cobuild wi label add <task-id> blocked
-```
+Append an escalation note that captures the design, task title, retry count, and the most likely cause of failure. Mark the task blocked so it stops recycling through the dispatcher.
 
 ## Step 3: Record
 
@@ -126,11 +65,10 @@ Always append health check results to the work item. Every check should be visib
 
 <!-- Add failure patterns here as they're discovered -->
 
-Format:
-```bash
-cobuild wi append <task-id> --body "## Health Check — <timestamp>
-Trigger: <stall|crash|retry-exhausted>
-Retry: <N>/<max>
-Diagnosis: <what was found>
-Action: <what was done>"
-```
+Use a consistent note format that captures:
+
+- timestamp
+- trigger type
+- retry count
+- diagnosis
+- action taken

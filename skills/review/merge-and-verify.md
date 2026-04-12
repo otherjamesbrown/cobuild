@@ -16,61 +16,26 @@ You are the pipeline orchestrator, merging an approved task PR and verifying pos
 ## Steps
 
 ### 1. Pre-merge checks
-```bash
-cobuild task get <task-id>
-```
+Inspect the task before merging.
+
 Verify:
 - Task has label `approved`
 - Task has `pr_url` in metadata
 
 ### 2. Merge
-```bash
-gh pr merge <pr-number> --squash
-```
-This squash-merges the PR. Then clean up the worktree and close the task:
-```bash
-cobuild worktree remove <task-id>
-cobuild wi status <task-id> closed
-```
+Merge the approved PR using the repository's normal protected-branch workflow. After the merge lands, remove the task worktree and close the task shard.
 
 ### 3. Post-merge verification
-```bash
-cd ~/github/otherjamesbrown/context-palace
-git pull
-go test ./...
-```
+Update the post-merge verification checkout to the latest mainline state and run the project's standard verification suite there.
 
 ### 4. If post-merge tests fail
-```bash
-# Revert the merge
-git revert <merge-commit> --no-edit
-git push
-
-# File a bug
-cobuild wi create --type bug \
-  --title "Post-merge test failure from <task-id>" \
-  --body "Merge commit <hash> broke tests. Reverted. Error: <test output>" \
-  --label "blocked"
-
-# Re-open the task
-cobuild wi status <task-id> in_progress
-cobuild wi append <task-id> --body "Post-merge tests failed. Merge reverted. See bug for details."
-```
+Revert the merge through the normal safe path for this repo, create a blocked bug shard that captures the failing commit and test output, then reopen the original task and append a note linking the failure back to that bug.
 
 ### 5. If tests pass
-```bash
-cobuild wi append <task-id> --body "Merged and verified. Post-merge tests pass."
-```
+Append evidence that the merge landed and post-merge verification passed.
 
 ### 6. Check if all tasks for this design are done
-```bash
-cobuild deps <design-id>
-```
-If all tasks are closed:
-```bash
-cobuild pipeline update <design-id> --phase review
-cobuild wi append <design-id> --body "All tasks merged. Moving to design-level review."
-```
+Inspect the parent design's task graph. If every child task is now closed, advance the design pipeline to the review phase and append a note explaining that implementation is complete and design-level review can begin.
 
 ## Gotchas
 
