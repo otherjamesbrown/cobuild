@@ -147,3 +147,6 @@ cobuild wi append <task-id> --body "## Review Feedback — Round N
 ## Final Step
 
 After you have recorded the review verdict and appended any required feedback, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.
+## Final step
+
+After recording the review verdict and appending any actionable feedback, stop. This review-processing skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

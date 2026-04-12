@@ -19,3 +19,7 @@ Follow `skills/done/gate-retrospective.md` for the full retrospective procedure.
 5. Close the design: `cobuild wi status <id> closed`
 
 Do not skip the knowledge capture step. The point of `done` is to improve the next run, not just close the item.
+
+## Final step
+
+After the retrospective work is recorded and the item is closed, stop. This phase guide is not a dispatched task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

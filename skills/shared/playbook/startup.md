@@ -33,3 +33,7 @@ pipeline.phase = ?
 ## When to stop routing and escalate
 
 Open `skills/shared/playbook/escalation.md` if the shard state is ambiguous, the workflow does not match the shard type, or you cannot identify a valid next command from the current state.
+
+## Final step
+
+After locking, routing, and taking the single next orchestration action, unlock the pipeline and stop. Do not run `cobuild complete` from this startup guide. Exit the session with `/exit`.

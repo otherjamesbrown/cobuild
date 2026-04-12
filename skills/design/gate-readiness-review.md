@@ -105,3 +105,6 @@ You are the pipeline orchestrator, checking whether a design shard is ready for 
 ## Final Step
 
 After you have recorded the readiness verdict and unlocked the pipeline, exit the session immediately. Run `/exit` so the dispatched session does not remain at an interactive prompt.
+## Final step
+
+After recording the readiness review and unlocking the pipeline, stop. This gate skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

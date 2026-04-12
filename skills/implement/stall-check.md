@@ -76,3 +76,6 @@ Use a consistent note format that captures:
 ## Final Step
 
 After you have appended the health check result and taken the required status action, exit the session immediately. Run `/exit` so the dispatched session ends cleanly.
+## Final step
+
+After recording the stall diagnosis and taking the configured health action, stop. This monitoring skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

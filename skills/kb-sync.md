@@ -166,3 +166,7 @@ After this skill exits, the phase handler will:
 2. Run `kb-judge` (Layer 2) against your output — a different-model LLM reviews accuracy, completeness, and gaps
 3. If both pass: commit the update via `cxp kb update`
 4. If either fails: discard your output, log a KB Gap, and advance the work item to `done` anyway (non-blocking)
+
+## Final step
+
+After printing `KB_SYNC_OUTPUT=<path>` or `KB_SYNC_OUTPUT=none`, stop. Do not call `cxp kb update` yourself, do not run `cobuild complete`, and do not wait for another turn. Exit the session with `/exit`.

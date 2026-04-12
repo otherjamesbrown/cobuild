@@ -308,3 +308,7 @@ Next steps:
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final step
+
+After printing the setup summary and confirming the verification checks, stop here. This bootstrap skill is not a task-completion context, so do not run `cobuild complete`. Exit the session with `/exit`.

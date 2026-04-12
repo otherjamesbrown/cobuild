@@ -54,3 +54,7 @@ Advance to review:
 ```bash
 cobuild update <id> --phase review
 ```
+
+## Final step
+
+After dispatching, health-handling, or phase advancement for this pass is complete, stop. This file guides orchestrator behavior, so do not run `cobuild complete` here. Exit the session with `/exit`.

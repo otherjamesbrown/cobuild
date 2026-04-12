@@ -74,3 +74,6 @@ cobuild task review-verdict <task-id> escalate --body "Design ambiguity: <descri
 ## Final Step
 
 After you have written the review verdict, exit the session immediately. Run `/exit` so the dispatched session does not sit idle.
+## Final step
+
+After recording the PR review verdict, stop. This review skill is not a task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.

@@ -44,3 +44,7 @@ When all tasks are merged:
 ```bash
 cobuild update <id> --phase done
 ```
+
+## Final step
+
+After recording review outcomes and taking the merge or phase-advance action for this pass, stop. This phase guide is not a dispatched task implementation context, so do not run `cobuild complete`. Exit the session with `/exit`.
