@@ -195,3 +195,7 @@ cobuild gate <design-id> decomposition-review --verdict pass --body "<summary of
 - **Hardcoded values:** If the project has a "config in DB" principle, task specs should explicitly state "read from config table" for any thresholds, limits, or timeouts. Agents default to hardcoding if the spec doesn't say otherwise.
 - **Missing context layers:** If `.cobuild/context/always/` is empty, stop and create an architecture reference before dispatching. Agents without context produce incorrect code that doesn't fit the project. A 200-line architecture doc saves hours of re-work.
 - **Oversized context:** If pointing at a 1000+ line spec, agents waste context window and produce shallow work. Create a concise reference. The full spec is for humans — the agent reference is for agents.
+
+## Final Step
+
+After you have created the tasks, recorded the gate verdict, and finished all required notes, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly and the runner can continue.

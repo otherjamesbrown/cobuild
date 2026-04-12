@@ -136,3 +136,7 @@ Do not guess at a fix when you're uncertain. A clean escalation is better than a
 ## Gotchas
 
 <!-- Populated over time as patterns emerge -->
+
+## Final Step
+
+After you have finished the fix flow, let the Stop hook handle `cobuild complete`, then exit the session immediately. Run `/exit` so the dispatched session actually terminates.

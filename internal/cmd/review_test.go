@@ -503,8 +503,9 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "auto"
 	postTrue := true
+	waitTrue := true
 	cfg.Review.PostComments = &postTrue
-	cfg.Review.WaitForCI = true
+	cfg.Review.WaitForCI = &waitTrue
 	reviewConfigLoader = func() *config.Config { return cfg }
 
 	reviewer := &stubReviewer{
@@ -602,8 +603,9 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "claude"
 	postTrue := true
+	waitTrue := true
 	cfg.Review.PostComments = &postTrue
-	cfg.Review.WaitForCI = true
+	cfg.Review.WaitForCI = &waitTrue
 	reviewConfigLoader = func() *config.Config { return cfg }
 
 	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {

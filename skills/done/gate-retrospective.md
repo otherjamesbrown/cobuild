@@ -103,3 +103,7 @@ cobuild wi links add <retro-id> --references <design-id>
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+After you have created and linked the retrospective knowledge shard, exit the session immediately. Run `/exit` so the dispatched session terminates cleanly.

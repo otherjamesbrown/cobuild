@@ -44,3 +44,7 @@ This skill is called as part of the readiness check (`skills/design/gate-readine
 ## Recording
 
 Do NOT record implementability separately. Include it in the `--body` of `cobuild pipeline review` as part of the readiness check. See `skills/design/gate-readiness-review.md` for the full recording flow.
+
+## Final Step
+
+This check is part of the readiness-review flow. Once you have finished the readiness review work, exit the session immediately with `/exit`.

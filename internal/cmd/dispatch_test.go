@@ -31,6 +31,44 @@ func TestWritePhasePromptDecomposeMentionsCompletionModeDirect(t *testing.T) {
 	}
 }
 
+func TestWritePhasePromptImplementAndFixRequireExplicitExit(t *testing.T) {
+	tests := []struct {
+		phase string
+		want  []string
+	}{
+		{
+			phase: "implement",
+			want: []string{
+				"Implement this task following the acceptance criteria above.",
+				"Do this as your LAST action.",
+				"After `cobuild complete` finishes, immediately exit the session",
+			},
+		},
+		{
+			phase: "fix",
+			want: []string{
+				"Fix this bug.",
+				"Commit — the Stop hook will run `cobuild complete`",
+				"IMPORTANT: After the Stop hook completes, immediately exit the session",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.phase, func(t *testing.T) {
+			var b strings.Builder
+			writePhasePrompt(&b, tt.phase, "cb-task", "cb-task", nil)
+			got := b.String()
+
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("%s prompt missing %q\nprompt:\n%s", tt.phase, want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestHasInvestigationContent(t *testing.T) {
 	tests := []struct {
 		name    string

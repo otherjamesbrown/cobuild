@@ -70,3 +70,7 @@ cobuild task review-verdict <task-id> escalate --body "Design ambiguity: <descri
 ## Gotchas
 
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+After you have written the review verdict, exit the session immediately. Run `/exit` so the dispatched session does not sit idle.

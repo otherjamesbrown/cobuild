@@ -101,3 +101,7 @@ You are the pipeline orchestrator, checking whether a design shard is ready for 
 - The review is recorded even on pass — this is the audit trail.
 - Do not skip any criteria. Every criterion gets a PASS/FAIL with a detail note.
 <!-- Add failure patterns here as they're discovered -->
+
+## Final Step
+
+After you have recorded the readiness verdict and unlocked the pipeline, exit the session immediately. Run `/exit` so the dispatched session does not remain at an interactive prompt.

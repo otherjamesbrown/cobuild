@@ -151,3 +151,7 @@ The implementing agent receives the fix task — it has everything needed to fix
 - If multiple bugs stem from the same root cause, link them and create one fix task that addresses all of them.
 - **If the fix needs a database migration**, check the current highest migration number (`ls migrations/ | sort -n | tail -1`) and assign the NEXT number in the fix specification. Do not let the implementing agent pick its own number — collisions happen when multiple fixes are in flight.
 - **If the fix needs a deploy**, specify which services need restarting and whether migrations must be applied first. The implementing agent should not deploy — that's the orchestrator's job via `cobuild deploy`.
+
+## Final Step
+
+After you have appended the investigation report, created any required fix task, and written the gate verdict, exit the session immediately. Run `/exit` so the runner can record completion.
