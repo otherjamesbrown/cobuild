@@ -181,7 +181,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		ciResult := checkCI(ctx, repo, prNumber)
 
 		// CI still pending — wait regardless of review source
-		if pCfg.Review.WaitForCI && ciResult.summary == "pending" {
+		if pCfg.Review.WaitForCI != nil && *pCfg.Review.WaitForCI && ciResult.summary == "pending" {
 			fmt.Printf("CI checks still pending for %s (PR #%d). Waiting.\n", taskID, prNumber)
 			printNextStep(taskID, "waiting", "process-review")
 			return nil

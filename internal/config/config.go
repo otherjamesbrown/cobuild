@@ -270,8 +270,8 @@ type CICfg struct {
 // ReviewCfg controls how PRs are reviewed.
 type ReviewCfg struct {
 	CI                CICfg    `yaml:"ci,omitempty"`
-	Strategy          string   `yaml:"strategy,omitempty"`
 	Provider          string   `yaml:"provider,omitempty"`
+	Strategy          string   `yaml:"strategy,omitempty"`
 	ExternalReviewers []string `yaml:"external_reviewers,omitempty"`
 	ProcessSkill      string   `yaml:"process_skill,omitempty"`
 	ReviewSkill       string   `yaml:"review_skill,omitempty"`
@@ -279,7 +279,8 @@ type ReviewCfg struct {
 	Model             string   `yaml:"model,omitempty"`
 	CrossModel        *bool    `yaml:"cross_model,omitempty"`
 	PostComments      *bool    `yaml:"post_comments,omitempty"`
-	WaitForCI         bool     `yaml:"wait_for_ci,omitempty"`
+	CIMode            string   `yaml:"ci_mode,omitempty"`
+	WaitForCI         *bool    `yaml:"wait_for_ci,omitempty"`
 	Timeout           string   `yaml:"timeout,omitempty"`
 }
 
@@ -361,7 +362,7 @@ func DefaultConfig() *Config {
 			Model:        "haiku",
 			CrossModel:   &defaultTrue,
 			PostComments: &defaultTrue,
-			WaitForCI:    true,
+			WaitForCI:    &defaultTrue,
 			Timeout:      "120s",
 		},
 		SkillsDir: "skills",
@@ -553,15 +554,16 @@ func MergeConfig(base, override *Config) *Config {
 		out.Review.ExternalReviewers = copyStrings(override.Review.ExternalReviewers)
 	}
 	if override.Review.CrossModel != nil {
-		value := *override.Review.CrossModel
-		out.Review.CrossModel = &value
+		out.Review.CrossModel = boolPtr(*override.Review.CrossModel)
 	}
 	if override.Review.PostComments != nil {
-		value := *override.Review.PostComments
-		out.Review.PostComments = &value
+		out.Review.PostComments = boolPtr(*override.Review.PostComments)
 	}
-	if override.Review.WaitForCI {
-		out.Review.WaitForCI = true
+	if override.Review.CIMode != "" {
+		out.Review.CIMode = override.Review.CIMode
+	}
+	if override.Review.WaitForCI != nil {
+		out.Review.WaitForCI = boolPtr(*override.Review.WaitForCI)
 	}
 	if override.Review.Timeout != "" {
 		out.Review.Timeout = override.Review.Timeout
@@ -865,6 +867,10 @@ func copyStrings(s []string) []string {
 	out := make([]string, len(s))
 	copy(out, s)
 	return out
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func copyAgents(m map[string]AgentCfg) map[string]AgentCfg {
