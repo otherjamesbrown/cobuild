@@ -215,6 +215,7 @@ Steps:
 				fmt.Printf("Warning: failed to set status: %v\n", err)
 			}
 		}
+		syncPipelineTaskStatus(ctx, taskID, "needs-review")
 
 		// Transition the pipeline run to the review phase so `cobuild status`
 		// reflects where the work actually is (cb-2e5044). Best-effort — a missing

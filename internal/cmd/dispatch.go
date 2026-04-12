@@ -432,6 +432,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				return fmt.Errorf("failed to set status to in_progress: %v", err)
 			}
 		}
+		syncPipelineTaskStatus(ctx, taskID, "in_progress")
 
 		// Spawn tmux
 		tmuxOut, err := exec.CommandContext(ctx, "tmux", tmuxArgs...).CombinedOutput()
@@ -439,6 +440,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			if conn != nil {
 				_ = conn.UpdateStatus(ctx, taskID, task.Status)
 			}
+			syncPipelineTaskStatus(ctx, taskID, task.Status)
 			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
 		}
 
