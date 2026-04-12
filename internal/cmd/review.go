@@ -43,15 +43,18 @@ var (
 
 var processReviewCmd = &cobra.Command{
 	Use:   "process-review <task-id>",
-	Short: "Process Gemini code review and merge or re-dispatch for fixes",
-	Long: `Checks if a Gemini review exists on the task's PR, classifies findings
-by priority, and decides whether to merge or send the task back for fixes.
+	Short: "Review a task's PR and merge or re-dispatch for fixes",
+	Long: `Reviews a task's PR using the configured provider (auto, claude, openai, or external),
+classifies findings by priority, and decides whether to merge or send the task back for fixes.
 
-If no review exists yet and the PR is younger than --review-timeout, exits cleanly
-(the poller will retry). If the timeout is exceeded (e.g. Gemini quota exhausted),
-falls back to CI-based review: approve if CI passes, request-changes if CI has new failures.
+With provider=auto (default), uses cross-model review: code written by Codex is reviewed by
+Claude, and vice versa. With provider=external, waits for an external review (e.g. Gemini
+Code Assist) up to --review-timeout minutes, then falls back to CI-based review.
 
-On approve: records gate verdict, squash-merges PR, closes task, cleans up worktree.
+If kb_sync is enabled for the project, runs cobuild kb-sync after a successful merge to
+update any affected KB articles.
+
+On approve: records gate verdict, squash-merges PR, runs kb-sync, closes task, cleans up worktree.
 On request-changes: records verdict, appends feedback to task, re-dispatches agent.`,
 	Args:    cobra.ExactArgs(1),
 	Example: "  cobuild process-review pf-abc123\n  cobuild process-review pf-abc123 --dry-run",
