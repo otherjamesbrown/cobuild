@@ -123,6 +123,8 @@ type SessionRecord struct {
 	Status         string     `json:"status"`
 	Error          *string    `json:"error,omitempty"`
 	WorktreePath   *string    `json:"worktree_path,omitempty"`
+	TmuxSession    *string    `json:"tmux_session,omitempty"`
+	TmuxWindow     *string    `json:"tmux_window,omitempty"`
 }
 
 // GatePassRate holds first-try pass stats for a gate.

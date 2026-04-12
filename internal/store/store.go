@@ -52,6 +52,7 @@ type Store interface {
 	EndSession(ctx context.Context, id string, result SessionResult) error
 	GetSession(ctx context.Context, taskID string) (*SessionRecord, error)
 	ListSessions(ctx context.Context, designID string) ([]SessionRecord, error)
+	ListRunningSessions(ctx context.Context, project string) ([]SessionRecord, error)
 
 	// --- Insights (read-only aggregates) ---
 

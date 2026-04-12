@@ -61,6 +61,9 @@ func (s stubWaveStore) GetSession(context.Context, string) (*store.SessionRecord
 func (s stubWaveStore) ListSessions(context.Context, string) ([]store.SessionRecord, error) {
 	panic("not used")
 }
+func (s stubWaveStore) ListRunningSessions(context.Context, string) ([]store.SessionRecord, error) {
+	panic("not used")
+}
 func (s stubWaveStore) GetRunStatusCounts(context.Context, string) (map[string]int, error) {
 	panic("not used")
 }

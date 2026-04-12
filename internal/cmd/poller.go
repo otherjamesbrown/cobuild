@@ -5,12 +5,23 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
+)
+
+var (
+	pollerNow        = time.Now
+	pollerStat       = os.Stat
+	pollerKillWindow = func(ctx context.Context, sessionName, windowName string) error {
+		target := fmt.Sprintf("%s:%s", sessionName, windowName)
+		return exec.CommandContext(ctx, "tmux", "kill-window", "-t", target).Run()
+	}
 )
 
 var pollerCmd = &cobra.Command{
@@ -64,6 +75,7 @@ Also runs health checks for stalled agents.`,
 			pollAutoLabelledItems(ctx, autoLabel, dryRun)
 
 			// Process autonomous pipelines (Mode 2)
+			checkStaleSessions(ctx, pCfg, dryRun)
 			pollActivePipelines(ctx, repoRoot, pCfg, dryRun)
 			pollNeedsReviewTasks(ctx, repoRoot, pCfg, dryRun)
 			pollTaskReviews(ctx, dryRun)
@@ -138,6 +150,130 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 			}
 		}
 	}
+}
+
+func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
+	if cbStore == nil {
+		return
+	}
+	if pCfg == nil {
+		pCfg = config.DefaultConfig()
+	}
+
+	stallTimeout := resolveStallTimeout(pCfg)
+	sessions, err := cbStore.ListRunningSessions(ctx, projectName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [error] list running sessions: %v\n", err)
+		return
+	}
+
+	now := pollerNow()
+	for _, session := range sessions {
+		outcome, note, idle, err := inspectSessionHealth(session, stallTimeout, now)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  [monitor] %s — inspect failed: %v\n", session.TaskID, err)
+			continue
+		}
+		if outcome == "" {
+			continue
+		}
+
+		if outcome == "orphaned" {
+			if dryRun {
+				fmt.Printf("  [monitor] %s — would mark orphaned (%s)\n", session.TaskID, note)
+				continue
+			}
+			if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
+				ExitCode:       -1,
+				Status:         "orphaned",
+				CompletionNote: note,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "  [monitor] %s — record orphaned failed: %v\n", session.TaskID, err)
+				continue
+			}
+			fmt.Printf("  [monitor] %s — marked orphaned\n", session.TaskID)
+			continue
+		}
+
+		sessionName, windowName := sessionTarget(session)
+		if dryRun {
+			fmt.Printf("  [monitor] %s — would kill stale session after %s idle\n", session.TaskID, idle.Round(time.Second))
+			continue
+		}
+		if err := pollerKillWindow(ctx, sessionName, windowName); err != nil {
+			fmt.Fprintf(os.Stderr, "  [monitor] %s — kill stale session failed: %v\n", session.TaskID, err)
+			continue
+		}
+		if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
+			ExitCode:       -1,
+			Status:         "stale-killed",
+			CompletionNote: note,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "  [monitor] %s — record stale kill failed: %v\n", session.TaskID, err)
+			continue
+		}
+		fmt.Printf("  [monitor] %s — killed stale session after %s idle\n", session.TaskID, idle.Round(time.Second))
+	}
+}
+
+func resolveStallTimeout(pCfg *config.Config) time.Duration {
+	timeout := strings.TrimSpace(pCfg.Monitoring.StallTimeout)
+	if timeout == "" {
+		timeout = config.DefaultConfig().Monitoring.StallTimeout
+	}
+	d, err := time.ParseDuration(timeout)
+	if err != nil || d <= 0 {
+		return 30 * time.Minute
+	}
+	return d
+}
+
+func inspectSessionHealth(session store.SessionRecord, stallTimeout time.Duration, now time.Time) (outcome string, note string, idle time.Duration, err error) {
+	if session.WorktreePath == nil || strings.TrimSpace(*session.WorktreePath) == "" {
+		return "orphaned", "Marked orphaned by poller: missing worktree path for running session", 0, nil
+	}
+
+	worktreePath := strings.TrimSpace(*session.WorktreePath)
+	if _, err := pollerStat(worktreePath); err != nil {
+		if os.IsNotExist(err) {
+			return "orphaned", fmt.Sprintf("Marked orphaned by poller: worktree path missing (%s)", worktreePath), 0, nil
+		}
+		return "", "", 0, err
+	}
+
+	sessionLog := filepath.Join(worktreePath, ".cobuild", "session.log")
+	info, err := pollerStat(sessionLog)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "orphaned", fmt.Sprintf("Marked orphaned by poller: session log missing (%s)", sessionLog), 0, nil
+		}
+		return "", "", 0, err
+	}
+
+	idle = now.Sub(info.ModTime())
+	if idle <= stallTimeout {
+		return "", "", idle, nil
+	}
+
+	idle = idle.Round(time.Second)
+	note = fmt.Sprintf("Killed by poller: session.log mtime > stall_timeout (%s idle)", idle)
+	return "stale-killed", note, idle, nil
+}
+
+func sessionTarget(session store.SessionRecord) (sessionName, windowName string) {
+	sessionName = fmt.Sprintf("cobuild-%s", projectName)
+	if session.Project != "" {
+		sessionName = fmt.Sprintf("cobuild-%s", session.Project)
+	}
+	if session.TmuxSession != nil && strings.TrimSpace(*session.TmuxSession) != "" {
+		sessionName = strings.TrimSpace(*session.TmuxSession)
+	}
+
+	windowName = session.TaskID
+	if session.TmuxWindow != nil && strings.TrimSpace(*session.TmuxWindow) != "" {
+		windowName = strings.TrimSpace(*session.TmuxWindow)
+	}
+	return sessionName, windowName
 }
 
 // pollActivePipelines checks each active pipeline and dispatches if no agent is working.
