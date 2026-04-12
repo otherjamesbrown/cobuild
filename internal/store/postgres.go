@@ -268,6 +268,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	rows, err := s.pool.Query(ctx, `
 		SELECT
 			pr.design_id,
+			pr.project,
 			pr.current_phase,
 			pr.status,
 			COALESCE(tc.total, 0),
@@ -294,7 +295,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	var runs []PipelineRunStatus
 	for rows.Next() {
 		var r PipelineRunStatus
-		if err := rows.Scan(&r.DesignID, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
+		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
 			return nil, err
 		}
 		runs = append(runs, r)
