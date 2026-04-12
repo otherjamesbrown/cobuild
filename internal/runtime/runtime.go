@@ -43,6 +43,23 @@ type RunnerInput struct {
 	// HooksDir is the absolute path to the hooks/ directory within the cobuild
 	// repo; agents that support hooks (Claude) read their hook scripts from here.
 	HooksDir string
+	// Phase is the pipeline phase this dispatch is for (e.g. "design",
+	// "implement", "fix"). Gate phases (design, decompose, review, done,
+	// investigate) should NOT run cobuild complete — the agent records the
+	// gate verdict directly. Only implementation phases (implement, fix)
+	// produce code that needs the commit→PR→needs-review flow.
+	Phase string
+}
+
+// IsGatePhase returns true if the phase is a gate/evaluation phase where
+// the agent records a verdict rather than producing code changes.
+func IsGatePhase(phase string) bool {
+	switch phase {
+	case "design", "decompose", "review", "done", "investigate":
+		return true
+	default:
+		return false
+	}
 }
 
 // SessionStats is the post-hoc aggregate a runtime extracts from its session

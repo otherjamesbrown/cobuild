@@ -164,18 +164,16 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
-		// Build prompt
+		// Build prompt.
+		// For gate phases (design, decompose, review, done, investigate) the
+		// instructions go BEFORE the content so non-interactive runtimes like
+		// Codex see them first. Implementation phases keep the original order
+		// (content → instructions) because the agent needs to read the spec
+		// before seeing "implement this".
 		var promptBuilder strings.Builder
 		promptBuilder.WriteString(fmt.Sprintf("# Task: %s\n\n", task.Title))
 		promptBuilder.WriteString(fmt.Sprintf("**Task ID:** %s\n", task.ID))
 		promptBuilder.WriteString(fmt.Sprintf("**Agent:** %s\n\n", agent))
-		promptBuilder.WriteString("## Task Content\n\n")
-		promptBuilder.WriteString(task.Content)
-		promptBuilder.WriteString("\n\n")
-		if designContext != "" {
-			promptBuilder.WriteString(designContext)
-			promptBuilder.WriteString("\n\n")
-		}
 
 		repoRoot, _ := config.RepoForProject(projectName)
 		pCfg, _ := config.LoadConfig(repoRoot)
@@ -210,10 +208,9 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
-		// Phase-aware instructions
-		promptBuilder.WriteString("## Instructions\n\n")
-
-		// Detect current phase from pipeline state; auto-create run if missing
+		// Detect current phase from pipeline state; auto-create run if missing.
+		// Phase detection must happen before prompt assembly because gate phases
+		// put instructions BEFORE content (so Codex reads them first).
 		currentPhase := ""
 		if cbStore != nil {
 			run, err := cbStore.GetRun(ctx, task.ID)
@@ -264,7 +261,31 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
-		writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
+		// For gate phases, put instructions FIRST so non-interactive runtimes
+		// (Codex) see "evaluate this, run cobuild review" before the long
+		// design content. For implementation phases, content comes first so
+		// the agent reads the spec before the "implement this" instructions.
+		if cobuildruntime.IsGatePhase(currentPhase) {
+			promptBuilder.WriteString("## Instructions\n\n")
+			writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
+			promptBuilder.WriteString("\n## Content to Evaluate\n\n")
+			promptBuilder.WriteString(task.Content)
+			promptBuilder.WriteString("\n\n")
+			if designContext != "" {
+				promptBuilder.WriteString(designContext)
+				promptBuilder.WriteString("\n\n")
+			}
+		} else {
+			promptBuilder.WriteString("## Task Content\n\n")
+			promptBuilder.WriteString(task.Content)
+			promptBuilder.WriteString("\n\n")
+			if designContext != "" {
+				promptBuilder.WriteString(designContext)
+				promptBuilder.WriteString("\n\n")
+			}
+			promptBuilder.WriteString("## Instructions\n\n")
+			writePhasePrompt(&promptBuilder, currentPhase, task.ID, taskID, pCfg)
+		}
 
 		prompt := promptBuilder.String()
 
@@ -394,6 +415,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			ExtraFlags:   pCfg.FlagsForRuntime(rtName),
 			SessionID:    sessionID,
 			HooksDir:     filepath.Join(findRepoRoot(), "hooks"),
+			Phase:        currentPhase,
 		})
 		if err != nil {
 			return fmt.Errorf("build runner script: %v", err)
@@ -742,13 +764,16 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 	case "design":
 		b.WriteString("**Evaluate this design for pipeline readiness.**\n\n")
 		b.WriteString("Follow the gate-readiness-review skill:\n")
-		b.WriteString("1. Read the design content above\n")
+		b.WriteString("1. Read the design content below\n")
 		b.WriteString("2. Check 5 readiness criteria: problem stated, user identified, success criteria, scope boundaries, links to parent\n")
 		b.WriteString("3. Run implementability check — can an agent build this without asking questions?\n")
 		b.WriteString("4. Score readiness (1-5) and determine verdict\n")
-		b.WriteString("5. Record the review:\n")
-		b.WriteString(fmt.Sprintf("   `cobuild review %s --verdict pass|fail --readiness <N> --body \"<findings>\"`\n", workItemID))
-		b.WriteString("6. **Type `/exit` to end your session.** The orchestrating agent will dispatch the next phase. Do NOT dispatch it yourself.\n")
+		b.WriteString("5. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
+		b.WriteString("   ```json\n")
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"readiness-review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"readiness\": 4, \"body\": \"Your findings here\"}\n", workItemID))
+		b.WriteString("   ```\n")
+		b.WriteString("   Set verdict to \"pass\" or \"fail\". The orchestrator records the gate after your session ends.\n")
+		b.WriteString("   **Do NOT run `cobuild review` or `cobuild complete` yourself** — the runner handles it.\n")
 
 	case "decompose":
 		b.WriteString("**Break this design into implementable tasks.**\n\n")
@@ -766,9 +791,11 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   `cxp shard metadata set <task-id> completion_mode direct`\n")
 		b.WriteString("9. Link dependencies between tasks:\n")
 		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
-		b.WriteString("10. Record the decomposition gate with a summary that includes the spec → project/repo mapping and any tasks tagged `completion_mode: direct`:\n")
-		b.WriteString(fmt.Sprintf("   `cobuild decompose %s --verdict pass --body \"<summary with spec-to-project-repo map>\"`\n", workItemID))
-		b.WriteString("11. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch tasks yourself.\n\n")
+		b.WriteString("10. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
+		b.WriteString("   ```json\n")
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"decomposition-review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<summary with spec-to-project-repo map and any tasks tagged completion_mode: direct>\"}\n", workItemID))
+		b.WriteString("   ```\n")
+		b.WriteString("   **Do NOT run `cobuild decompose` yourself** — the runner handles it after your session ends.\n\n")
 		b.WriteString("**CRITICAL — multi-project vs multi-repo (do not confuse these):**\n\n")
 		b.WriteString("- **`--project <name>`** controls the shard's home project — which project's namespace the task shard lives in (determines the ID prefix, which project backlog lists it, etc.). Required when a task will end up owned by a different project's team/pipeline than the parent design's project.\n")
 		b.WriteString("- **`repo` metadata** controls which git repo `cobuild dispatch` will create a worktree in. Required any time a task's code changes land in a repo different from the parent design's default repo.\n\n")
@@ -795,11 +822,13 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("5. Assess fragility — why did this area break?\n")
 		b.WriteString("6. Write an investigation report and append to the bug:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild wi append %s --body \"## Investigation Report\\n...\"`\n", workItemID))
-		b.WriteString("7. Record the investigation gate:\n")
-		b.WriteString(fmt.Sprintf("   `cobuild investigate %s --verdict pass --body \"<summary>\"`\n", workItemID))
-		b.WriteString("8. Create a fix task with the exact changes needed:\n")
+		b.WriteString("7. Create a fix task with the exact changes needed:\n")
 		b.WriteString(fmt.Sprintf("   `cobuild wi create --type task --title \"Fix: ...\" --body \"...\" --parent %s`\n", workItemID))
-		b.WriteString("9. **Type `/exit` to end your session.** The orchestrating agent will dispatch implementation. Do NOT dispatch it yourself.\n")
+		b.WriteString("8. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
+		b.WriteString("   ```json\n")
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"investigation\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<summary>\"}\n", workItemID))
+		b.WriteString("   ```\n")
+		b.WriteString("   **Do NOT run `cobuild investigate` yourself** — the runner handles it after your session ends.\n")
 
 	case "review":
 		b.WriteString("**Review this PR against its task spec and parent design.**\n\n")
@@ -809,9 +838,11 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("3. Read the PR diff: `gh pr diff <pr-number>`\n")
 		b.WriteString("4. Evaluate: does it match the spec? Does it fit the design? Will it break anything?\n")
 		b.WriteString("5. Check for hardcoded values that should be configurable (project-specific constraints)\n")
-		b.WriteString("6. Record the verdict:\n")
-		b.WriteString(fmt.Sprintf("   `cobuild gate %s review --verdict pass|fail --body \"<findings>\"`\n", workItemID))
-		b.WriteString("7. **Type `/exit` to end your session.** The orchestrating agent handles merge. Do NOT merge PRs yourself.\n")
+		b.WriteString("6. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
+		b.WriteString("   ```json\n")
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<findings>\"}\n", workItemID))
+		b.WriteString("   ```\n")
+		b.WriteString("   **Do NOT run gate commands or merge PRs yourself** — the runner handles it.\n")
 
 	case "done":
 		b.WriteString("**Run a pipeline retrospective.**\n\n")
@@ -820,9 +851,11 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("2. Review each gate — how many rounds, what failed, was it avoidable?\n")
 		b.WriteString("3. Review implementation — did agents complete without intervention?\n")
 		b.WriteString("4. Identify patterns — repeated failures, agent gaps, process friction\n")
-		b.WriteString("5. Record the retrospective:\n")
-		b.WriteString(fmt.Sprintf("   `cobuild retro %s --body \"<findings>\"`\n", workItemID))
-		b.WriteString("6. **Type `/exit` to end your session.**\n")
+		b.WriteString("5. **Write your findings to `.cobuild/gate-verdict.json`** with this exact format:\n")
+		b.WriteString("   ```json\n")
+		b.WriteString(fmt.Sprintf("   {\"gate\": \"retrospective\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<findings>\"}\n", workItemID))
+		b.WriteString("   ```\n")
+		b.WriteString("   **Do NOT run `cobuild retro` yourself** — the runner handles it.\n")
 
 	default:
 		// Implementation (default for tasks and unknown phases)

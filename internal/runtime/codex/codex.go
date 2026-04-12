@@ -84,11 +84,14 @@ func (r *Runtime) BuildRunnerScript(in runtime.RunnerInput) (string, error) {
 	}
 
 	// Base codex flags. --full-auto = -a on-request --sandbox workspace-write.
-	// Use --dangerously-bypass-approvals-and-sandbox only if the caller
-	// overrides via ExtraFlags (we don't default to it).
+	// Phases that need to create/modify external state (decompose creates
+	// child tasks, investigate creates fix tasks) require full system access
+	// so the agent can reach the database and work-item APIs.
 	flags := "--json --full-auto"
 	if in.ExtraFlags != "" {
 		flags = in.ExtraFlags
+	} else if needsFullAccess(in.Phase) {
+		flags = "--json --dangerously-bypass-approvals-and-sandbox"
 	}
 	if in.Model != "" {
 		flags += " --model " + in.Model
@@ -101,6 +104,7 @@ export COBUILD_SESSION_ID='%s'
 export COBUILD_HOOKS_DIR='%s'
 export COBUILD_TASK_ID='%s'
 export COBUILD_REPO_ROOT='%s'
+export COBUILD_PHASE='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
 echo "$COBUILD_SESSION_ID" > .cobuild/session_id
@@ -153,16 +157,57 @@ fi
 # running process alive even after the file is unlinked on Unix.
 rm -f "$0"
 
-# Run completion from the main repo root (not worktree) so the connector
-# can find the Beads/Dolt database or CP config.
-cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
-cobuild complete '%s'
+# Gate phases (design, decompose, review, done, investigate) don't produce
+# code — the agent writes its verdict to .cobuild/gate-verdict.json and
+# the runner records it post-exit (outside the sandbox, with DB access).
+# Implementation phases (implement, fix) use cobuild complete for the
+# commit→PR→needs-review flow.
+if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
+    cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
+    cobuild complete '%s'
+elif [ -f .cobuild/gate-verdict.json ]; then
+    echo "[$(date)] Gate phase ($COBUILD_PHASE) — recording verdict from gate-verdict.json" >> "$LOGFILE"
+    cd "$COBUILD_REPO_ROOT" 2>/dev/null || true
+    VERDICT_FILE="$OLDPWD/.cobuild/gate-verdict.json"
+
+    if command -v jq &>/dev/null; then
+        GATE=$(jq -r '.gate' "$VERDICT_FILE" 2>/dev/null)
+        SHARD_ID=$(jq -r '.shard_id' "$VERDICT_FILE" 2>/dev/null)
+        VERDICT=$(jq -r '.verdict' "$VERDICT_FILE" 2>/dev/null)
+        READINESS=$(jq -r '.readiness // empty' "$VERDICT_FILE" 2>/dev/null)
+        BODY=$(jq -r '.body' "$VERDICT_FILE" 2>/dev/null)
+
+        case "$GATE" in
+            readiness-review)
+                RCMD="cobuild review $SHARD_ID --verdict $VERDICT --readiness ${READINESS:-3} --body"
+                $RCMD "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            decomposition-review)
+                cobuild decompose "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            investigation)
+                cobuild investigate "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            retrospective)
+                cobuild retro "$SHARD_ID" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
+            *)
+                echo "[$(date)] Unknown gate type: $GATE" >> "$OLDPWD/$LOGFILE"
+                ;;
+        esac
+    else
+        echo "[$(date)] jq not found — cannot parse gate-verdict.json" >> "$OLDPWD/$LOGFILE"
+    fi
+else
+    echo "[$(date)] Gate phase ($COBUILD_PHASE) — no gate-verdict.json found" >> "$LOGFILE"
+fi
 `,
 		shellQuote(in.WorktreePath),
 		in.SessionID, // already safe (store-generated id, no special chars)
 		shellQuote(in.HooksDir),
 		shellQuote(in.TaskID),
 		shellQuote(in.RepoRoot),
+		shellQuote(in.Phase),
 		shellQuote(in.PromptFile),
 		flags,
 		shellQuote(in.TaskID),
@@ -239,6 +284,18 @@ func (r *Runtime) ParseSessionStats(sessionLogPath string) (runtime.SessionStats
 		return stats, fmt.Errorf("scan %s: %w", sessionLogPath, err)
 	}
 	return stats, nil
+}
+
+// needsFullAccess returns true for phases where the agent must create or
+// modify external state (child tasks, fix tasks, etc.) that requires DB
+// and network access beyond the workspace sandbox.
+func needsFullAccess(phase string) bool {
+	switch phase {
+	case "decompose", "investigate", "implement", "fix":
+		return true
+	default:
+		return false
+	}
 }
 
 // shellQuote escapes embedded single quotes so s can be safely dropped

@@ -1,0 +1,8 @@
+# CoBuild repo pipeline config — overrides ~/.cobuild/pipeline.yaml
+project: cobuild
+shard_prefix: cb-
+
+dispatch:
+    default_runtime: codex
+    max_concurrent: 3
+    model: sonnet
