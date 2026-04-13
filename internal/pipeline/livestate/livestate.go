@@ -19,6 +19,8 @@ type Snapshot struct {
 	Processes   []ProcessInfo  `json:"processes"`
 	Tmux        []TmuxWindow   `json:"tmux"`
 	Pipelines   []PipelineInfo `json:"pipelines,omitempty"`
+	Sessions    []SessionInfo  `json:"sessions,omitempty"`
+	PRs         []PRInfo       `json:"prs,omitempty"`
 	Errors      []SourceError  `json:"errors,omitempty"`
 }
 
@@ -51,9 +53,11 @@ type TmuxWindow struct {
 
 // Collector wires command execution and time for snapshot collection.
 type Collector struct {
-	Exec  CommandRunner
-	Store PipelineRunLister
-	Now   func() time.Time
+	Exec     CommandRunner
+	Store    PipelineRunLister
+	Sessions RunningSessionLister
+	Repos    []string // GitHub owner/repo names to scan for PRs
+	Now      func() time.Time
 }
 
 // PipelineRunLister is the minimal store surface needed for live pipeline rows.
@@ -99,6 +103,30 @@ func (c Collector) Collect(ctx context.Context) (Snapshot, error) {
 		} else {
 			snapshot.Pipelines = pipelineRows
 		}
+	}
+
+	if c.Sessions != nil {
+		sessionRows, err := CollectSessions(ctx, c.Sessions, snapshot.GeneratedAt)
+		if err != nil {
+			snapshot.Errors = append(snapshot.Errors, SourceError{
+				Source:  "sessions",
+				Message: err.Error(),
+			})
+		} else {
+			snapshot.Sessions = sessionRows
+		}
+	}
+
+	if len(c.Repos) > 0 {
+		prRows, err := CollectPRs(ctx, c.Exec, c.Repos, snapshot.GeneratedAt)
+		if err != nil {
+			snapshot.Errors = append(snapshot.Errors, SourceError{
+				Source:  "prs",
+				Message: err.Error(),
+			})
+		}
+		// CollectPRs may return partial results plus an error
+		snapshot.PRs = prRows
 	}
 
 	if len(snapshot.Errors) == 0 {

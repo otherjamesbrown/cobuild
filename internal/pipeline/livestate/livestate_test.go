@@ -199,3 +199,95 @@ func TestCollectorCapturesPipelineFailuresWithoutDroppingOtherSources(t *testing
 		t.Fatalf("error source = %q, want pipelines", snapshot.Errors[0].Source)
 	}
 }
+
+func TestCollectSessionsFromStore(t *testing.T) {
+	now := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
+	wt := "/tmp/wt"
+	tmuxSess := "cobuild-cb"
+	tmuxWin := "cb-test"
+
+	lister := &fakeSessionLister{
+		sessions: []store.SessionRecord{
+			{
+				ID:           "ps-1",
+				DesignID:     "cb-test",
+				TaskID:       "cb-test",
+				Phase:        "implement",
+				Project:      "cobuild",
+				Runtime:      "codex",
+				StartedAt:    now.Add(-15 * time.Minute),
+				WorktreePath: &wt,
+				TmuxSession:  &tmuxSess,
+				TmuxWindow:   &tmuxWin,
+			},
+		},
+	}
+
+	got, err := CollectSessions(context.Background(), lister, now)
+	if err != nil {
+		t.Fatalf("CollectSessions() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if got[0].AgeSeconds != 15*60 {
+		t.Fatalf("AgeSeconds = %d, want %d", got[0].AgeSeconds, 15*60)
+	}
+	if got[0].WorktreePath != wt || got[0].TmuxSession != tmuxSess || got[0].TmuxWindow != tmuxWin {
+		t.Fatalf("session pointer fields not flattened: %+v", got[0])
+	}
+}
+
+func TestComputeHealthFlagsOrphansAndStale(t *testing.T) {
+	now := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
+	thresholds := HealthThresholds{
+		WarnIdle:  10 * time.Minute,
+		StaleIdle: 30 * time.Minute,
+	}
+
+	snap := Snapshot{
+		GeneratedAt: now,
+		Pipelines: []PipelineInfo{
+			{DesignID: "ok", Phase: "implement"},
+			{DesignID: "stale", Phase: "implement"},
+			{DesignID: "orphan-no-tmux", Phase: "design"},
+			{DesignID: "orphan-no-session", Phase: "design"},
+		},
+		Sessions: []SessionInfo{
+			{ID: "s-ok", DesignID: "ok", AgeSeconds: 60, TmuxSession: "cobuild-x", TmuxWindow: "ok"},
+			{ID: "s-stale", DesignID: "stale", AgeSeconds: 60 * 60, TmuxSession: "cobuild-x", TmuxWindow: "stale"},
+			{ID: "s-orphan", DesignID: "orphan-no-tmux", AgeSeconds: 60, TmuxSession: "cobuild-x", TmuxWindow: "orphan-no-tmux"},
+		},
+		Tmux: []TmuxWindow{
+			{SessionName: "cobuild-x", WindowName: "ok", TargetID: "ok"},
+			{SessionName: "cobuild-x", WindowName: "stale", TargetID: "stale"},
+			// orphan-no-tmux: no matching tmux window → should flag
+			{SessionName: "cobuild-x", WindowName: "orphan-no-session", TargetID: "orphan-no-session"},
+		},
+	}
+
+	rows := ComputeHealth(snap, thresholds)
+	byID := map[string]Health{}
+	for _, r := range rows {
+		byID[r.DesignID] = r.Health
+	}
+	cases := map[string]Health{
+		"ok":                HealthOK,
+		"stale":             HealthStale,
+		"orphan-no-tmux":    HealthOrphan,
+		"orphan-no-session": HealthOrphan,
+	}
+	for id, want := range cases {
+		if got := byID[id]; got != want {
+			t.Errorf("%s health = %q, want %q", id, got, want)
+		}
+	}
+}
+
+type fakeSessionLister struct {
+	sessions []store.SessionRecord
+}
+
+func (f *fakeSessionLister) ListRunningSessions(_ context.Context, _ string) ([]store.SessionRecord, error) {
+	return f.sessions, nil
+}
