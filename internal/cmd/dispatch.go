@@ -55,21 +55,39 @@ config "dispatch.default_runtime" > "claude-code".`,
 		}
 
 		if task.Status == "in_progress" {
-			// Allow re-dispatch if --force or if there's no active tmux session
-			// (review feedback sets status back to in_progress for re-dispatch)
+			// Allow re-dispatch if there's no LIVE tmux session (review feedback
+			// sets status back to in_progress for re-dispatch; autonomous
+			// orchestration re-dispatches across phases).
 			tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
-			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").Output()
-			hasWindow := false
+			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession,
+				"-F", "#{window_id} #{window_name} #{pane_dead}").Output()
+			liveWindow := false
+			deadWindowID := ""
 			for _, line := range strings.Split(string(windowOut), "\n") {
-				if strings.TrimSpace(line) == taskID {
-					hasWindow = true
-					break
+				parts := strings.Fields(strings.TrimSpace(line))
+				if len(parts) < 2 {
+					continue
+				}
+				wid, name := parts[0], parts[1]
+				if name != taskID {
+					continue
+				}
+				dead := len(parts) >= 3 && parts[2] == "1"
+				if dead {
+					deadWindowID = wid
+				} else {
+					liveWindow = true
 				}
 			}
-			if hasWindow {
+			if liveWindow {
 				return fmt.Errorf("task already dispatched with active session (status: in_progress)")
 			}
-			fmt.Printf("Re-dispatching %s (review feedback cycle).\n", taskID)
+			if deadWindowID != "" {
+				// Kill the stale (dead-pane) window so the new dispatch can
+				// create a fresh window with the same name.
+				exec.CommandContext(ctx, "tmux", "kill-window", "-t", deadWindowID).Run()
+			}
+			fmt.Printf("Re-dispatching %s (status was in_progress, no live session).\n", taskID)
 		} else if task.Status != "open" && task.Status != "ready" {
 			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, or in_progress)", task.Status)
 		}
