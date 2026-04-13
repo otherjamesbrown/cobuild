@@ -19,6 +19,7 @@ var defaultSkills = []string{
 	"investigate/bug-investigation.md",
 	"implement/dispatch-task.md",
 	"implement/stall-check.md",
+	"review/dispatch-review.md",
 	"review/gate-review-pr.md",
 	"review/gate-process-review.md",
 	"review/merge-and-verify.md",
