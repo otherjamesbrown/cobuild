@@ -19,6 +19,7 @@ func TestLoadConfig_ReviewFields(t *testing.T) {
 
 	repoPipeline := []byte("" +
 		"review:\n" +
+		"  mode: builtin\n" +
 		"  provider: auto\n" +
 		"  model: \"\"\n" +
 		"  cross_model: false\n" +
@@ -36,6 +37,9 @@ func TestLoadConfig_ReviewFields(t *testing.T) {
 	if got := cfg.Review.EffectiveProvider(); got != "auto" {
 		t.Fatalf("provider = %q, want auto", got)
 	}
+	if got := cfg.Review.EffectiveMode(); got != "builtin" {
+		t.Fatalf("mode = %q, want builtin", got)
+	}
 	if got := cfg.Review.CrossModelEnabled(); got {
 		t.Fatalf("cross_model = true, want false")
 	}
@@ -49,8 +53,21 @@ func TestLoadConfig_ReviewFields(t *testing.T) {
 
 func TestReviewCfgDefaultsAndLegacyFallback(t *testing.T) {
 	cfg := DefaultConfig()
+	if got := cfg.Review.EffectiveMode(); got != "dispatched" {
+		t.Fatalf("default mode = %q, want dispatched", got)
+	}
 	if got := cfg.Review.EffectiveProvider(); got != "external" {
 		t.Fatalf("default provider = %q, want external", got)
+	}
+	phase := cfg.FindPhase("review")
+	if phase == nil {
+		t.Fatalf("review phase missing from defaults")
+	}
+	if phase.Gate != "review" {
+		t.Fatalf("review phase gate = %q, want review", phase.Gate)
+	}
+	if phase.Skill != "review/dispatch-review.md" {
+		t.Fatalf("review phase skill = %q, want review/dispatch-review.md", phase.Skill)
 	}
 	if got := cfg.Review.CrossModelEnabled(); !got {
 		t.Fatalf("default cross_model = false, want true")
@@ -72,6 +89,7 @@ func TestMergeConfig_ReviewBoolAndTimeoutOverrides(t *testing.T) {
 	base := DefaultConfig()
 	override := &Config{
 		Review: ReviewCfg{
+			Mode:         "external",
 			Provider:     "auto",
 			CrossModel:   boolPtr(false),
 			PostComments: boolPtr(false),
@@ -83,6 +101,9 @@ func TestMergeConfig_ReviewBoolAndTimeoutOverrides(t *testing.T) {
 	if got := merged.Review.EffectiveProvider(); got != "auto" {
 		t.Fatalf("provider = %q, want auto", got)
 	}
+	if got := merged.Review.EffectiveMode(); got != "external" {
+		t.Fatalf("mode = %q, want external", got)
+	}
 	if got := merged.Review.CrossModelEnabled(); got {
 		t.Fatalf("cross_model = true, want false")
 	}
@@ -91,5 +112,28 @@ func TestMergeConfig_ReviewBoolAndTimeoutOverrides(t *testing.T) {
 	}
 	if got := merged.Review.ReviewTimeout(); got != 30*time.Second {
 		t.Fatalf("timeout = %s, want 30s", got)
+	}
+}
+
+func TestReviewCfg_EffectiveModeAcceptsSupportedValues(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		want string
+	}{
+		{name: "default empty", mode: "", want: "dispatched"},
+		{name: "dispatched", mode: "dispatched", want: "dispatched"},
+		{name: "builtin", mode: "builtin", want: "builtin"},
+		{name: "external", mode: "external", want: "external"},
+		{name: "invalid falls back", mode: "something-else", want: "dispatched"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := ReviewCfg{Mode: tt.mode}
+			if got := cfg.EffectiveMode(); got != tt.want {
+				t.Fatalf("EffectiveMode() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

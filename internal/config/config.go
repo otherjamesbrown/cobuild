@@ -303,6 +303,7 @@ type CICfg struct {
 // ReviewCfg controls how PRs are reviewed.
 type ReviewCfg struct {
 	CI                CICfg    `yaml:"ci,omitempty"`
+	Mode              string   `yaml:"mode,omitempty"`
 	Provider          string   `yaml:"provider,omitempty"`
 	Strategy          string   `yaml:"strategy,omitempty"`
 	ExternalReviewers []string `yaml:"external_reviewers,omitempty"`
@@ -391,6 +392,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Review: ReviewCfg{
+			Mode:         "dispatched",
 			Strategy:     "external",
 			Provider:     "external",
 			Model:        "haiku",
@@ -406,6 +408,10 @@ func DefaultConfig() *Config {
 			},
 			"investigate": {
 				Skill: "investigate/bug-investigation.md",
+			},
+			"review": {
+				Gate:  "review",
+				Skill: "review/dispatch-review.md",
 			},
 			"kb-sync": {
 				Skill: "kb-sync/kb-sync-phase.md",
@@ -569,6 +575,9 @@ func MergeConfig(base, override *Config) *Config {
 	if override.Review.Model != "" {
 		out.Review.Model = override.Review.Model
 	}
+	if override.Review.Mode != "" {
+		out.Review.Mode = normalizeReviewMode(override.Review.Mode)
+	}
 	if override.Review.Provider != "" {
 		out.Review.Provider = override.Review.Provider
 	}
@@ -681,6 +690,24 @@ func normalizeWaveStrategy(value string) string {
 	default:
 		return WaveStrategySerial
 	}
+}
+
+func normalizeReviewMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "dispatched":
+		return "dispatched"
+	case "builtin":
+		return "builtin"
+	case "external":
+		return "external"
+	default:
+		return "dispatched"
+	}
+}
+
+// EffectiveMode returns the configured review mode, defaulting to dispatched.
+func (r ReviewCfg) EffectiveMode() string {
+	return normalizeReviewMode(r.Mode)
 }
 
 // EffectiveProvider returns the configured review provider with legacy
