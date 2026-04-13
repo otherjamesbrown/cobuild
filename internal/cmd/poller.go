@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,13 +12,17 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
 
 var (
-	pollerNow        = time.Now
-	pollerStat       = os.Stat
+	pollerNow  = time.Now
+	pollerStat = os.Stat
+	pollerExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	}
 	pollerKillWindow = func(ctx context.Context, sessionName, windowName string) error {
 		target := fmt.Sprintf("%s:%s", sessionName, windowName)
 		return exec.CommandContext(ctx, "tmux", "kill-window", "-t", target).Run()
@@ -75,6 +80,7 @@ Also runs health checks for stalled agents.`,
 			pollAutoLabelledItems(ctx, autoLabel, dryRun)
 
 			// Process autonomous pipelines (Mode 2)
+			reconcileStaleState(ctx, dryRun)
 			checkStaleSessions(ctx, pCfg, dryRun)
 			pollActivePipelines(ctx, repoRoot, pCfg, dryRun)
 			pollNeedsReviewTasks(ctx, repoRoot, pCfg, dryRun)
@@ -153,6 +159,71 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 				}
 			}
 		}
+	}
+}
+
+func reconcileStaleState(ctx context.Context, dryRun bool) {
+	if cbStore == nil {
+		return
+	}
+
+	runs, err := cbStore.ListRuns(ctx, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[reconcile] list-runs error: %v\n", err)
+		return
+	}
+
+	for _, run := range runs {
+		if run.Status != "active" {
+			continue
+		}
+
+		resolvedState, err := pipelinestate.Resolve(ctx, run.DesignID)
+		if err != nil {
+			if errors.Is(err, pipelinestate.ErrNotFound) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[reconcile] %s resolve error: %v\n", run.DesignID, err)
+			continue
+		}
+
+		recommendations := pipelinestate.RecommendRecoveries(resolvedState)
+		for _, recommendation := range recommendations {
+			fmt.Printf("[reconcile] %s %s: %s\n", recommendation.DesignID, recommendation.Kind, recommendation.Reason)
+			if dryRun {
+				continue
+			}
+			if err := applyRecoveryRecommendation(ctx, resolvedState, recommendation); err != nil {
+				fmt.Fprintf(os.Stderr, "[reconcile] %s %s failed: %v\n", recommendation.DesignID, recommendation.Kind, err)
+			}
+		}
+	}
+}
+
+func applyRecoveryRecommendation(ctx context.Context, resolvedState *pipelinestate.PipelineState, recommendation pipelinestate.RecoveryRecommendation) error {
+	deps := pipelinestate.RecoveryDependencies{
+		Store: cbStore,
+		Exec:  pollerExec,
+	}
+
+	switch recommendation.Kind {
+	case pipelinestate.RecoveryCancelOrphanedSession:
+		if recommendation.Session == nil {
+			return fmt.Errorf("missing session for %s", recommendation.Kind)
+		}
+		_, err := pipelinestate.CancelOrphanedSession(ctx, deps, *recommendation.Session)
+		return err
+	case pipelinestate.RecoveryKillOrphanTmuxWindow:
+		if recommendation.Window == nil {
+			return fmt.Errorf("missing tmux window for %s", recommendation.Kind)
+		}
+		_, err := pipelinestate.KillOrphanTmuxWindow(ctx, deps, *recommendation.Window)
+		return err
+	case pipelinestate.RecoveryCompleteStaleRun:
+		_, err := pipelinestate.CompleteStaleRun(ctx, deps, resolvedState)
+		return err
+	default:
+		return fmt.Errorf("unknown recovery kind %q", recommendation.Kind)
 	}
 }
 

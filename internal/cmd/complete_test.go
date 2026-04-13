@@ -541,6 +541,34 @@ func (f *fakeStore) GetRun(ctx context.Context, designID string) (*store.Pipelin
 }
 
 func (f *fakeStore) ListRuns(ctx context.Context, project string) ([]store.PipelineRunStatus, error) {
+	statuses := make([]store.PipelineRunStatus, 0, len(f.runs))
+	if f.runs != nil {
+		for _, run := range f.runs {
+			if run == nil {
+				continue
+			}
+			if project != "" && run.Project != "" && run.Project != project {
+				continue
+			}
+			statuses = append(statuses, store.PipelineRunStatus{
+				DesignID: run.DesignID,
+				Project:  run.Project,
+				Phase:    run.CurrentPhase,
+				Status:   run.Status,
+			})
+		}
+	}
+	if len(statuses) > 0 {
+		return statuses, nil
+	}
+	if f.run != nil {
+		return []store.PipelineRunStatus{{
+			DesignID: f.run.DesignID,
+			Project:  f.run.Project,
+			Phase:    f.run.CurrentPhase,
+			Status:   f.run.Status,
+		}}, nil
+	}
 	return nil, nil
 }
 
