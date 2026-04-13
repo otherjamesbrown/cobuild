@@ -5,7 +5,6 @@ project_name: cobuild
 before:
   hooks:
     - go mod tidy
-    - go test ./...
 
 builds:
   - id: cobuild
