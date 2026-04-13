@@ -2,11 +2,19 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
+
+type dashboardPipelineResolver func(ctx context.Context, designID string) (*pipelinestate.PipelineState, error)
+
+var resolveDashboardPipelineState dashboardPipelineResolver = pipelinestate.Resolve
 
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
@@ -150,26 +158,12 @@ Use --project to filter to one project. Use --json for structured output.`,
 			LIMIT 20
 		`, filterArgs...)
 		if err == nil {
-			fmt.Println("## Active Pipelines")
-			fmt.Println()
-			fmt.Printf("%-16s %-12s %-14s %-10s %6s %s\n",
-				"ID", "PROJECT", "PHASE", "MODE", "TASKS", "LAST ACTIVITY")
-			fmt.Printf("%-16s %-12s %-14s %-10s %6s %s\n",
-				"----", "-------", "-----", "----", "-----", "-------------")
-			for rows.Next() {
-				var id, proj, phase, status, mode string
-				var taskTotal, taskDone int
-				var updatedAt interface{}
-				rows.Scan(&id, &proj, &phase, &status, &mode, &taskTotal, &taskDone, &updatedAt)
-				tasks := "-"
-				if taskTotal > 0 {
-					tasks = fmt.Sprintf("%d/%d", taskDone, taskTotal)
-				}
-				fmt.Printf("%-16s %-12s %-14s %-10s %6s %v\n",
-					client.Truncate(id, 16), proj, phase, mode, tasks, updatedAt)
-			}
+			activeRows, buildErr := buildDashboardActivePipelineRows(ctx, rows, resolveDashboardPipelineState)
 			rows.Close()
-			fmt.Println()
+			if buildErr != nil {
+				return fmt.Errorf("build active pipelines: %w", buildErr)
+			}
+			renderDashboardActivePipelines(activeRows)
 		}
 
 		// Token usage
@@ -240,4 +234,158 @@ func conditionalAnd(filter, column string) string {
 func init() {
 	dashboardCmd.Flags().String("project", "", "Filter to a specific project")
 	rootCmd.AddCommand(dashboardCmd)
+}
+
+type dashboardActivePipelineSeed struct {
+	DesignID  string
+	Project   string
+	Phase     string
+	Mode      string
+	TaskTotal int
+	TaskDone  int
+	UpdatedAt time.Time
+}
+
+type dashboardActivePipelineRow struct {
+	ID           string
+	Project      string
+	Phase        string
+	Mode         string
+	Tasks        string
+	Health       string
+	Signals      string
+	LastActivity string
+}
+
+func buildDashboardActivePipelineRows(ctx context.Context, rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}, resolver dashboardPipelineResolver) ([]dashboardActivePipelineRow, error) {
+	var output []dashboardActivePipelineRow
+	for rows.Next() {
+		var seed dashboardActivePipelineSeed
+		if err := rows.Scan(
+			&seed.DesignID,
+			&seed.Project,
+			&seed.Phase,
+			new(string), // raw pipeline_runs status is intentionally ignored here
+			&seed.Mode,
+			&seed.TaskTotal,
+			&seed.TaskDone,
+			&seed.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		output = append(output, buildDashboardActivePipelineRow(ctx, seed, resolver))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+func buildDashboardActivePipelineRow(ctx context.Context, seed dashboardActivePipelineSeed, resolver dashboardPipelineResolver) dashboardActivePipelineRow {
+	row := dashboardActivePipelineRow{
+		ID:           client.Truncate(seed.DesignID, 16),
+		Project:      seed.Project,
+		Phase:        seed.Phase,
+		Mode:         seed.Mode,
+		Tasks:        formatDashboardTasks(seed.TaskDone, seed.TaskTotal),
+		Health:       string(pipelinestate.HealthMissing),
+		Signals:      "-",
+		LastActivity: client.TimeAgo(seed.UpdatedAt),
+	}
+
+	if resolver == nil {
+		row.Signals = "resolver unavailable"
+		return row
+	}
+
+	state, err := resolver(ctx, seed.DesignID)
+	if err != nil && !errors.Is(err, pipelinestate.ErrNotFound) {
+		row.Signals = truncateDashboardSignals(err.Error())
+		return row
+	}
+	if state == nil {
+		row.Signals = "pipeline state not found"
+		return row
+	}
+
+	if state.Project != "" {
+		row.Project = state.Project
+	}
+	if state.Run != nil {
+		if state.Run.Phase != "" {
+			row.Phase = state.Run.Phase
+		}
+		if state.Run.Mode != "" {
+			row.Mode = state.Run.Mode
+		}
+		if !state.Run.UpdatedAt.IsZero() {
+			row.LastActivity = client.TimeAgo(state.Run.UpdatedAt)
+		}
+	}
+
+	row.Health = string(state.Health)
+	signals := dashboardSignalsFromState(state)
+	if signals != "" {
+		row.Signals = truncateDashboardSignals(signals)
+	}
+	return row
+}
+
+func renderDashboardActivePipelines(rows []dashboardActivePipelineRow) {
+	fmt.Println("## Active Pipelines")
+	fmt.Println()
+	fmt.Printf("%-16s %-12s %-14s %-10s %6s %-13s %-70s %s\n",
+		"ID", "PROJECT", "PHASE", "MODE", "TASKS", "HEALTH", "SIGNALS", "LAST ACTIVITY")
+	fmt.Printf("%-16s %-12s %-14s %-10s %6s %-13s %-70s %s\n",
+		"----", "-------", "-----", "----", "-----", "------", "-------", "-------------")
+	for _, row := range rows {
+		fmt.Printf("%-16s %-12s %-14s %-10s %6s %-13s %-70s %s\n",
+			row.ID, row.Project, row.Phase, row.Mode, row.Tasks, row.Health, row.Signals, row.LastActivity)
+	}
+	fmt.Println()
+}
+
+func dashboardSignalsFromState(state *pipelinestate.PipelineState) string {
+	if state == nil {
+		return ""
+	}
+
+	parts := make([]string, 0, len(state.Inconsistencies)+len(state.SourceErrors))
+	for _, issue := range state.Inconsistencies {
+		if issue == "" {
+			continue
+		}
+		parts = append(parts, issue)
+	}
+	for _, sourceErr := range state.SourceErrors {
+		if sourceErr.Source == "" && sourceErr.Message == "" {
+			continue
+		}
+		if sourceErr.Message == "" {
+			parts = append(parts, fmt.Sprintf("degraded source: %s", sourceErr.Source))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("degraded source %s: %s", sourceErr.Source, sourceErr.Message))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func formatDashboardTasks(done, total int) string {
+	if total <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d/%d", done, total)
+}
+
+func truncateDashboardSignals(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return client.Truncate(value, 120)
 }
