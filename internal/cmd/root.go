@@ -10,6 +10,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -148,6 +149,11 @@ CONFIGURATION:
 			dsn := cbClient.ConnectionString()
 			cbStore, _ = store.New(cmd.Context(), pCfg, dsn)
 		}
+
+		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+			Connector: conn,
+			Store:     cbStore,
+		})
 
 		return nil
 	},
