@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 // CommandRunner executes a command and returns its combined output.
@@ -13,10 +15,11 @@ type CommandRunner func(ctx context.Context, name string, args ...string) ([]byt
 
 // Snapshot is a single-point-in-time view of live local pipeline state.
 type Snapshot struct {
-	GeneratedAt time.Time     `json:"generated_at"`
-	Processes   []ProcessInfo `json:"processes"`
-	Tmux        []TmuxWindow  `json:"tmux"`
-	Errors      []SourceError `json:"errors,omitempty"`
+	GeneratedAt time.Time      `json:"generated_at"`
+	Processes   []ProcessInfo  `json:"processes"`
+	Tmux        []TmuxWindow   `json:"tmux"`
+	Pipelines   []PipelineInfo `json:"pipelines,omitempty"`
+	Errors      []SourceError  `json:"errors,omitempty"`
 }
 
 // SourceError records a non-fatal collector failure so callers can surface
@@ -48,8 +51,14 @@ type TmuxWindow struct {
 
 // Collector wires command execution and time for snapshot collection.
 type Collector struct {
-	Exec CommandRunner
-	Now  func() time.Time
+	Exec  CommandRunner
+	Store PipelineRunLister
+	Now   func() time.Time
+}
+
+// PipelineRunLister is the minimal store surface needed for live pipeline rows.
+type PipelineRunLister interface {
+	ListRuns(ctx context.Context, project string) ([]store.PipelineRunStatus, error)
 }
 
 // Collect gathers the currently supported live state sources.
@@ -78,6 +87,18 @@ func (c Collector) Collect(ctx context.Context) (Snapshot, error) {
 		})
 	} else {
 		snapshot.Tmux = tmuxRows
+	}
+
+	if c.Store != nil {
+		pipelineRows, err := CollectPipelines(ctx, c.Store)
+		if err != nil {
+			snapshot.Errors = append(snapshot.Errors, SourceError{
+				Source:  "pipelines",
+				Message: err.Error(),
+			})
+		} else {
+			snapshot.Pipelines = pipelineRows
+		}
 	}
 
 	if len(snapshot.Errors) == 0 {
