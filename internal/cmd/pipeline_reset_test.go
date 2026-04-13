@@ -79,8 +79,13 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 	var tmuxKills []string
 	var closedPRs []string
 	prStillOpen := true
+	socketPath := filepath.Join(t.TempDir(), "reset.sock")
 
-	pipelineConfigLoader = func() *config.Config { return config.DefaultConfig() }
+	pipelineConfigLoader = func() *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.Dispatch.TmuxSocket = socketPath
+		return cfg
+	}
 	pipelineCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "git" {
 			return nil, fmt.Errorf("no git metadata")
@@ -101,11 +106,11 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 		switch call {
 		case "ps auxww":
 			return []byte("USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\njames 321 0.0 0.1 100 100 ?? S 10:30 0:00.01 cobuild orchestrate cb-reset --project cobuild\n"), nil
-		case "tmux list-sessions -F #{session_name}":
+		case "tmux -S " + socketPath + " list-sessions -F #{session_name}":
 			return []byte("cobuild-cobuild\n"), nil
-		case "tmux list-windows -t cobuild-cobuild -F #{window_id}\t#{window_name}":
+		case "tmux -S " + socketPath + " list-windows -t cobuild-cobuild -F #{window_id}\t#{window_name}":
 			return []byte("@7\tcb-reset\n"), nil
-		case "tmux kill-window -t @7":
+		case "tmux -S " + socketPath + " kill-window -t @7":
 			tmuxKills = append(tmuxKills, "@7")
 			return []byte(""), nil
 		case "gh pr list --repo acme/cobuild --state open --json number,title,headRefName,mergeable,url --limit 100":
