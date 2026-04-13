@@ -4,6 +4,8 @@ CoBuild turns designs into working code by orchestrating agents through a struct
 
 ## Quick Start
 
+Install from Homebrew with `brew tap otherjamesbrown/cobuild && brew install cobuild`, or with Go via `go install github.com/otherjamesbrown/cobuild/cmd/cobuild@latest`.
+
 ### 1. Register a repo
 
 ```bash

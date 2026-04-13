@@ -20,7 +20,11 @@ CoBuild orchestrates AI agents through a structured pipeline — from design rev
 ## Quick Start
 
 ```bash
-# Install
+# Install from Homebrew
+brew tap otherjamesbrown/cobuild
+brew install cobuild
+
+# Or install with Go
 go install github.com/otherjamesbrown/cobuild/cmd/cobuild@latest
 
 # In your project repo:
@@ -38,6 +42,8 @@ cobuild status                 # see all active pipelines
 ```
 
 For full interactive setup (connector, storage, context layers), read the [bootstrap guide](skills/shared/bootstrap.md) or ask your AI assistant to follow it.
+
+Tagged releases publish Homebrew formula updates into this repository's `Formula/` directory, so the repo doubles as its own tap. If branch protection blocks workflow writes, set `HOMEBREW_TAP_GITHUB_TOKEN` for the release job.
 
 ### Using Beads
 
