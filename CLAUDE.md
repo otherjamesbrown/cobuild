@@ -46,6 +46,30 @@ Kill zombie orchestrate processes, clean stale tmux windows, mark dead sessions 
 
 Before kicking off anything that might fail, know what cleanup you'll need. Track worktrees, PRs, branches, sessions you create. Clean up on failure, not just on success.
 
+### Always create shards for bugs
+
+Every bug — whether you find it yourself, the user describes one, or the user copy-pastes a report from another agent — gets a CoBuild bug shard. Without a shard, the bug is invisible to the backlog and can't be tracked across sessions.
+
+When the user pastes an issue from another agent (e.g. "context-palace agent says cp-X is stuck in a loop"), your first action is to check whether a shard already exists. If not, create one immediately:
+
+```bash
+# Check for existing
+cxp shard list --project cobuild --type bug --status open -o json | jq -r '.results[] | "\(.id) \(.title)"' | grep -i "<keyword>"
+
+# Create if missing
+cxp shard create --type bug --project cobuild --title "<concise title>" --body "$(cat <<'EOF'
+## What happens
+...
+## Root cause (if known)
+...
+## Fix
+...
+EOF
+)"
+```
+
+Bug shards must capture: what happened, where (file paths if relevant), how reproduced, suggested fix or files to investigate. The user can act on a well-written shard later; they cannot act on a forgotten Slack-style mention. Even if you fix the bug inline immediately, file the shard first so the fix has a paper trail.
+
 ## Terminology
 
 Two roles show up throughout CoBuild's docs, skills, and commit messages. Use these terms consistently:
