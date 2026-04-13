@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -11,13 +12,13 @@ import (
 
 // PRInfo is a dashboard-oriented view of an open pull request.
 type PRInfo struct {
-	Repo       string `json:"repo"`        // e.g. "otherjamesbrown/cobuild"
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	Branch     string `json:"branch"`
-	Mergeable  string `json:"mergeable"`   // MERGEABLE, CONFLICTING, UNKNOWN
-	TaskID     string `json:"task_id,omitempty"` // parsed from branch name if it looks like a cobuild task
-	URL        string `json:"url"`
+	Repo      string `json:"repo"` // e.g. "otherjamesbrown/cobuild"
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Branch    string `json:"branch"`
+	Mergeable string `json:"mergeable"`         // MERGEABLE, CONFLICTING, UNKNOWN
+	TaskID    string `json:"task_id,omitempty"` // parsed from branch name if it looks like a cobuild task
+	URL       string `json:"url"`
 }
 
 // CollectPRs queries `gh pr list --json` for each repo, with an in-memory
@@ -41,6 +42,28 @@ func CollectPRs(ctx context.Context, exec CommandRunner, repos []string, now tim
 		out = append(out, prs...)
 	}
 	return out, firstErr
+}
+
+// ClosePR closes an open PR without touching its branch. Reset uses this when
+// the operator explicitly requests force-close behaviour for stale open PRs.
+func ClosePR(ctx context.Context, exec CommandRunner, repo string, number int, comment string) error {
+	if exec == nil {
+		exec = defaultCommandRunner
+	}
+	if repo == "" || number <= 0 {
+		return fmt.Errorf("repo and PR number are required")
+	}
+
+	args := []string{"pr", "close", strconv.Itoa(number), "--repo", repo}
+	if strings.TrimSpace(comment) != "" {
+		args = append(args, "--comment", comment)
+	}
+	out, err := exec(ctx, "gh", args...)
+	if err != nil {
+		return fmt.Errorf("gh pr close: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	resetPRCacheForTest()
+	return nil
 }
 
 // prCacheTTL is how long a per-repo PR list is reused before refetching.

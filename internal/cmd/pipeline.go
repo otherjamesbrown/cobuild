@@ -5,15 +5,41 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/pipeline/livestate"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
+	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
+)
+
+var (
+	pipelineCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).Output()
+	}
+	pipelineCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	}
+	pipelineCommandRun = func(ctx context.Context, name string, args ...string) error {
+		return exec.CommandContext(ctx, name, args...).Run()
+	}
+	pipelineConfigLoader = func() *config.Config {
+		repoRoot := findRepoRoot()
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
+		}
+		return pCfg
+	}
 )
 
 var initCmd = &cobra.Command{
@@ -855,71 +881,196 @@ Use --phase to specify the target phase (default: the start phase for the work i
 		ctx := context.Background()
 		id := args[0]
 		phase, _ := cmd.Flags().GetString("phase")
+		keepWorktree, _ := cmd.Flags().GetBool("keep-worktree")
+		forceClosePRs, _ := cmd.Flags().GetBool("force-close-prs")
 
-		if cbStore == nil {
-			return fmt.Errorf("no store configured")
-		}
+		return runPipelineReset(ctx, id, resetOptions{
+			Phase:         phase,
+			KeepWorktree:  keepWorktree,
+			ForceClosePRs: forceClosePRs,
+		})
+	},
+}
 
-		// Verify run exists
-		existing, err := cbStore.GetRun(ctx, id)
-		if err != nil {
-			return fmt.Errorf("no pipeline run for %s: %w", id, err)
-		}
+type resetOptions struct {
+	Phase         string
+	KeepWorktree  bool
+	ForceClosePRs bool
+}
 
-		// Determine target phase
-		if phase == "" {
-			phase = "design" // default
-			if conn != nil {
-				item, err := conn.Get(ctx, id)
-				if err == nil && item != nil {
-					repoRoot := findRepoRoot()
-					pCfg, _ := config.LoadConfig(repoRoot)
-					if pCfg != nil {
-						sp := pCfg.StartPhaseForType(item.Type)
-						if sp != "" {
-							phase = sp
-						}
-					}
-				}
-			}
-		}
+type resetTaskPRState struct {
+	TaskID string
+	Repo   string
+	URL    string
+	Open   bool
+}
 
-		fmt.Printf("Resetting %s: %s/%s → %s/active\n",
-			id, existing.CurrentPhase, existing.Status, phase)
+type resetTaskBranchState struct {
+	TaskID string
+	Repo   string
+}
 
-		if err := cbStore.ResetRun(ctx, id, phase); err != nil {
-			return fmt.Errorf("reset failed: %w", err)
-		}
+type resetTaskState struct {
+	TaskID       string
+	WorktreePath string
+	Repo         string
+	PRURL        string
+}
 
-		// Clear stale sessions so re-dispatch isn't blocked (cb-29e7fa)
-		if cancelled, err := cbStore.CancelRunningSessions(ctx, id); err != nil {
-			fmt.Printf("Warning: failed to cancel stale sessions: %v\n", err)
-		} else if cancelled > 0 {
-			fmt.Printf("  Cancelled %d stale session(s)\n", cancelled)
-		}
+func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
+	phase := opts.Phase
 
-		// Kill any lingering tmux windows for this design so dispatch
-		// won't be blocked by stale "window exists" checks (cb-29e7fa)
-		killStaleTmuxWindows(ctx, id)
+	if cbStore == nil {
+		return fmt.Errorf("no store configured")
+	}
 
-		// Reopen the work item in the connector if it's closed or in_progress.
-		// Resetting means we're starting fresh — leaving it in_progress would
-		// cause dispatch to hit the "already dispatched" guard.
+	existing, err := cbStore.GetRun(ctx, id)
+	if err != nil {
+		return fmt.Errorf("no pipeline run for %s: %w", id, err)
+	}
+
+	if phase == "" {
+		phase = "design"
 		if conn != nil {
 			item, err := conn.Get(ctx, id)
-			if err == nil && item != nil && (item.Status == "closed" || item.Status == "in_progress") {
-				if err := conn.UpdateStatus(ctx, id, "open"); err != nil {
-					fmt.Printf("Warning: failed to reopen work item: %v\n", err)
-				} else {
-					fmt.Printf("  Work item %s → open\n", id)
+			if err == nil && item != nil {
+				if sp := pipelineConfigLoader().StartPhaseForType(item.Type); sp != "" {
+					phase = sp
 				}
 			}
 		}
+	}
 
-		fmt.Printf("  Pipeline reset to phase: %s\n", phase)
-		printNextStep(id, phase, "reset")
-		return nil
-	},
+	sessions, err := cbStore.ListSessions(ctx, id)
+	if err != nil {
+		return fmt.Errorf("list sessions: %w", err)
+	}
+	tasks, err := cbStore.ListTasks(ctx, existing.ID)
+	if err != nil {
+		return fmt.Errorf("list tasks: %w", err)
+	}
+
+	taskStates := collectResetTaskState(ctx, id, sessions, tasks)
+
+	fmt.Printf("Resetting %s: %s/%s → %s/active\n",
+		id, existing.CurrentPhase, existing.Status, phase)
+
+	if killed, err := killDesignOrchestrateProcesses(ctx, id); err != nil {
+		fmt.Printf("Warning: failed to inspect orchestrate processes: %v\n", err)
+	} else if killed > 0 {
+		fmt.Printf("  Killed %d orchestrate process(es)\n", killed)
+	}
+
+	if killed, err := killDesignTmuxWindows(ctx, id); err != nil {
+		fmt.Printf("Warning: failed to inspect tmux windows: %v\n", err)
+	} else if killed > 0 {
+		fmt.Printf("  Killed %d stale tmux window(s)\n", killed)
+	}
+
+	cancelled := 0
+	for _, session := range sessions {
+		if session.Status != "running" {
+			continue
+		}
+		if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
+			ExitCode:       -1,
+			Status:         "cancelled",
+			CompletionNote: fmt.Sprintf("Cancelled by cobuild reset %s", id),
+		}); err != nil {
+			fmt.Printf("Warning: failed to cancel session %s: %v\n", session.ID, err)
+			continue
+		}
+		cancelled++
+	}
+	if cancelled > 0 {
+		fmt.Printf("  Cancelled %d running session(s)\n", cancelled)
+	}
+
+	if !opts.KeepWorktree {
+		removed := 0
+		for _, state := range taskStates {
+			if strings.TrimSpace(state.WorktreePath) == "" {
+				continue
+			}
+			if err := removeResetWorktree(ctx, state.TaskID, state.WorktreePath); err != nil {
+				fmt.Printf("Warning: failed to remove worktree for %s: %v\n", state.TaskID, err)
+				continue
+			}
+			if conn != nil {
+				_ = conn.SetMetadata(ctx, state.TaskID, "worktree_path", "")
+				_ = conn.SetMetadata(ctx, state.TaskID, "session_id", "")
+			}
+			removed++
+		}
+		if removed > 0 {
+			fmt.Printf("  Removed %d worktree(s)\n", removed)
+		}
+	}
+
+	preserveTasks := shouldPreserveTasksForResetPhase(phase)
+	if err := cbStore.ResetRun(ctx, id, phase); err != nil {
+		return fmt.Errorf("reset failed: %w", err)
+	}
+	if preserveTasks && len(tasks) > 0 {
+		if err := restoreResetTasks(ctx, existing.ID, tasks); err != nil {
+			return fmt.Errorf("restore tasks after reset: %w", err)
+		}
+		fmt.Printf("  Restored %d pipeline task(s) for phase %s\n", len(tasks), phase)
+	}
+
+	if conn != nil {
+		item, err := conn.Get(ctx, id)
+		if err == nil && item != nil && item.Status != "open" {
+			if err := conn.UpdateStatus(ctx, id, "open"); err != nil {
+				fmt.Printf("Warning: failed to reopen work item: %v\n", err)
+			} else {
+				fmt.Printf("  Work item %s → open\n", id)
+			}
+		}
+	}
+
+	prs, branches, err := inspectResetGitState(ctx, id, taskStates)
+	if err != nil {
+		fmt.Printf("Warning: failed to inspect PR/branch state: %v\n", err)
+	}
+	if len(prs) > 0 {
+		if opts.ForceClosePRs {
+			closed := 0
+			for _, pr := range prs {
+				if !pr.Open {
+					continue
+				}
+				number := mustParsePRNumber(pr.URL)
+				if number <= 0 {
+					fmt.Printf("Warning: failed to parse PR number from %s\n", pr.URL)
+					continue
+				}
+				if err := livestate.ClosePR(ctx, pipelineCommandCombinedOutput, pr.Repo, number, fmt.Sprintf("Closed by cobuild reset %s", id)); err != nil {
+					fmt.Printf("Warning: failed to close PR %s: %v\n", pr.URL, err)
+					continue
+				}
+				closed++
+			}
+			if closed > 0 {
+				fmt.Printf("  Closed %d open PR(s)\n", closed)
+			}
+		} else {
+			fmt.Println("  Open unmerged PRs:")
+			for _, pr := range prs {
+				fmt.Printf("    %s (%s) — rerun review or close with `cobuild reset %s --force-close-prs`\n", pr.URL, pr.TaskID, id)
+			}
+		}
+	}
+	if len(branches) > 0 {
+		fmt.Println("  Open branches:")
+		for _, branch := range branches {
+			fmt.Printf("    %s:%s — inspect or delete manually once the reset is confirmed\n", branch.Repo, branch.TaskID)
+		}
+	}
+
+	fmt.Printf("  Pipeline reset to phase: %s\n", phase)
+	printNextStep(id, phase, "reset")
+	return nil
 }
 
 func init() {
@@ -959,6 +1110,8 @@ func init() {
 
 	// reset flags
 	resetCmd.Flags().String("phase", "", "Target phase to reset to (default: start phase for work item type)")
+	resetCmd.Flags().Bool("keep-worktree", false, "Keep worktrees on disk while resetting pipeline state")
+	resetCmd.Flags().Bool("force-close-prs", false, "Close open unmerged PRs discovered during reset")
 
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(runCmd)
@@ -975,44 +1128,282 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-// killStaleTmuxWindows kills any tmux windows matching the design ID across
-// all cobuild-* sessions. Used by reset to prevent the dispatch guard from
-// refusing on stale "window exists" checks after a failed/killed orchestrate.
-func killStaleTmuxWindows(ctx context.Context, designID string) {
-	// List all cobuild-* tmux sessions
-	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+func collectResetTaskState(ctx context.Context, designID string, sessions []store.SessionRecord, tasks []store.PipelineTaskRecord) []resetTaskState {
+	byTask := map[string]*resetTaskState{}
+	add := func(taskID string) *resetTaskState {
+		taskID = strings.TrimSpace(taskID)
+		if taskID == "" {
+			return nil
+		}
+		if existing, ok := byTask[taskID]; ok {
+			return existing
+		}
+		state := &resetTaskState{TaskID: taskID}
+		byTask[taskID] = state
+		return state
+	}
+
+	for _, session := range sessions {
+		state := add(session.TaskID)
+		if state == nil {
+			continue
+		}
+		if state.WorktreePath == "" && session.WorktreePath != nil {
+			state.WorktreePath = strings.TrimSpace(*session.WorktreePath)
+		}
+		if state.Repo == "" {
+			state.Repo = detectGitHubRepoFromWorktree(ctx, state.WorktreePath)
+		}
+		if state.PRURL == "" && session.PRURL != nil {
+			state.PRURL = strings.TrimSpace(*session.PRURL)
+		}
+	}
+	for _, task := range tasks {
+		add(task.TaskShardID)
+	}
+	add(designID)
+
+	if conn != nil {
+		for _, state := range byTask {
+			if state.WorktreePath == "" {
+				state.WorktreePath, _ = conn.GetMetadata(ctx, state.TaskID, "worktree_path")
+			}
+			if state.PRURL == "" {
+				state.PRURL, _ = conn.GetMetadata(ctx, state.TaskID, "pr_url")
+			}
+			if state.Repo == "" {
+				if repo, _, err := parsePRURL(state.PRURL); err == nil {
+					state.Repo = repo
+				}
+			}
+			if state.Repo == "" {
+				state.Repo = detectGitHubRepoFromWorktree(ctx, state.WorktreePath)
+			}
+		}
+	}
+
+	out := make([]resetTaskState, 0, len(byTask))
+	for _, state := range byTask {
+		out = append(out, *state)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskID < out[j].TaskID })
+	return out
+}
+
+func shouldPreserveTasksForResetPhase(phase string) bool {
+	switch phase {
+	case "implement", "review", "deploy", "retrospective", "done":
+		return true
+	default:
+		return false
+	}
+}
+
+func restoreResetTasks(ctx context.Context, pipelineID string, tasks []store.PipelineTaskRecord) error {
+	for _, task := range tasks {
+		if err := cbStore.AddTask(ctx, pipelineID, task.TaskShardID, task.DesignID, task.Wave); err != nil {
+			return err
+		}
+		if task.Status != "" && task.Status != "pending" {
+			if err := cbStore.UpdateTaskStatus(ctx, task.TaskShardID, task.Status); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func killDesignOrchestrateProcesses(ctx context.Context, designID string) (int, error) {
+	rows, err := livestate.CollectProcesses(ctx, pipelineCommandCombinedOutput, time.Now())
 	if err != nil {
-		return
+		return 0, err
 	}
 	killed := 0
-	for _, sess := range strings.Split(string(out), "\n") {
-		sess = strings.TrimSpace(sess)
-		if !strings.HasPrefix(sess, "cobuild-") {
+	for _, row := range rows {
+		if row.Kind != "orchestrate" || row.TargetID != designID {
 			continue
 		}
-		// Find windows in this session matching the designID. Use window IDs
-		// (@123) for killing because window names aren't unique — multiple
-		// windows with the same name (from repeated dispatch) can't be
-		// disambiguated by name alone.
-		winOut, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", sess, "-F", "#{window_id} #{window_name}").Output()
-		if err != nil {
+		if err := pipelineCommandRun(ctx, "kill", strconv.Itoa(row.PID)); err != nil {
+			return killed, err
+		}
+		killed++
+	}
+	return killed, nil
+}
+
+func killDesignTmuxWindows(ctx context.Context, designID string) (int, error) {
+	windows, err := livestate.CollectTmux(ctx, pipelineCommandCombinedOutput)
+	if err != nil {
+		return 0, err
+	}
+	killed := 0
+	for _, window := range windows {
+		if window.TargetID != designID && window.WindowName != designID && !strings.HasPrefix(window.WindowName, designID+".") {
 			continue
 		}
-		for _, line := range strings.Split(string(winOut), "\n") {
-			line = strings.TrimSpace(line)
-			parts := strings.SplitN(line, " ", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			winID, name := parts[0], parts[1]
-			if name == designID || strings.HasPrefix(name, designID) {
-				if err := exec.CommandContext(ctx, "tmux", "kill-window", "-t", winID).Run(); err == nil {
-					killed++
+		if _, err := pipelinestate.KillOrphanTmuxWindow(ctx, pipelinestate.RecoveryDependencies{
+			Exec: pipelineCommandCombinedOutput,
+		}, pipelinestate.TmuxWindow{
+			SessionName: window.SessionName,
+			WindowID:    window.WindowID,
+			WindowName:  window.WindowName,
+		}); err != nil {
+			return killed, err
+		}
+		killed++
+	}
+	return killed, nil
+}
+
+func removeResetWorktree(ctx context.Context, taskID, worktreePath string) error {
+	worktreePath = strings.TrimSpace(worktreePath)
+	if worktreePath == "" {
+		return nil
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	repoRoot := repoRootForWorktree(ctx, worktreePath)
+	if repoRoot != "" {
+		return worktree.Remove(ctx, repoRoot, worktreePath, taskID)
+	}
+	return os.RemoveAll(worktreePath)
+}
+
+func repoRootForWorktree(ctx context.Context, worktreePath string) string {
+	out, err := pipelineCommandOutput(ctx, "git", "-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if commonDir == "" {
+		return ""
+	}
+	if filepath.Base(commonDir) == ".git" {
+		return filepath.Dir(commonDir)
+	}
+	return filepath.Dir(filepath.Dir(commonDir))
+}
+
+func detectGitHubRepoFromWorktree(ctx context.Context, worktreePath string) string {
+	if strings.TrimSpace(worktreePath) == "" {
+		return ""
+	}
+	out, err := pipelineCommandOutput(ctx, "git", "-C", worktreePath, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return parseGitHubRepoURL(strings.TrimSpace(string(out)))
+}
+
+func parseGitHubRepoURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	for _, prefix := range []string{"git@github.com:", "https://github.com/"} {
+		if strings.HasPrefix(raw, prefix) {
+			return strings.TrimSuffix(strings.TrimPrefix(raw, prefix), ".git")
+		}
+	}
+	return ""
+}
+
+func inspectResetGitState(ctx context.Context, designID string, taskStates []resetTaskState) ([]resetTaskPRState, []resetTaskBranchState, error) {
+	taskIDs := map[string]bool{}
+	repoSet := map[string]bool{}
+	repoByTask := map[string]string{}
+	for _, state := range taskStates {
+		taskIDs[state.TaskID] = true
+		if state.Repo != "" {
+			repoSet[state.Repo] = true
+			repoByTask[state.TaskID] = state.Repo
+		}
+		if state.PRURL != "" {
+			if repo, _, err := parsePRURL(state.PRURL); err == nil {
+				repoSet[repo] = true
+				if repoByTask[state.TaskID] == "" {
+					repoByTask[state.TaskID] = repo
 				}
 			}
 		}
 	}
-	if killed > 0 {
-		fmt.Printf("  Killed %d stale tmux window(s)\n", killed)
+	if ownerRepo := pipelineConfigLoader().GitHub.OwnerRepo; ownerRepo != "" {
+		repoSet[ownerRepo] = true
 	}
+
+	repos := make([]string, 0, len(repoSet))
+	for repo := range repoSet {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+
+	openPRs := []resetTaskPRState{}
+	if len(repos) > 0 {
+		prs, err := livestate.CollectPRs(ctx, pipelineCommandCombinedOutput, repos, time.Now())
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, pr := range prs {
+			taskID := pr.TaskID
+			if taskID == "" {
+				taskID = pr.Branch
+			}
+			if !taskIDs[taskID] {
+				continue
+			}
+			openPRs = append(openPRs, resetTaskPRState{
+				TaskID: taskID,
+				Repo:   pr.Repo,
+				URL:    pr.URL,
+				Open:   true,
+			})
+			repoByTask[taskID] = pr.Repo
+		}
+	}
+
+	openPRByTask := map[string]bool{}
+	for _, pr := range openPRs {
+		openPRByTask[pr.TaskID] = true
+	}
+
+	branches := []resetTaskBranchState{}
+	for taskID, repo := range repoByTask {
+		if taskID == designID || repo == "" || openPRByTask[taskID] {
+			continue
+		}
+		exists, err := remoteBranchExists(ctx, repo, taskID)
+		if err != nil {
+			return openPRs, nil, err
+		}
+		if exists {
+			branches = append(branches, resetTaskBranchState{TaskID: taskID, Repo: repo})
+		}
+	}
+	sort.Slice(openPRs, func(i, j int) bool { return openPRs[i].TaskID < openPRs[j].TaskID })
+	sort.Slice(branches, func(i, j int) bool { return branches[i].TaskID < branches[j].TaskID })
+	return openPRs, branches, nil
+}
+
+func remoteBranchExists(ctx context.Context, repo, branch string) (bool, error) {
+	if repo == "" || branch == "" {
+		return false, nil
+	}
+	out, err := pipelineCommandCombinedOutput(ctx, "gh", "api", fmt.Sprintf("repos/%s/branches/%s", repo, branch))
+	if err == nil {
+		return true, nil
+	}
+	msg := strings.ToLower(err.Error() + " " + string(out))
+	if strings.Contains(msg, "404") || strings.Contains(msg, "not found") {
+		return false, nil
+	}
+	return false, err
+}
+
+func mustParsePRNumber(prURL string) int {
+	_, number, err := parsePRURL(prURL)
+	if err != nil {
+		return 0
+	}
+	return number
 }
