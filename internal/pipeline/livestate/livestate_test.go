@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 func TestCollectProcessesParsesOrchestrateAndPoller(t *testing.T) {
@@ -111,7 +113,18 @@ func TestCollectorAssemblesSnapshotAndCapturesPartialFailures(t *testing.T) {
 
 	snapshot, err := (Collector{
 		Exec: execFn,
-		Now:  func() time.Time { return now },
+		Store: &stubPipelineRunLister{
+			runs: []store.PipelineRunStatus{
+				{
+					DesignID:     "cb-25b0a4",
+					Project:      "cobuild",
+					Phase:        "implement",
+					Status:       "active",
+					LastProgress: now.Add(-5 * time.Minute),
+				},
+			},
+		},
+		Now: func() time.Time { return now },
 	}).Collect(ctx)
 	if err == nil {
 		t.Fatal("Collect() error = nil, want joined partial failure")
@@ -129,10 +142,60 @@ func TestCollectorAssemblesSnapshotAndCapturesPartialFailures(t *testing.T) {
 	if len(snapshot.Tmux) != 0 {
 		t.Fatalf("len(Tmux) = %d, want 0 on failure", len(snapshot.Tmux))
 	}
+	if len(snapshot.Pipelines) != 1 {
+		t.Fatalf("len(Pipelines) = %d, want 1", len(snapshot.Pipelines))
+	}
+	if snapshot.Pipelines[0].DesignID != "cb-25b0a4" {
+		t.Fatalf("pipeline design_id = %q, want cb-25b0a4", snapshot.Pipelines[0].DesignID)
+	}
 	if len(snapshot.Errors) != 1 {
 		t.Fatalf("len(Errors) = %d, want 1", len(snapshot.Errors))
 	}
 	if snapshot.Errors[0].Source != "tmux" {
 		t.Fatalf("error source = %q, want tmux", snapshot.Errors[0].Source)
+	}
+}
+
+func TestCollectorCapturesPipelineFailuresWithoutDroppingOtherSources(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 12, 16, 0, 0, 0, time.UTC)
+
+	execFn := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "ps":
+			return []byte("USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\njames 505 0.0 0.1 100 100 ?? S 15:50 0:00.01 cobuild orchestrate cb-25b0a4 --project cobuild\n"), nil
+		case "tmux":
+			if len(args) > 0 && args[0] == "list-sessions" {
+				return []byte("cobuild-cobuild\n"), nil
+			}
+			return []byte("@1\tcb-25b0a4\n"), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+
+	snapshot, err := (Collector{
+		Exec:  execFn,
+		Store: &stubPipelineRunLister{err: errors.New("db offline")},
+		Now:   func() time.Time { return now },
+	}).Collect(ctx)
+	if err == nil {
+		t.Fatal("Collect() error = nil, want joined partial failure")
+	}
+
+	if len(snapshot.Processes) != 1 {
+		t.Fatalf("len(Processes) = %d, want 1", len(snapshot.Processes))
+	}
+	if len(snapshot.Tmux) != 1 {
+		t.Fatalf("len(Tmux) = %d, want 1", len(snapshot.Tmux))
+	}
+	if len(snapshot.Pipelines) != 0 {
+		t.Fatalf("len(Pipelines) = %d, want 0 on failure", len(snapshot.Pipelines))
+	}
+	if len(snapshot.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1", len(snapshot.Errors))
+	}
+	if snapshot.Errors[0].Source != "pipelines" {
+		t.Fatalf("error source = %q, want pipelines", snapshot.Errors[0].Source)
 	}
 }
