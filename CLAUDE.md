@@ -34,6 +34,26 @@ If CoBuild itself breaks during a pipeline run: fix the bug, rebuild the binary 
 
 When you find a bug, look for its cousins. If phase skipping is wrong in one place, audit all phase advancement. Don't just fix the symptom you hit.
 
+### Never restart a failure without root cause — even once
+
+If something fails (codex agent dies, dispatch refuses, gate fails, PR can't merge), the next action is **investigate, not retry**. Restart-then-hope is forbidden. Two retries in a row of the same operation against the same conditions is a serious process violation — the second attempt will fail the same way and waste time/resources/budget.
+
+The required sequence on any unexpected failure:
+
+1. **Stop dispatching new work** to whatever component just failed. Don't pile more on top.
+2. **Capture evidence** — process state (`ps`, exit codes), logs (session.log, dispatch.log, system log via `/usr/bin/log show`), DB state, file modtimes. Whatever's relevant.
+3. **Form a hypothesis with evidence**, not vibes. "Codex dies after 1.5 min" needs evidence for *why* (token limit? app-server timeout? OOM? network drop?), not just a recap of the symptom.
+4. **Test the hypothesis cheaply** (smaller prompt, different runtime, verbose flag) before any production retry.
+5. **Either fix the root cause or change the approach**. A workaround is acceptable (e.g. switch runtime) only when you've ruled out a fixable root cause. Document the workaround explicitly.
+6. **File a shard** with the evidence and hypothesis (per `Always create shards for bugs` above) — even if you fix it.
+
+Filing a shard is not enough on its own — the shard catalogues the bug, but you still owe the user a root cause and a fix or a deliberate workaround. "I retried it and it failed again, here's a shard" is the explicit failure mode this rule exists to prevent.
+
+Common temptation patterns that are NOT acceptable:
+- "It's flaky, retry once" — flaky things still have causes; restart compounds the problem
+- "Maybe it'll work with different timing" — without evidence it's a timing issue, this is hope, not engineering
+- "Let me reset and try again" — every reset adds entropy (stale branches, duplicate code, conflicting state); only acceptable after root cause is known
+
 ### Don't reset the same pipeline repeatedly
 
 Each reset compounds state: stale branches, conflicting Codex commits, duplicate migrations. If a pipeline has hit dead-ends twice, close it out and create a fresh design for the remaining work. **Never** reset a pipeline that already has merged PRs — decompose will recreate the same tasks.
