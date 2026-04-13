@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 // CommandRunner executes a command and returns its combined output.
@@ -16,6 +18,7 @@ type Snapshot struct {
 	GeneratedAt time.Time     `json:"generated_at"`
 	Processes   []ProcessInfo `json:"processes"`
 	Tmux        []TmuxWindow  `json:"tmux"`
+	Sessions    []SessionInfo `json:"sessions,omitempty"`
 	Errors      []SourceError `json:"errors,omitempty"`
 }
 
@@ -46,10 +49,16 @@ type TmuxWindow struct {
 	TargetID    string `json:"target_id,omitempty"`
 }
 
+// SessionStore is the narrow store surface needed to read running sessions.
+type SessionStore interface {
+	ListRunningSessions(ctx context.Context, project string) ([]store.SessionRecord, error)
+}
+
 // Collector wires command execution and time for snapshot collection.
 type Collector struct {
-	Exec CommandRunner
-	Now  func() time.Time
+	Exec  CommandRunner
+	Store SessionStore
+	Now   func() time.Time
 }
 
 // Collect gathers the currently supported live state sources.
@@ -78,6 +87,18 @@ func (c Collector) Collect(ctx context.Context) (Snapshot, error) {
 		})
 	} else {
 		snapshot.Tmux = tmuxRows
+	}
+
+	if c.Store != nil {
+		sessionRows, err := CollectSessions(ctx, c.Store, snapshot.GeneratedAt)
+		if err != nil {
+			snapshot.Errors = append(snapshot.Errors, SourceError{
+				Source:  "sessions",
+				Message: err.Error(),
+			})
+		} else {
+			snapshot.Sessions = sessionRows
+		}
 	}
 
 	if len(snapshot.Errors) == 0 {

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 func TestCollectProcessesParsesOrchestrateAndPoller(t *testing.T) {
@@ -98,6 +100,7 @@ func TestCollectTmuxParsesSessionsAndWindows(t *testing.T) {
 func TestCollectorAssemblesSnapshotAndCapturesPartialFailures(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 4, 12, 15, 0, 0, 0, time.UTC)
+	sessionStore := &fakeSessionStore{err: errors.New("db unavailable")}
 
 	execFn := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "ps" {
@@ -110,8 +113,9 @@ func TestCollectorAssemblesSnapshotAndCapturesPartialFailures(t *testing.T) {
 	}
 
 	snapshot, err := (Collector{
-		Exec: execFn,
-		Now:  func() time.Time { return now },
+		Exec:  execFn,
+		Store: sessionStore,
+		Now:   func() time.Time { return now },
 	}).Collect(ctx)
 	if err == nil {
 		t.Fatal("Collect() error = nil, want joined partial failure")
@@ -129,10 +133,73 @@ func TestCollectorAssemblesSnapshotAndCapturesPartialFailures(t *testing.T) {
 	if len(snapshot.Tmux) != 0 {
 		t.Fatalf("len(Tmux) = %d, want 0 on failure", len(snapshot.Tmux))
 	}
-	if len(snapshot.Errors) != 1 {
-		t.Fatalf("len(Errors) = %d, want 1", len(snapshot.Errors))
+	if len(snapshot.Sessions) != 0 {
+		t.Fatalf("len(Sessions) = %d, want 0 on failure", len(snapshot.Sessions))
+	}
+	if len(snapshot.Errors) != 2 {
+		t.Fatalf("len(Errors) = %d, want 2", len(snapshot.Errors))
 	}
 	if snapshot.Errors[0].Source != "tmux" {
-		t.Fatalf("error source = %q, want tmux", snapshot.Errors[0].Source)
+		t.Fatalf("first error source = %q, want tmux", snapshot.Errors[0].Source)
+	}
+	if snapshot.Errors[1].Source != "sessions" {
+		t.Fatalf("second error source = %q, want sessions", snapshot.Errors[1].Source)
+	}
+}
+
+func TestCollectorPopulatesSessionsSnapshot(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 4, 12, 15, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-10 * time.Minute)
+	tmuxSession := "cobuild-cobuild"
+	tmuxWindow := "cb-bc00c5"
+
+	snapshot, err := (Collector{
+		Exec: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name {
+			case "ps":
+				return []byte("USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\n"), nil
+			case "tmux":
+				if len(args) > 0 && args[0] == "list-sessions" {
+					return []byte(""), nil
+				}
+				return nil, errors.New("unexpected tmux command")
+			default:
+				return nil, errors.New("unexpected command")
+			}
+		},
+		Store: &fakeSessionStore{
+			sessions: []store.SessionRecord{
+				{
+					ID:          "sess-1",
+					DesignID:    "cb-1660be",
+					TaskID:      "cb-bc00c5",
+					Phase:       "implement",
+					Project:     "cobuild",
+					Runtime:     "codex",
+					StartedAt:   startedAt,
+					Status:      "running",
+					TmuxSession: &tmuxSession,
+					TmuxWindow:  &tmuxWindow,
+				},
+			},
+		},
+		Now: func() time.Time { return now },
+	}).Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+
+	if len(snapshot.Errors) != 0 {
+		t.Fatalf("len(Errors) = %d, want 0", len(snapshot.Errors))
+	}
+	if len(snapshot.Sessions) != 1 {
+		t.Fatalf("len(Sessions) = %d, want 1", len(snapshot.Sessions))
+	}
+	if got, want := snapshot.Sessions[0].ID, "sess-1"; got != want {
+		t.Fatalf("session id = %q, want %q", got, want)
+	}
+	if got, want := snapshot.Sessions[0].AgeSeconds, int64(600); got != want {
+		t.Fatalf("age_seconds = %d, want %d", got, want)
 	}
 }
