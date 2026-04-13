@@ -1,0 +1,56 @@
+name: E2E
+
+on:
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cobuild
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cobuild"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      COBUILD_TEST_POSTGRES_DSN: postgres://postgres:postgres@127.0.0.1:5432/cobuild?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+
+      - name: Check e2e prerequisites
+        run: |
+          if ! command -v tmux >/dev/null 2>&1; then
+            echo "::error::tmux is required for the tagged e2e suite; install tmux or fix the runner image."
+            exit 1
+          fi
+          if [ -z "${COBUILD_TEST_POSTGRES_DSN:-}" ]; then
+            echo "::error::COBUILD_TEST_POSTGRES_DSN is required for the tagged e2e suite."
+            exit 1
+          fi
+          if ! pg_isready -h 127.0.0.1 -p 5432 -U postgres -d cobuild; then
+            echo "::error::Postgres service is not ready for the tagged e2e suite."
+            exit 1
+          fi
+
+      - name: Run tagged e2e suite
+        run: make test-e2e

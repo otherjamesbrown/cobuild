@@ -19,8 +19,6 @@ const (
 )
 
 func TestE2EHappyPath(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	h := harness.Setup(t, harness.Options{
 		Project: "happy-e2e",

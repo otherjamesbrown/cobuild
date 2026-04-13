@@ -484,6 +484,9 @@ func cloneFakeMetadata(in map[string]any) map[string]any {
 }
 
 func fakeMetadataString(value any) string {
+	if value == nil {
+		return ""
+	}
 	switch v := value.(type) {
 	case string:
 		return v

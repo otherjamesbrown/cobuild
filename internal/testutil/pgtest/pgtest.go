@@ -110,12 +110,12 @@ func DSN(tb testing.TB) string {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		tb.Skip("set COBUILD_TEST_POSTGRES_DSN for store integration tests")
+		tb.Skip("set COBUILD_TEST_POSTGRES_DSN or configure ~/.cobuild/config.yaml before running Postgres-backed tests")
 	}
 	cfgPath := filepath.Join(home, ".cobuild", "config.yaml")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		tb.Skip("set COBUILD_TEST_POSTGRES_DSN for store integration tests")
+		tb.Skip("set COBUILD_TEST_POSTGRES_DSN or configure ~/.cobuild/config.yaml before running Postgres-backed tests")
 	}
 
 	var cfg configFile
@@ -123,7 +123,7 @@ func DSN(tb testing.TB) string {
 		tb.Skipf("parse %s: %v", cfgPath, err)
 	}
 	if cfg.Connection.Host == "" || cfg.Connection.Database == "" || cfg.Connection.User == "" {
-		tb.Skipf("set COBUILD_TEST_POSTGRES_DSN for store integration tests; incomplete connection config in %s", cfgPath)
+		tb.Skipf("set COBUILD_TEST_POSTGRES_DSN or complete the Postgres connection in %s before running Postgres-backed tests", cfgPath)
 	}
 
 	sslMode := cfg.Connection.SSLMode

@@ -202,6 +202,14 @@ func (h *Harness) Teardown() error {
 		}
 		h.Tmux = nil
 	}
+	for _, path := range []string{h.HomeDir, h.ToolBinDir, h.GitHubStateDir} {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Sprintf("remove %s: %v", path, err))
+		}
+	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
 	}

@@ -14,6 +14,10 @@ func TestSetupProvidesIsolatedHarnessState(t *testing.T) {
 	ctx := context.Background()
 	h1 := Setup(t, Options{Project: "alpha"})
 	h2 := Setup(t, Options{Project: "beta"})
+	defer func() {
+		_ = h2.Teardown()
+		_ = h1.Teardown()
+	}()
 
 	if h1.Repo.Root == h2.Repo.Root {
 		t.Fatal("repo roots should be distinct")
@@ -83,6 +87,7 @@ func TestSetupConfiguresStubRuntimeFixtures(t *testing.T) {
 		Runtime:         "stub",
 		StubFixturesDir: filepath.Join("..", "testdata", "runtime", "stub"),
 	})
+	defer func() { _ = h.Teardown() }()
 
 	if h.Runtime != "stub" {
 		t.Fatalf("runtime = %q, want stub", h.Runtime)
