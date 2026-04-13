@@ -369,6 +369,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptPath := promptFile.Name()
 
 		tmuxSession := pCfg.ResolveTmuxSession(taskProject)
+		tmuxWindow := dispatchTmuxWindowName(currentPhase, taskID)
 
 		// Ensure tmux session exists, create if not
 		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
@@ -414,7 +415,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				AssembledContext: assembledContext,
 				WorktreePath:     worktreePath,
 				TmuxSession:      tmuxSession,
-				TmuxWindow:       taskID,
+				TmuxWindow:       tmuxWindow,
 			})
 			if err != nil {
 				fmt.Printf("Warning: failed to record session: %v\n", err)
@@ -449,7 +450,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0755); err != nil {
 			return fmt.Errorf("failed to write dispatch script: %v", err)
 		}
-		tmuxArgs := []string{"new-window", "-n", taskID, "-t", tmuxSession, "bash", scriptPath}
+		tmuxArgs := []string{"new-window", "-n", tmuxWindow, "-t", tmuxSession, "bash", scriptPath}
 
 		if dryRun {
 			fmt.Printf("=== Task ===\n")
@@ -500,7 +501,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		logDir := filepath.Join(worktreePath, ".cobuild")
 		os.MkdirAll(logDir, 0755)
 		logFile := filepath.Join(logDir, "session.log")
-		_ = tmuxRun(ctx, pCfg, "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),
+		_ = tmuxRun(ctx, pCfg, "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, tmuxWindow),
 			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''")))
 
 		// Record dispatch metadata
@@ -508,7 +509,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			"dispatched_at":    time.Now().UTC().Format(time.RFC3339),
 			"agent":            agent,
 			"dispatch_runtime": rt.Name(),
-			"tmux_window":      taskID,
+			"tmux_window":      tmuxWindow,
 			"log_file":         logFile,
 		}
 		if err := conn.UpdateMetadataMap(ctx, taskID, dispatchInfo); err != nil {
@@ -523,7 +524,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				"model":         resolvedModel,
 				"tmux_session":  tmuxSession,
 				"worktree_path": worktreePath,
-				"tmux_window":   taskID,
+				"tmux_window":   tmuxWindow,
 				"dispatched_at": dispatchInfo["dispatched_at"],
 			}
 			s, _ := client.FormatJSON(out)
@@ -534,7 +535,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		fmt.Printf("Dispatched %s to %s (runtime: %s, model: %s)\n", taskID, agent, rt.Name(), resolvedModel)
 		fmt.Printf("  Session:  %s\n", tmuxSession)
 		fmt.Printf("  Worktree: %s\n", worktreePath)
-		fmt.Printf("  Window:   %s\n", taskID)
+		fmt.Printf("  Window:   %s\n", tmuxWindow)
 		printNextStep(taskID, currentPhase, "dispatch")
 		return nil
 	},
@@ -856,7 +857,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 
 	case "review":
 		b.WriteString("**Review this PR against its task spec and parent design.**\n\n")
-		b.WriteString("Follow the gate-process-review or gate-review-pr skill:\n")
+		b.WriteString(fmt.Sprintf("Follow the configured review skill `%s`:\n", phaseSkillForPrompt(pCfg, "review", "review/dispatch-review.md")))
 		b.WriteString("1. Read the task spec and parent design above\n")
 		b.WriteString("2. Check CI status: `gh pr checks <pr-number>`\n")
 		b.WriteString("3. Read the PR diff: `gh pr diff <pr-number>`\n")
@@ -903,6 +904,22 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("- If a reviewer (Gemini, human) leaves a critical comment on your PR, you MUST address it before the PR can merge\n")
 		b.WriteString("- Check review comments: `gh pr view <pr-number> --comments`\n")
 	}
+}
+
+func dispatchTmuxWindowName(phase, taskID string) string {
+	if phase == "review" {
+		return "review-" + taskID
+	}
+	return taskID
+}
+
+func phaseSkillForPrompt(pCfg *config.Config, phaseName, fallback string) string {
+	if pCfg != nil {
+		if phase := pCfg.FindPhase(phaseName); phase != nil && strings.TrimSpace(phase.Skill) != "" {
+			return strings.TrimSpace(phase.Skill)
+		}
+	}
+	return fallback
 }
 
 func renderMergedWorkSection(mergedTasks []MergedTask) string {
