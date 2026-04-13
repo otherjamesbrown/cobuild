@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +122,159 @@ func TestDecomposePassAdvancesWhenChildTasksResolveToSingleRepo(t *testing.T) {
 	}
 	if got := testStore.runs["design-2"].CurrentPhase; got != "implement" {
 		t.Fatalf("phase = %s, want implement", got)
+	}
+}
+
+func TestDecomposePassPrintsFileOverlapWarningsWithoutBlockingGate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	registerProjectRepos(t, "single", "repo-solo")
+
+	testConn := newFakeConnector()
+	testConn.addItem(&connector.WorkItem{ID: "design-3", Title: "design", Type: "design", Status: "open", Project: "single"})
+	testConn.addItem(&connector.WorkItem{
+		ID:      "cb-task-overlap",
+		Title:   "task overlap",
+		Type:    "task",
+		Status:  "open",
+		Project: "single",
+		Metadata: map[string]any{
+			"repo":  "repo-solo",
+			"paths": []string{"internal/cmd"},
+		},
+	})
+	testConn.addItem(&connector.WorkItem{
+		ID:      "cb-task-clean",
+		Title:   "task clean",
+		Type:    "task",
+		Status:  "open",
+		Project: "single",
+		Metadata: map[string]any{
+			"repo":  "repo-solo",
+			"files": []string{"docs/clean.md"},
+		},
+	})
+	testConn.setChildTasks("design-3", "cb-task-overlap", "cb-task-clean")
+
+	testStore := newFakeStore()
+	now := time.Now()
+	testStore.runs["design-3"] = &store.PipelineRun{
+		ID:           "run-design-3",
+		DesignID:     "design-3",
+		CurrentPhase: "decompose",
+		Status:       "active",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	restore := installCommandTestGlobals(t, testConn, testStore, "single")
+	defer restore()
+
+	oldCollector := decomposeMergedTaskCollector
+	collectorCalls := 0
+	decomposeMergedTaskCollector = func(ctx context.Context, cn connector.Connector, designID, repoRoot string) ([]MergedTask, error) {
+		collectorCalls++
+		return []MergedTask{
+			{TaskID: "cb-merged", FilesChanged: []string{"internal/cmd/pipeline.go", "docs/already-done.md"}},
+		}, nil
+	}
+	defer func() { decomposeMergedTaskCollector = oldCollector }()
+
+	output, err := runDecomposeCommand(t, "design-3", "pass", "looks good")
+	if err != nil {
+		t.Fatalf("decompose pass: %v", err)
+	}
+	if collectorCalls != 1 {
+		t.Fatalf("collector calls = %d, want 1", collectorCalls)
+	}
+	if !strings.Contains(output, "⚠️ file-overlap") {
+		t.Fatalf("output = %q, want file-overlap section", output)
+	}
+	if !strings.Contains(output, "task cb-task-overlap overlaps merged task cb-merged: internal/cmd/pipeline.go") {
+		t.Fatalf("output = %q, want overlap details", output)
+	}
+	if strings.Contains(output, "cb-task-clean overlaps") {
+		t.Fatalf("output = %q, did not expect clean task warning", output)
+	}
+	if len(testStore.gates) != 1 {
+		t.Fatalf("recorded gates = %d, want 1", len(testStore.gates))
+	}
+	if got := testStore.runs["design-3"].CurrentPhase; got != "implement" {
+		t.Fatalf("phase = %s, want implement", got)
+	}
+}
+
+func TestDecomposePassOmitsFileOverlapWarningsWhenTasksAreClean(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	registerProjectRepos(t, "single", "repo-solo")
+
+	testConn := newFakeConnector()
+	testConn.addItem(&connector.WorkItem{ID: "design-4", Title: "design", Type: "design", Status: "open", Project: "single"})
+	testConn.addItem(&connector.WorkItem{
+		ID:      "cb-task-clean",
+		Title:   "task clean",
+		Type:    "task",
+		Status:  "open",
+		Project: "single",
+		Metadata: map[string]any{
+			"repo":  "repo-solo",
+			"files": []string{"docs/clean.md"},
+		},
+	})
+	testConn.setChildTasks("design-4", "cb-task-clean")
+
+	testStore := newFakeStore()
+	now := time.Now()
+	testStore.runs["design-4"] = &store.PipelineRun{
+		ID:           "run-design-4",
+		DesignID:     "design-4",
+		CurrentPhase: "decompose",
+		Status:       "active",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	restore := installCommandTestGlobals(t, testConn, testStore, "single")
+	defer restore()
+
+	oldCollector := decomposeMergedTaskCollector
+	decomposeMergedTaskCollector = func(ctx context.Context, cn connector.Connector, designID, repoRoot string) ([]MergedTask, error) {
+		return []MergedTask{
+			{TaskID: "cb-merged", FilesChanged: []string{"internal/cmd/pipeline.go"}},
+		}, nil
+	}
+	defer func() { decomposeMergedTaskCollector = oldCollector }()
+
+	output, err := runDecomposeCommand(t, "design-4", "pass", "looks good")
+	if err != nil {
+		t.Fatalf("decompose pass: %v", err)
+	}
+	if strings.Contains(output, "⚠️ file-overlap") {
+		t.Fatalf("output = %q, did not expect file-overlap section", output)
+	}
+}
+
+func TestMergedFileOverlapIndexMatchesExactFilesAndPathPrefixes(t *testing.T) {
+	index := newMergedFileOverlapIndex([]MergedTask{
+		{TaskID: "cb-merged-a", FilesChanged: []string{"internal/cmd/pipeline.go", "docs/guide.md"}},
+		{TaskID: "cb-merged-b", FilesChanged: []string{"internal/cmd/dispatch.go", "internal/cmd/nested/helper.go"}},
+	})
+
+	warnings := index.findTaskOverlaps("cb-task-new", []string{"internal/cmd/pipeline.go", "./internal/cmd", "docs"})
+
+	want := []fileOverlapWarning{
+		{
+			TaskID:       "cb-task-new",
+			MergedTaskID: "cb-merged-a",
+			Paths:        []string{"docs/guide.md", "internal/cmd/pipeline.go"},
+		},
+		{
+			TaskID:       "cb-task-new",
+			MergedTaskID: "cb-merged-b",
+			Paths:        []string{"internal/cmd/dispatch.go", "internal/cmd/nested/helper.go"},
+		},
+	}
+	if !reflect.DeepEqual(warnings, want) {
+		t.Fatalf("findTaskOverlaps() = %#v, want %#v", warnings, want)
 	}
 }
 

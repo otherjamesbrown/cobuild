@@ -471,9 +471,14 @@ var decomposeCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
+		var overlapWarnings []fileOverlapWarning
 		if verdict == "pass" {
 			if err := validateSingleRepoChildTasks(ctx, conn, designID); err != nil {
 				return err
+			}
+			overlapWarnings, err = collectDecomposeFileOverlapWarnings(ctx, conn, designID, repoRoot)
+			if err != nil {
+				return fmt.Errorf("collect file-overlap warnings: %w", err)
 			}
 		}
 
@@ -510,6 +515,10 @@ var decomposeCmd = &cobra.Command{
 		fmt.Printf("  Round:           %d\n", result.Round)
 		fmt.Printf("  Verdict:         %s\n", result.Verdict)
 		fmt.Printf("  Phase:           %s\n", phaseTransition)
+		if warningOutput := renderFileOverlapWarnings(overlapWarnings); warningOutput != "" {
+			fmt.Println()
+			fmt.Println(warningOutput)
+		}
 		return nil
 	},
 }
