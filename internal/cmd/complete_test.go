@@ -509,6 +509,7 @@ type fakeStore struct {
 	runningSessions []store.SessionRecord
 	sessions        []store.SessionRecord
 	lastProject     string
+	resetCalls      int
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
 	tasks []store.PipelineTaskRecord
@@ -577,7 +578,16 @@ func (f *fakeStore) UpdateRunPhase(ctx context.Context, designID, phase string) 
 	return nil
 }
 
-func (f *fakeStore) CancelRunningSessions(_ context.Context, _ string) (int, error) { return 0, nil }
+func (f *fakeStore) CancelRunningSessions(_ context.Context, designID string) (int, error) {
+	cancelled := 0
+	for i := range f.sessions {
+		if f.sessions[i].DesignID == designID && f.sessions[i].Status == "running" {
+			f.sessions[i].Status = "cancelled"
+			cancelled++
+		}
+	}
+	return cancelled, nil
+}
 
 func (f *fakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
 	run, ok := f.runs[designID]
@@ -597,7 +607,6 @@ func (f *fakeStore) UpdateRunStatus(ctx context.Context, designID, status string
 }
 
 func (f *fakeStore) SetRunMode(ctx context.Context, designID, mode string) error { return nil }
-func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error  { return nil }
 
 func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)
@@ -613,6 +622,13 @@ func (f *fakeStore) GetLatestGateRound(ctx context.Context, pipelineID, gateName
 }
 
 func (f *fakeStore) AddTask(ctx context.Context, pipelineID, taskShardID, designID string, wave *int) error {
+	f.tasks = append(f.tasks, store.PipelineTaskRecord{
+		PipelineID:  pipelineID,
+		TaskShardID: taskShardID,
+		DesignID:    designID,
+		Wave:        wave,
+		Status:      "pending",
+	})
 	return nil
 }
 
@@ -632,6 +648,12 @@ func (f *fakeStore) GetTaskByShardID(ctx context.Context, taskShardID string) (*
 }
 
 func (f *fakeStore) UpdateTaskStatus(ctx context.Context, taskShardID, status string) error {
+	for i := range f.tasks {
+		if f.tasks[i].TaskShardID == taskShardID {
+			f.tasks[i].Status = status
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -641,6 +663,15 @@ func (f *fakeStore) CreateSession(ctx context.Context, input store.SessionInput)
 
 func (f *fakeStore) EndSession(ctx context.Context, id string, result store.SessionResult) error {
 	f.ended[id] = result
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			f.sessions[i].Status = result.Status
+			if result.CompletionNote != "" {
+				note := result.CompletionNote
+				f.sessions[i].CompletionNote = &note
+			}
+		}
+	}
 	return nil
 }
 
@@ -697,6 +728,18 @@ func (f *fakeStore) IsWaveClosed(ctx context.Context, designID string, wave int)
 }
 
 func (f *fakeStore) Close() error { return nil }
+
+func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error {
+	f.resetCalls++
+	if run, ok := f.runs[designID]; ok {
+		run.CurrentPhase = phase
+		run.Status = "active"
+	}
+	f.gates = nil
+	f.sessions = nil
+	f.tasks = nil
+	return nil
+}
 
 func newTestWorktree(t *testing.T, branch string) string {
 	t.Helper()
