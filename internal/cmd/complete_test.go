@@ -191,6 +191,36 @@ func TestAdvancePipelinePhaseResolvesNextFromWorkflow(t *testing.T) {
 	}
 }
 
+func TestRecordGateVerdictRejectsStalePhase(t *testing.T) {
+	ctx := context.Background()
+
+	// Pipeline is in "implement" phase. A stale "decomposition-review"
+	// gate call (e.g. runner script firing after the operator already
+	// recorded manually) should be rejected, not silently advance the
+	// pipeline through the workflow.
+	fs := newFakeStore()
+	fs.runs["cb-stale"] = &store.PipelineRun{
+		ID: "run-1", DesignID: "cb-stale", CurrentPhase: "implement", Status: "active",
+	}
+
+	fc := newFakeConnector()
+	fc.items["cb-stale"] = &connector.WorkItem{ID: "cb-stale", Type: "design", Status: "in_progress"}
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	_, err := RecordGateVerdict(ctx, fc, fs, "cb-stale", "decomposition-review", "pass", "body", 0, nil)
+	if err == nil {
+		t.Fatal("RecordGateVerdict(stale gate) error = nil, want phase mismatch error")
+	}
+	if !strings.Contains(err.Error(), "expects phase \"decompose\"") || !strings.Contains(err.Error(), "in \"implement\"") {
+		t.Fatalf("error = %v, want phase mismatch", err)
+	}
+	// Phase must NOT have advanced
+	if fs.runs["cb-stale"].CurrentPhase != "implement" {
+		t.Fatalf("phase = %q, want unchanged 'implement'", fs.runs["cb-stale"].CurrentPhase)
+	}
+}
+
 func TestCompleteRefusesOnGatePhase(t *testing.T) {
 	taskID := "cb-gate-task"
 

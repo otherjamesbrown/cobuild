@@ -42,6 +42,18 @@ func RecordGateVerdict(
 	}
 	currentPhase := run.CurrentPhase
 
+	// Validate the gate matches the current phase. Without this, a stale
+	// gate command (e.g. runner script's auto-record running after the
+	// operator already recorded manually) could cascade through phases:
+	// recording decomposition-review while phase=implement would advance
+	// implement→review. (cb-1660be hit this and short-circuited to done.)
+	if expected := expectedPhaseForGate(gateName); expected != "" && currentPhase != expected {
+		return nil, fmt.Errorf(
+			"gate %q expects phase %q but pipeline is in %q (likely a stale or duplicate gate call — verify the agent's verdict was already recorded)",
+			gateName, expected, currentPhase,
+		)
+	}
+
 	// 2. Compute round
 	round, err := st.GetLatestGateRound(ctx, run.ID, gateName)
 	if err != nil {
@@ -326,5 +338,33 @@ func cleanRepoList(values []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// expectedPhaseForGate returns the pipeline phase a given gate is recorded
+// from. Used to reject stale or duplicate gate calls that would cascade
+// the pipeline through phases incorrectly (cb-1660be observed implement→
+// review→done from a duplicate decomposition-review).
+//
+// Empty string means "no validation" — used for retrospective which
+// runs at done and other gates without a strict phase mapping.
+func expectedPhaseForGate(gateName string) string {
+	switch gateName {
+	case "readiness-review":
+		return "design"
+	case "decomposition-review":
+		return "decompose"
+	case "investigation":
+		return "investigate"
+	case "review":
+		// "review" gate covers tasks completing review phase. Tasks have
+		// their own pipeline runs in implement/fix/review phases.
+		// Skip strict validation here — the gate fires from process-review
+		// for tasks, and the design's review phase sits separately.
+		return ""
+	case "retrospective":
+		return "done"
+	default:
+		return ""
+	}
 }
 
