@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -188,4 +189,214 @@ func TestCheckStaleSessionsMarksMissingLogOrWorktreeOrphaned(t *testing.T) {
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func TestReconcileStaleStateAppliesSharedRecoveries(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-orphaned"] = &connector.WorkItem{ID: "cb-orphaned", Type: "design", Status: "open", Project: "test-project"}
+	fc.items["cb-inconsistent"] = &connector.WorkItem{ID: "cb-inconsistent", Type: "design", Status: "closed", Project: "test-project"}
+
+	fs := newFakeStore()
+	fs.runs["cb-orphaned"] = &store.PipelineRun{
+		ID:           "run-orphaned",
+		DesignID:     "cb-orphaned",
+		Project:      "test-project",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.runs["cb-inconsistent"] = &store.PipelineRun{
+		ID:           "run-inconsistent",
+		DesignID:     "cb-inconsistent",
+		Project:      "test-project",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+	fs.sessions = []store.SessionRecord{{
+		ID:          "ps-1",
+		DesignID:    "cb-orphaned",
+		PipelineID:  "run-orphaned",
+		Project:     "test-project",
+		Status:      "running",
+		TmuxSession: ptr("cobuild-test-project"),
+		TmuxWindow:  ptr("cb-orphaned"),
+	}}
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			t.Fatalf("unexpected command %q", name)
+		}
+		if len(args) >= 2 && args[0] == "list-sessions" {
+			return []byte("cobuild-test-project\n"), nil
+		}
+		if len(args) >= 3 && args[0] == "list-windows" && args[1] == "-t" && args[2] == "cobuild-test-project" {
+			return []byte("@7\tcb-inconsistent\n"), nil
+		}
+		t.Fatalf("unexpected tmux args %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	prevExec := pollerExec
+	t.Cleanup(func() { pollerExec = prevExec })
+
+	var killed [][]string
+	pollerExec = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		killed = append(killed, append([]string{name}, args...))
+		return nil, nil
+	}
+
+	out := captureStdout(t, func() {
+		reconcileStaleState(ctx, false)
+	})
+
+	if result, ok := fs.ended["ps-1"]; !ok {
+		t.Fatalf("session ps-1 not ended")
+	} else if result.Status != "orphaned" {
+		t.Fatalf("session status = %q, want orphaned", result.Status)
+	}
+	if got := fs.runs["cb-inconsistent"].CurrentPhase; got != "done" {
+		t.Fatalf("phase = %q, want done", got)
+	}
+	if got := fs.runs["cb-inconsistent"].Status; got != "completed" {
+		t.Fatalf("status = %q, want completed", got)
+	}
+	if len(killed) != 1 {
+		t.Fatalf("killed windows = %#v, want one kill", killed)
+	}
+	if got := strings.Join(killed[0], " "); got != "tmux kill-window -t @7" {
+		t.Fatalf("kill command = %q, want tmux kill-window -t @7", got)
+	}
+	if !strings.Contains(out, "[reconcile] cb-orphaned cancel_orphaned_session: session ps-1 is running but no tmux window exists") {
+		t.Fatalf("missing orphaned-session log:\n%s", out)
+	}
+	if !strings.Contains(out, "[reconcile] cb-inconsistent kill_orphan_tmux_window: tmux window cobuild-test-project:cb-inconsistent exists but no matching pipeline session exists") {
+		t.Fatalf("missing orphan-window log:\n%s", out)
+	}
+	if !strings.Contains(out, "[reconcile] cb-inconsistent complete_stale_run: pipeline cb-inconsistent run is active but work item is closed") {
+		t.Fatalf("missing stale-run log:\n%s", out)
+	}
+}
+
+func TestReconcileStaleStateDryRunLogsWithoutMutating(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-orphaned"] = &connector.WorkItem{ID: "cb-orphaned", Type: "design", Status: "open", Project: "test-project"}
+
+	fs := newFakeStore()
+	fs.runs["cb-orphaned"] = &store.PipelineRun{
+		ID:           "run-orphaned",
+		DesignID:     "cb-orphaned",
+		Project:      "test-project",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.sessions = []store.SessionRecord{{
+		ID:          "ps-1",
+		DesignID:    "cb-orphaned",
+		PipelineID:  "run-orphaned",
+		Project:     "test-project",
+		Status:      "running",
+		TmuxSession: ptr("cobuild-test-project"),
+		TmuxWindow:  ptr("cb-orphaned"),
+	}}
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			t.Fatalf("unexpected command %q", name)
+		}
+		if len(args) >= 2 && args[0] == "list-sessions" {
+			return []byte(""), nil
+		}
+		if len(args) >= 3 && args[0] == "list-windows" {
+			return []byte(""), nil
+		}
+		t.Fatalf("unexpected tmux args %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	prevExec := pollerExec
+	t.Cleanup(func() { pollerExec = prevExec })
+	pollerExec = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("dry-run should not execute %s %v", name, args)
+		return nil, nil
+	}
+
+	out := captureStdout(t, func() {
+		reconcileStaleState(ctx, true)
+	})
+
+	if len(fs.ended) != 0 {
+		t.Fatalf("ended sessions = %#v, want none", fs.ended)
+	}
+	if got := fs.runs["cb-orphaned"].Status; got != "active" {
+		t.Fatalf("status = %q, want active", got)
+	}
+	if !strings.Contains(out, "[reconcile] cb-orphaned cancel_orphaned_session: session ps-1 is running but no tmux window exists") {
+		t.Fatalf("missing dry-run reconcile log:\n%s", out)
+	}
+}
+
+func TestReconcileStaleStateLeavesHealthyPipelineUntouched(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-healthy"] = &connector.WorkItem{ID: "cb-healthy", Type: "design", Status: "open", Project: "test-project"}
+
+	fs := newFakeStore()
+	fs.runs["cb-healthy"] = &store.PipelineRun{
+		ID:           "run-healthy",
+		DesignID:     "cb-healthy",
+		Project:      "test-project",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.sessions = []store.SessionRecord{{
+		ID:          "ps-healthy",
+		DesignID:    "cb-healthy",
+		PipelineID:  "run-healthy",
+		Project:     "test-project",
+		Status:      "running",
+		TmuxSession: ptr("cobuild-test-project"),
+		TmuxWindow:  ptr("cb-healthy"),
+	}}
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			t.Fatalf("unexpected command %q", name)
+		}
+		if len(args) >= 2 && args[0] == "list-sessions" {
+			return []byte("cobuild-test-project\n"), nil
+		}
+		if len(args) >= 3 && args[0] == "list-windows" && args[1] == "-t" && args[2] == "cobuild-test-project" {
+			return []byte("@3\tcb-healthy\n"), nil
+		}
+		t.Fatalf("unexpected tmux args %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	prevExec := pollerExec
+	t.Cleanup(func() { pollerExec = prevExec })
+	pollerExec = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("healthy pipeline should not execute %s %v", name, args)
+		return nil, nil
+	}
+
+	out := captureStdout(t, func() {
+		reconcileStaleState(ctx, false)
+	})
+
+	if len(fs.ended) != 0 {
+		t.Fatalf("ended sessions = %#v, want none", fs.ended)
+	}
+	if got := fs.runs["cb-healthy"].CurrentPhase; got != "implement" {
+		t.Fatalf("phase = %q, want implement", got)
+	}
+	if strings.Contains(out, "[reconcile]") {
+		t.Fatalf("healthy pipeline should not log reconcile actions:\n%s", out)
+	}
 }
