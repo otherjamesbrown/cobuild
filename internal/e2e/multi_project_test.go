@@ -23,8 +23,6 @@ const (
 )
 
 func TestE2EMultiProject(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	h := harness.Setup(t, harness.Options{
 		Project: multiProjectAlpha,

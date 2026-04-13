@@ -17,7 +17,7 @@ type TmuxServer struct {
 
 func newTmuxServer(ctx context.Context, baseDir, sessionName string) (*TmuxServer, error) {
 	if _, err := exec.LookPath("tmux"); err != nil {
-		return nil, fmt.Errorf("tmux not available: %w", err)
+		return nil, fmt.Errorf("tmux not available in PATH; install tmux before running e2e tests: %w", err)
 	}
 	if sessionName == "" {
 		sessionName = "cobuild-e2e"

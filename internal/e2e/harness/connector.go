@@ -419,6 +419,9 @@ func cloneMetadata(in map[string]any) map[string]any {
 }
 
 func metadataString(value any) string {
+	if value == nil {
+		return ""
+	}
 	switch v := value.(type) {
 	case string:
 		return v

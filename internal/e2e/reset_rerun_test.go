@@ -11,8 +11,6 @@ import (
 )
 
 func TestE2EResetRerun(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	h := harnessSetupReset(t)
 
@@ -28,6 +26,7 @@ func TestE2EResetRerun(t *testing.T) {
 		t.Fatalf("design dispatch failed:\n%s", h.FailureReport("design", "dispatch command", designDispatchOut, happyDesignID))
 	}
 	waitForRunPhase(t, ctx, h, happyDesignID, "decompose", "active", 15*time.Second)
+	waitForNoRunningSessions(t, ctx, h, 15*time.Second, designDispatchOut, happyDesignID)
 
 	decomposeDispatchOut, err := h.Dispatch(ctx, happyDesignID)
 	if err != nil {
