@@ -1,0 +1,17 @@
+{
+  "phase": "design",
+  "task_id": "cb-happy-path",
+  "gate_verdict": {
+    "gate": "readiness-review",
+    "shard_id": "cb-happy-path",
+    "verdict": "pass",
+    "readiness": 5,
+    "body": "Happy-path e2e design is ready for decomposition."
+  },
+  "session": {
+    "input_tokens": 14,
+    "output_tokens": 6,
+    "turns": 1,
+    "last_message": "Recorded the readiness review from the happy-path fixture."
+  }
+}

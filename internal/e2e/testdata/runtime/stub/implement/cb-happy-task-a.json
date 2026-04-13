@@ -1,0 +1,14 @@
+{
+  "phase": "implement",
+  "task_id": "cb-happy-task-a",
+  "implement": {
+    "patch_file": "../patches/happy-task-a.patch",
+    "commit_message": "[cb-happy-task-a] add alpha happy-path artifact"
+  },
+  "session": {
+    "input_tokens": 20,
+    "output_tokens": 8,
+    "turns": 1,
+    "last_message": "Applied the alpha happy-path patch."
+  }
+}

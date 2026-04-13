@@ -53,15 +53,26 @@ func (r *Runtime) BuildRunnerScript(in runtime.RunnerInput) (string, error) {
 		return "", fmt.Errorf("BuildRunnerScript: PromptFile required")
 	}
 
+	fixturesDir := os.Getenv("COBUILD_STUB_FIXTURES_DIR")
+	if strings.TrimSpace(fixturesDir) == "" {
+		fixturesDir = filepath.Join(in.RepoRoot, DefaultFixturesDir)
+	}
+	homeDir := os.Getenv("HOME")
+	fakeGHDir := os.Getenv("COBUILD_FAKE_GH_DIR")
+	pathEnv := os.Getenv("PATH")
+
 	script := fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 cd '%s'
+export HOME='%s'
+export PATH='%s'
 export COBUILD_DISPATCH=true
 export COBUILD_SESSION_ID='%s'
 export COBUILD_HOOKS_DIR='%s'
 export COBUILD_TASK_ID='%s'
 export COBUILD_REPO_ROOT='%s'
 export COBUILD_PHASE='%s'
+export COBUILD_FAKE_GH_DIR='%s'
 LOGFILE=".cobuild/dispatch.log"
 mkdir -p .cobuild
 echo "$COBUILD_PHASE" > .cobuild/phase
@@ -76,7 +87,7 @@ fi
 cp "$PROMPT_FILE" .cobuild/last-prompt.md
 rm -f "$PROMPT_FILE"
 
-FIXTURES_DIR="${COBUILD_STUB_FIXTURES_DIR:-$COBUILD_REPO_ROOT/%s}"
+FIXTURES_DIR='%s'
 echo "[$(date)] Using stub fixtures from $FIXTURES_DIR" >> "$LOGFILE"
 
 cobuild stub-runtime exec \
@@ -91,13 +102,16 @@ echo "[$(date)] Stub runtime finished" >> "$LOGFILE"
 rm -f "$0"
 `,
 		shellQuote(in.WorktreePath),
+		shellQuote(homeDir),
+		shellQuote(pathEnv),
 		in.SessionID,
 		shellQuote(in.HooksDir),
 		shellQuote(in.TaskID),
 		shellQuote(in.RepoRoot),
 		shellQuote(in.Phase),
+		shellQuote(fakeGHDir),
 		shellQuote(in.PromptFile),
-		DefaultFixturesDir,
+		shellQuote(fixturesDir),
 	)
 	return script, nil
 }
@@ -158,9 +172,29 @@ func (r *Runtime) ParseSessionStats(sessionLogPath string) (runtime.SessionStats
 type Fixture struct {
 	Phase       string              `json:"phase"`
 	TaskID      string              `json:"task_id"`
+	CreateItems []CreateItemFixture `json:"create_items,omitempty"`
+	CreateEdges []CreateEdgeFixture `json:"create_edges,omitempty"`
 	GateVerdict *GateVerdictFixture `json:"gate_verdict,omitempty"`
 	Implement   *ImplementFixture   `json:"implement,omitempty"`
 	Session     SessionFixture      `json:"session,omitempty"`
+}
+
+type CreateItemFixture struct {
+	ID       string         `json:"id"`
+	Title    string         `json:"title"`
+	Content  string         `json:"content,omitempty"`
+	Type     string         `json:"type"`
+	Status   string         `json:"status,omitempty"`
+	Project  string         `json:"project,omitempty"`
+	ParentID string         `json:"parent_id,omitempty"`
+	Labels   []string       `json:"labels,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateEdgeFixture struct {
+	FromID   string `json:"from_id"`
+	ToID     string `json:"to_id"`
+	EdgeType string `json:"edge_type"`
 }
 
 type GateVerdictFixture struct {
@@ -357,6 +391,9 @@ func validateFixture(f Fixture, wantPhase, wantTaskID string) error {
 	if f.TaskID != wantTaskID {
 		return fmt.Errorf("fixture task_id mismatch: got %q", f.TaskID)
 	}
+	if err := validateCreateItems(f.CreateItems); err != nil {
+		return err
+	}
 	if runtime.IsGatePhase(wantPhase) {
 		if f.GateVerdict == nil {
 			return fmt.Errorf("gate fixture missing gate_verdict")
@@ -373,6 +410,21 @@ func validateFixture(f Fixture, wantPhase, wantTaskID string) error {
 		return fmt.Errorf("implement fixture must not include gate_verdict")
 	}
 	return validateImplementFixture(*f.Implement)
+}
+
+func validateCreateItems(items []CreateItemFixture) error {
+	for i, item := range items {
+		if strings.TrimSpace(item.ID) == "" {
+			return fmt.Errorf("create_items[%d].id is required", i)
+		}
+		if strings.TrimSpace(item.Title) == "" {
+			return fmt.Errorf("create_items[%d].title is required", i)
+		}
+		if strings.TrimSpace(item.Type) == "" {
+			return fmt.Errorf("create_items[%d].type is required", i)
+		}
+	}
+	return nil
 }
 
 func validateGateVerdict(v GateVerdictFixture) error {

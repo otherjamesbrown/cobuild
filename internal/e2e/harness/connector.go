@@ -137,8 +137,13 @@ func (c *FakeConnector) Create(_ context.Context, req connector.CreateRequest) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.nextID++
-	id := fmt.Sprintf("%s-%04d", c.idPrefix, c.nextID)
+	id := strings.TrimSpace(metadataString(req.Metadata["_id"]))
+	if id == "" {
+		c.nextID++
+		id = fmt.Sprintf("%s-%04d", c.idPrefix, c.nextID)
+	} else if c.items[id] != nil {
+		return "", fmt.Errorf("fake connector: work item %q already exists", id)
+	}
 	now := c.now().UTC()
 	project := ""
 	if strings.TrimSpace(req.ParentID) != "" {
@@ -160,6 +165,7 @@ func (c *FakeConnector) Create(_ context.Context, req connector.CreateRequest) (
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	delete(item.Metadata, "_id")
 	c.items[id] = item
 	if strings.TrimSpace(req.ParentID) != "" {
 		if err := c.createEdgeLocked(id, req.ParentID, "child-of"); err != nil {

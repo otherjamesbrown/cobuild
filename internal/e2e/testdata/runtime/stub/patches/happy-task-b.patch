@@ -1,0 +1,7 @@
+diff --git a/happy-beta.txt b/happy-beta.txt
+new file mode 100644
+index 0000000..15a7fd7
+--- /dev/null
++++ b/happy-beta.txt
+@@ -0,0 +1 @@
++beta happy path

@@ -40,7 +40,10 @@ func New(cfg *config.Config, project, agent string, debug bool) (Connector, erro
 		}
 		return NewBeadsConnector(prefix, repo, debug), nil
 
+	case "fake":
+		return newFakeConnectorFromConfig(connCfg)
+
 	default:
-		return nil, fmt.Errorf("unknown connector type: %q (supported: context-palace, beads)", connType)
+		return nil, fmt.Errorf("unknown connector type: %q (supported: context-palace, beads, fake)", connType)
 	}
 }

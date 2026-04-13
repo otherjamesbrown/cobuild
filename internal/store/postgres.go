@@ -86,6 +86,8 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'claude-code';
 	ALTER TABLE IF EXISTS pipeline_sessions
 		ADD COLUMN IF NOT EXISTS completion_note TEXT;
+	ALTER TABLE IF EXISTS pipeline_runs
+		ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
 	`
 	_, err := s.pool.Exec(ctx, ddl)
 	return err

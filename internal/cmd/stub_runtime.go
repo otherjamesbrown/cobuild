@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/runtime"
 	stubruntime "github.com/otherjamesbrown/cobuild/internal/runtime/stub"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -37,9 +39,22 @@ var stubRuntimeExecCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := applyStubFixtureChanges(ctx, res.Fixture); err != nil {
+			return err
+		}
 
 		if runtime.IsGatePhase(phase) {
-			return applyStubGate(cmd, res.Fixture.GateVerdict)
+			if err := applyStubGate(cmd, res.Fixture.GateVerdict); err != nil {
+				return err
+			}
+			endTaskSession(ctx, taskID, worktreePath, store.SessionResult{
+				ExitCode:       0,
+				FilesChanged:   0,
+				Commits:        0,
+				Status:         "completed",
+				CompletionNote: "stub gate phase completed",
+			})
+			return nil
 		}
 		return completeCmd.RunE(completeCmd, []string{taskID})
 	},
@@ -90,6 +105,43 @@ func runGateCommand(command *cobra.Command, shardID string, flags map[string]str
 		}
 	}()
 	return command.RunE(command, []string{shardID})
+}
+
+func applyStubFixtureChanges(ctx context.Context, fixture stubruntime.Fixture) error {
+	if conn == nil {
+		return fmt.Errorf("no connector configured")
+	}
+	for _, item := range fixture.CreateItems {
+		metadata := map[string]any{"_id": item.ID}
+		for key, value := range item.Metadata {
+			metadata[key] = value
+		}
+		if item.Project != "" {
+			metadata["project"] = item.Project
+		}
+		id, err := conn.Create(ctx, connector.CreateRequest{
+			Title:    item.Title,
+			Content:  item.Content,
+			Type:     item.Type,
+			Labels:   item.Labels,
+			Metadata: metadata,
+			ParentID: item.ParentID,
+		})
+		if err != nil {
+			return fmt.Errorf("create stub work item %s: %w", item.ID, err)
+		}
+		if item.Status != "" && item.Status != "open" {
+			if err := conn.UpdateStatus(ctx, id, item.Status); err != nil {
+				return fmt.Errorf("set status for %s: %w", id, err)
+			}
+		}
+	}
+	for _, edge := range fixture.CreateEdges {
+		if err := conn.CreateEdge(ctx, edge.FromID, edge.ToID, edge.EdgeType); err != nil {
+			return fmt.Errorf("create stub edge %s -> %s (%s): %w", edge.FromID, edge.ToID, edge.EdgeType, err)
+		}
+	}
+	return nil
 }
 
 func init() {

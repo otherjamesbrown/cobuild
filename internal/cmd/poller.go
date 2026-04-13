@@ -444,6 +444,9 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 		siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
 		if err == nil {
 			for _, s := range siblings {
+				if s.Type != "" && s.Type != "task" {
+					continue
+				}
 				if s.Status != "closed" && s.Status != "needs-review" {
 					allDone = false
 					break
