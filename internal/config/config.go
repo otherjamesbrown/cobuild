@@ -150,6 +150,12 @@ type RuntimeCfg struct {
 	// this replaces "--dangerously-skip-permissions"; for codex it replaces
 	// "--json --full-auto").
 	Flags string `yaml:"flags,omitempty"`
+	// MaxConcurrent caps how many simultaneous sessions of this runtime may
+	// be in flight. When 0, falls back to DispatchCfg.MaxConcurrent.
+	// Codex's local app-server tolerates 1–2 concurrent exec sessions
+	// reliably; beyond that, sessions die silently after 1–3 minutes
+	// (cb-bf9271). Cap codex at 2 by default; claude-code can run higher.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
 }
 
 const (
@@ -366,14 +372,21 @@ func DefaultConfig() *Config {
 	defaultTrue := true
 	return &Config{
 		Dispatch: DispatchCfg{
-			MaxConcurrent:  3,
+			// Default to 2 concurrent dispatches. Codex's local app-server
+			// can't sustain more than 2 simultaneous `codex exec` sessions
+			// without silent mid-work deaths after 1–3 minutes (cb-bf9271).
+			// Per-runtime caps in Runtimes below override this when set.
+			MaxConcurrent:  2,
 			TmuxSession:    "", // empty = auto: cobuild-<project>
 			TmuxSocket:     "",
 			WaveStrategy:   WaveStrategySerial,
 			DefaultRuntime: "claude-code",
 			Runtimes: map[string]RuntimeCfg{
-				"claude-code": {Model: "sonnet"},
-				"codex":       {Model: "gpt-5.4"},
+				"claude-code": {Model: "sonnet", MaxConcurrent: 4},
+				// Codex local app-server reliably handles 1–2 concurrent
+				// `codex exec` sessions. Beyond that, sessions die silently
+				// after 1–3 minutes (cb-bf9271). Cap at 2.
+				"codex": {Model: "gpt-5.4", MaxConcurrent: 2},
 			},
 			// Legacy fields retained for back-compat
 			ClaudeFlags:  "", // empty = use runtime's built-in default
