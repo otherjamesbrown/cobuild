@@ -40,6 +40,8 @@ type Options struct {
 	OnEvent        EventHandler
 	BeforeStep     func(ctx context.Context, shardID, phase string) error
 	Monitor        ProgressMonitor
+	GateHistory    GateHistorySource // optional — enables auto-retry on failed gates (cb-13744c)
+	MaxGateRetries int               // 0 = use default (3); cap on re-dispatches per phase after a failed gate
 	SignalCh       <-chan os.Signal
 	Now            func() time.Time
 	Sleep          func(ctx context.Context, d time.Duration) error
@@ -77,6 +79,12 @@ func (r *Runner) Run(ctx context.Context, shardID string) error {
 	ctx, stop := signalAwareContext(ctx, r.opts.SignalCh)
 	defer stop()
 
+	maxRetries := r.opts.MaxGateRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	gateRetries := map[string]int{}
+
 	for {
 		phase, err := r.phases.CurrentPhase(ctx, shardID)
 		if err != nil {
@@ -106,13 +114,50 @@ func (r *Runner) Run(ctx context.Context, shardID string) error {
 			}
 		}
 
+		gateCountBefore, _ := r.gateCount(ctx, shardID)
+
 		if err := r.step(ctx, shardID, phase); err != nil {
 			return err
 		}
-		if _, err := r.waitForPhaseAdvance(ctx, shardID, phase); err != nil {
+		newPhase, err := r.waitForPhaseAdvance(ctx, shardID, phase)
+		if err != nil {
 			return err
 		}
+
+		// If the phase did not change but a new failed gate appeared,
+		// re-dispatch (cb-13744c). Cap retries so we don't spin forever.
+		if newPhase == phase {
+			gateCountAfter, _ := r.gateCount(ctx, shardID)
+			if gateCountAfter > gateCountBefore {
+				gateRetries[phase]++
+				if gateRetries[phase] >= maxRetries {
+					return &BlockedError{
+						ShardID:     shardID,
+						Phase:       phase,
+						Reason:      StopReasonBlockedReview,
+						Message:     fmt.Sprintf("gate failed %d times in phase %q — needs human intervention", gateRetries[phase], phase),
+						Recoverable: true,
+					}
+				}
+				r.emit(shardID, phase, EventPoll, fmt.Sprintf("Phase: %s -> retry %d/%d after failed gate", phase, gateRetries[phase], maxRetries))
+				// Loop continues; next iteration will read same phase and re-dispatch
+				continue
+			}
+		}
 	}
+}
+
+// gateCount returns the total number of gate records for a design, used
+// to detect new failed gates between dispatches (cb-13744c).
+func (r *Runner) gateCount(ctx context.Context, shardID string) (int, error) {
+	if r.opts.GateHistory == nil {
+		return 0, nil
+	}
+	history, err := r.opts.GateHistory.GetGateHistory(ctx, shardID)
+	if err != nil {
+		return 0, err
+	}
+	return len(history), nil
 }
 
 func (r *Runner) step(ctx context.Context, shardID, phase string) error {
@@ -138,6 +183,7 @@ func (r *Runner) waitForPhaseAdvance(ctx context.Context, shardID, phase string)
 	if err != nil {
 		return "", err
 	}
+	gateCountAtEntry, _ := r.gateCount(ctx, shardID)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -164,6 +210,14 @@ func (r *Runner) waitForPhaseAdvance(ctx context.Context, shardID, phase string)
 		if currentPhase != phase {
 			r.emit(shardID, phase, EventTransition, fmt.Sprintf("Phase: %s -> %s", phase, currentPhase))
 			return currentPhase, nil
+		}
+
+		// Phase hasn't moved. Check if a new gate record appeared (which
+		// must be a fail since pass would have advanced the phase).
+		// Return same phase so Run can decide whether to retry (cb-13744c).
+		if cur, _ := r.gateCount(ctx, shardID); cur > gateCountAtEntry {
+			r.emit(shardID, phase, EventPoll, fmt.Sprintf("Phase: %s -> failed gate detected", phase))
+			return phase, nil
 		}
 
 		lastSnapshot, err = r.snapshot(ctx, shardID, phase)

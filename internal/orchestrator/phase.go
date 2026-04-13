@@ -17,6 +17,12 @@ type RunStore interface {
 	GetRun(ctx context.Context, designID string) (*store.PipelineRun, error)
 }
 
+// GateHistorySource lets the runner detect failed gates so it can re-dispatch
+// the same phase instead of polling forever (cb-13744c).
+type GateHistorySource interface {
+	GetGateHistory(ctx context.Context, designID string) ([]store.PipelineGateRecord, error)
+}
+
 // TaskSource lists pipeline tasks for implement-phase orchestration.
 type TaskSource interface {
 	ListTasksByDesign(ctx context.Context, designID string) ([]store.PipelineTaskRecord, error)

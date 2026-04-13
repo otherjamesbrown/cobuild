@@ -22,6 +22,7 @@ var newOrchestrateRunner = func(opts orchestrator.Options) orchestrateCommandRun
 	// Wire up implement/review support so orchestrate can drive
 	// the full pipeline end-to-end, not just gate phases.
 	opts.Tasks = orchestrator.StoreTaskSource{Store: cbStore}
+	opts.GateHistory = cbStore // store satisfies GateHistorySource via GetGateHistory
 	opts.WaveDispatcher = orchestrator.WaveDispatchFunc(func(_ context.Context, designID string) error {
 		return dispatchWaveCmd.RunE(dispatchWaveCmd, []string{designID})
 	})
