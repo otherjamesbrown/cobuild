@@ -12,6 +12,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -266,11 +267,31 @@ func installTestGlobals(t *testing.T, testConn connector.Connector, testStore st
 	if cbClient == nil {
 		cbClient = &client.Client{}
 	}
+	pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+		Connector: testConn,
+		Store:     testStore,
+		Exec: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "tmux" {
+				return nil, fmt.Errorf("unexpected command %s", name)
+			}
+			if len(args) >= 2 && args[0] == "list-sessions" && args[1] == "-F" {
+				return []byte(""), nil
+			}
+			if len(args) >= 4 && args[0] == "list-windows" {
+				return []byte(""), nil
+			}
+			return nil, fmt.Errorf("unexpected tmux args %v", args)
+		},
+	})
 	return func() {
 		conn = prevConn
 		cbStore = prevStore
 		projectName = prevProject
 		cbClient = prevClient
+		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+			Connector: prevConn,
+			Store:     prevStore,
+		})
 	}
 }
 
@@ -477,11 +498,18 @@ func filterEdgesByType(edges []connector.Edge, types []string) []connector.Edge 
 }
 
 type fakeStore struct {
-	runs            map[string]*store.PipelineRun
-	gates           []store.PipelineGateInput
-	ended           map[string]store.SessionResult
-	runningSessions []store.SessionRecord
-	lastProject     string
+	runs             map[string]*store.PipelineRun
+	gates            []store.PipelineGateInput
+	ended            map[string]store.SessionResult
+	runningSessions  []store.SessionRecord
+	sessionsByDesign map[string][]store.SessionRecord
+	runStatuses      []store.PipelineRunStatus
+	cancelledByID    map[string]int
+	resetCalls       []struct {
+		DesignID string
+		Phase    string
+	}
+	lastProject string
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
 	tasks []store.PipelineTaskRecord
@@ -489,8 +517,10 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		runs:  map[string]*store.PipelineRun{},
-		ended: map[string]store.SessionResult{},
+		runs:             map[string]*store.PipelineRun{},
+		ended:            map[string]store.SessionResult{},
+		sessionsByDesign: map[string][]store.SessionRecord{},
+		cancelledByID:    map[string]int{},
 	}
 }
 
@@ -514,7 +544,7 @@ func (f *fakeStore) GetRun(ctx context.Context, designID string) (*store.Pipelin
 }
 
 func (f *fakeStore) ListRuns(ctx context.Context, project string) ([]store.PipelineRunStatus, error) {
-	return nil, nil
+	return append([]store.PipelineRunStatus(nil), f.runStatuses...), nil
 }
 
 func (f *fakeStore) UpdateRunPhase(ctx context.Context, designID, phase string) error {
@@ -522,7 +552,18 @@ func (f *fakeStore) UpdateRunPhase(ctx context.Context, designID, phase string) 
 	return nil
 }
 
-func (f *fakeStore) CancelRunningSessions(_ context.Context, _ string) (int, error) { return 0, nil }
+func (f *fakeStore) CancelRunningSessions(_ context.Context, designID string) (int, error) {
+	if count, ok := f.cancelledByID[designID]; ok {
+		return count, nil
+	}
+	count := 0
+	for _, session := range f.sessionsByDesign[designID] {
+		if session.Status == "running" {
+			count++
+		}
+	}
+	return count, nil
+}
 
 func (f *fakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
 	run, ok := f.runs[designID]
@@ -542,7 +583,17 @@ func (f *fakeStore) UpdateRunStatus(ctx context.Context, designID, status string
 }
 
 func (f *fakeStore) SetRunMode(ctx context.Context, designID, mode string) error { return nil }
-func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error { return nil }
+func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error {
+	f.resetCalls = append(f.resetCalls, struct {
+		DesignID string
+		Phase    string
+	}{DesignID: designID, Phase: phase})
+	if run, ok := f.runs[designID]; ok {
+		run.CurrentPhase = phase
+		run.Status = "active"
+	}
+	return nil
+}
 
 func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)
@@ -594,7 +645,7 @@ func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.Sessi
 }
 
 func (f *fakeStore) ListSessions(ctx context.Context, designID string) ([]store.SessionRecord, error) {
-	return nil, nil
+	return append([]store.SessionRecord(nil), f.sessionsByDesign[designID]...), nil
 }
 
 func (f *fakeStore) ListRunningSessions(ctx context.Context, project string) ([]store.SessionRecord, error) {

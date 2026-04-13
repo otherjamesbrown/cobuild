@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -170,6 +172,158 @@ func TestNextMentionsRedispatchAfterLifecycleRecovery(t *testing.T) {
 
 	if !strings.Contains(out, "pending redispatch after a stale-killed/orphaned session") {
 		t.Fatalf("next output missing redispatch guidance:\n%s", out)
+	}
+}
+
+func TestResetUsesResolvedStateToReopenAndCleanStaleSessions(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{ID: "cb-reset", Title: "Reset design", Type: "design", Status: "in_progress"})
+
+	fs := newFakeStore()
+	fs.runs["cb-reset"] = &store.PipelineRun{
+		ID:           "run-reset",
+		DesignID:     "cb-reset",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.sessionsByDesign["cb-reset"] = []store.SessionRecord{
+		{ID: "ps-1", DesignID: "cb-reset", Status: "running", StartedAt: time.Now().Add(-10 * time.Minute)},
+	}
+
+	restore := installTestGlobals(t, fc, fs, "")
+	defer restore()
+
+	prevTmuxOutput := tmuxOutput
+	prevTmuxRun := tmuxRun
+	tmuxOutput = func(_ context.Context, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "list-sessions":
+			return []byte("cobuild-test\n"), nil
+		case len(args) >= 3 && args[0] == "list-windows":
+			return []byte("@1\tcb-reset\n"), nil
+		default:
+			return nil, fmt.Errorf("unexpected tmux output args %v", args)
+		}
+	}
+	var killed []string
+	tmuxRun = func(_ context.Context, args ...string) error {
+		killed = append(killed, strings.Join(args, " "))
+		return nil
+	}
+	defer func() {
+		tmuxOutput = prevTmuxOutput
+		tmuxRun = prevTmuxRun
+	}()
+	pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+		Connector: fc,
+		Store:     fs,
+		Exec: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "tmux" {
+				return nil, fmt.Errorf("unexpected command %s", name)
+			}
+			switch {
+			case len(args) >= 2 && args[0] == "list-sessions":
+				return []byte("cobuild-test\n"), nil
+			case len(args) >= 3 && args[0] == "list-windows":
+				return []byte("@1\tcb-reset\n"), nil
+			default:
+				return nil, fmt.Errorf("unexpected tmux args %v", args)
+			}
+		},
+	})
+
+	out, err := runCommandWithOutputs(t, resetCmd, []string{"cb-reset", "--phase", "design"})
+	if err != nil {
+		t.Fatalf("reset failed: %v\n%s", err, out)
+	}
+
+	if got := fc.items["cb-reset"].Status; got != "open" {
+		t.Fatalf("work item status = %q, want open", got)
+	}
+	if len(fs.resetCalls) != 1 || fs.resetCalls[0].Phase != "design" {
+		t.Fatalf("reset calls = %+v, want one reset to design", fs.resetCalls)
+	}
+	if len(killed) != 1 || killed[0] != "kill-window -t @1" {
+		t.Fatalf("tmux kills = %+v, want kill-window -t @1", killed)
+	}
+	for _, want := range []string{
+		"Health: OK",
+		"Run: forced implement/active",
+		"Sessions: cancelled 1 running session record(s): ps-1",
+		"Tmux: killed cobuild-test:cb-reset",
+		"Work item: in_progress → open",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("reset output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestResetFallsBackToTmuxScanWhenResolverTmuxReadFails(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{ID: "cb-reset-fallback", Title: "Reset design", Type: "design", Status: "closed"})
+
+	fs := newFakeStore()
+	fs.runs["cb-reset-fallback"] = &store.PipelineRun{
+		ID:           "run-reset-fallback",
+		DesignID:     "cb-reset-fallback",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+
+	restore := installTestGlobals(t, fc, fs, "")
+	defer restore()
+
+	prevTmuxOutput := tmuxOutput
+	prevTmuxRun := tmuxRun
+	tmuxOutput = func(_ context.Context, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "list-sessions":
+			return []byte("cobuild-test\n"), nil
+		case len(args) >= 3 && args[0] == "list-windows":
+			return []byte("@2 cb-reset-fallback-extra\n"), nil
+		default:
+			return nil, fmt.Errorf("unexpected tmux output args %v", args)
+		}
+	}
+	var killed []string
+	tmuxRun = func(_ context.Context, args ...string) error {
+		killed = append(killed, strings.Join(args, " "))
+		return nil
+	}
+	defer func() {
+		tmuxOutput = prevTmuxOutput
+		tmuxRun = prevTmuxRun
+	}()
+
+	pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+		Connector: fc,
+		Store:     fs,
+		Exec: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "tmux" && len(args) > 0 && args[0] == "list-sessions" {
+				return nil, fmt.Errorf("tmux unavailable")
+			}
+			return []byte(""), nil
+		},
+	})
+
+	out, err := runCommandWithOutputs(t, resetCmd, []string{"cb-reset-fallback", "--phase", "design"})
+	if err != nil {
+		t.Fatalf("reset failed: %v\n%s", err, out)
+	}
+
+	if len(killed) != 1 || killed[0] != "kill-window -t @2" {
+		t.Fatalf("tmux kills = %+v, want kill-window -t @2", killed)
+	}
+	for _, want := range []string{
+		"? tmux:",
+		"Tmux: resolver tmux view unavailable; falling back to tmux scan",
+		"Tmux: killed cobuild-test:cb-reset-fallback-extra",
+		"Work item: closed → open",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("reset output missing %q:\n%s", want, out)
+		}
 	}
 }
 
