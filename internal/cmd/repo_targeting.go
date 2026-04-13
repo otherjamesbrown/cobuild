@@ -19,10 +19,18 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 		return fmt.Errorf("list child tasks for %s: %w", designID, err)
 	}
 
+	// Skip closed tasks — their work won't be dispatched, so they don't need
+	// repo metadata (cb-1666b2). Check remaining tasks; auto-fill repo
+	// metadata for missing cases when the task's project has exactly one
+	// registered repo (cb-4ef390 — decompose agents frequently forget this
+	// step even though the skill prompt instructs them to set it).
 	var invalid []string
 	for _, edge := range childEdges {
 		item, err := cn.Get(ctx, edge.ItemID)
 		if err != nil || item == nil || item.Type != "task" {
+			continue
+		}
+		if item.Status == "closed" {
 			continue
 		}
 
@@ -31,6 +39,17 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 
 		switch {
 		case repo == "":
+			// Auto-fill from project if unambiguous. For a single-repo
+			// project the answer is determined — no point failing the gate
+			// over a metadata call the agent should have made.
+			if autoRepo := inferSingleRepoForTask(item); autoRepo != "" {
+				if err := cn.SetMetadata(ctx, item.ID, "repo", autoRepo); err != nil {
+					invalid = append(invalid, fmt.Sprintf("%s (repo missing, auto-fill failed: %v)", item.ID, err))
+				} else {
+					fmt.Printf("  auto-set repo=%s on %s\n", autoRepo, item.ID)
+				}
+				continue
+			}
 			invalid = append(invalid, fmt.Sprintf("%s (missing `repo` metadata)", item.ID))
 		case repoMetadataLooksAmbiguous(repo):
 			invalid = append(invalid, fmt.Sprintf("%s (ambiguous `repo` metadata: %q)", item.ID, repo))
@@ -45,6 +64,29 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 		"decomposition-review failed: child tasks must target exactly one repo; split cross-repo work into separate tasks and set `repo` metadata explicitly:\n  %s",
 		strings.Join(invalid, "\n  "),
 	)
+}
+
+// inferSingleRepoForTask returns the registered repo for a task's project
+// when the project maps to exactly one repo. Returns "" if the project is
+// unknown, empty, or maps to 0 or 2+ repos (in which case the agent must
+// set repo metadata explicitly).
+func inferSingleRepoForTask(task *connector.WorkItem) string {
+	if task == nil {
+		return ""
+	}
+	project := strings.TrimSpace(task.Project)
+	if project == "" {
+		return ""
+	}
+	reg, err := config.LoadRepoRegistry()
+	if err != nil {
+		return ""
+	}
+	repos := reposForProject(reg, project)
+	if len(repos) == 1 {
+		return repos[0]
+	}
+	return ""
 }
 
 func dispatchRepoTargetError(ctx context.Context, cn connector.Connector, taskID string) error {
