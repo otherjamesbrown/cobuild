@@ -424,6 +424,28 @@ func hasActiveSession(ctx context.Context, designID string) bool {
 	return false
 }
 
+// registerTaskForDispatch adds a task to pipeline_tasks so the orchestrator's
+// implement loop can track it. Idempotent — silently skips on duplicate.
+func registerTaskForDispatch(ctx context.Context, designID, taskID string, wave int) {
+	if cbStore == nil {
+		return
+	}
+	run, err := cbStore.GetRun(ctx, designID)
+	if err != nil {
+		return
+	}
+	var wavePtr *int
+	if wave > 0 {
+		wavePtr = &wave
+	}
+	if err := cbStore.AddTask(ctx, run.ID, taskID, designID, wavePtr); err != nil {
+		// Likely a duplicate — ignore. The orchestrator will see it either way.
+		if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already") {
+			fmt.Fprintf(os.Stderr, "  [register] %s: %v\n", taskID, err)
+		}
+	}
+}
+
 // dispatchForPhase runs cobuild dispatch for a design/bug at its current phase.
 func dispatchForPhase(ctx context.Context, workItemID string) {
 	out, err := exec.CommandContext(ctx, "cobuild", "dispatch", workItemID).CombinedOutput()
@@ -510,6 +532,11 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 						maxConcurrent = pCfg.Dispatch.MaxConcurrent
 					}
 					if inProgress < maxConcurrent {
+						// Register the task in pipeline_tasks before dispatch
+						// so the orchestrator's implement loop can track it
+						// via ListTasksByDesign. Without this, tasks dispatched
+						// by the poller are invisible to orchestrate.
+						registerTaskForDispatch(ctx, designID, e.ItemID, wave)
 						dispatchForPhase(ctx, e.ItemID)
 						inProgress++
 					}
