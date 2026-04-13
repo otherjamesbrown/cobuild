@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -551,6 +552,16 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
 	cleanupTaskWorktree(ctx, taskID, wtPath)
 
+	// Auto-rebase before merge: if the PR is mergeable_state=behind/dirty
+	// (stale base, no real conflicts), rebase onto origin/main and force-push.
+	// Three outcomes (cb-c6091a):
+	//   1. mergeable already → proceed
+	//   2. stale base, clean rebase → rebase + force-push, retry merge
+	//   3. real content conflict → return error so caller stops; needs human
+	if err := tryAutoRebaseBeforeMerge(ctx, taskID, prURL); err != nil {
+		return err
+	}
+
 	fmt.Printf("Merging %s...\n", prURL)
 	mergeOut, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
 		"--squash", "--delete-branch")
@@ -1049,6 +1060,82 @@ func reviewSectionTitle(source string) string {
 	default:
 		return "Review"
 	}
+}
+
+// tryAutoRebaseBeforeMerge checks the PR's mergeable state and, if it's
+// behind/dirty due to stale base, rebases the branch onto origin/main and
+// force-pushes so the subsequent gh pr merge succeeds. Returns an error
+// (terminal — caller should stop) when there's a real content conflict that
+// requires human resolution. Returns nil for already-mergeable PRs (no-op)
+// and successfully-rebased PRs (ready to merge).
+func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
+	repo, prNumber, err := parsePRURL(prURL)
+	if err != nil {
+		return nil // can't parse — let merge fail naturally
+	}
+
+	// Check current mergeable state
+	out, err := reviewCommandOutput(ctx, "gh", "api",
+		fmt.Sprintf("repos/%s/pulls/%d", repo, prNumber),
+		"--jq", ".mergeable_state + \"|\" + .head.ref")
+	if err != nil {
+		return nil // gh api failed — proceed and let merge attempt fail with clearer error
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	state, branch := parts[0], parts[1]
+
+	// "clean" / "unstable" → mergeable, no rebase needed
+	// "behind" → stale base, rebase will help
+	// "dirty" → either stale base or real conflict; try rebase to find out
+	// "blocked" / "draft" / "" → not our problem
+	if state != "behind" && state != "dirty" {
+		return nil
+	}
+
+	repoRoot, err := config.RepoForProject(projectName)
+	if err != nil || repoRoot == "" {
+		return nil // can't find repo; let merge fail naturally
+	}
+
+	fmt.Printf("PR #%d is %s — attempting rebase onto origin/main...\n", prNumber, state)
+
+	// Fetch latest main
+	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "fetch", "origin", "main"); err != nil {
+		return fmt.Errorf("rebase failed at fetch: %s\n%s", err, strings.TrimSpace(string(out)))
+	}
+
+	// Use a temp worktree so we don't mess with the main repo's HEAD
+	tmpWT, err := os.MkdirTemp("", "cobuild-rebase-"+branch+"-")
+	if err != nil {
+		return fmt.Errorf("rebase failed creating temp worktree: %w", err)
+	}
+	defer os.RemoveAll(tmpWT)
+	defer reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", tmpWT)
+
+	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "add", tmpWT, branch); err != nil {
+		return fmt.Errorf("rebase failed creating worktree: %s\n%s", err, strings.TrimSpace(string(out)))
+	}
+
+	// Attempt rebase
+	rebaseOut, rebaseErr := reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "origin/main")
+	if rebaseErr != nil {
+		// Conflict — abort and return a terminal error
+		reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "--abort")
+		return fmt.Errorf(
+			"PR #%d has merge conflicts that need human resolution:\n%s\nResolve manually: gh pr checkout %d && git rebase origin/main",
+			prNumber, strings.TrimSpace(string(rebaseOut)), prNumber,
+		)
+	}
+
+	// Force-push the rebased branch
+	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "push", "--force-with-lease"); err != nil {
+		return fmt.Errorf("rebase succeeded but push failed: %s\n%s", err, strings.TrimSpace(string(out)))
+	}
+	fmt.Printf("  Rebased PR #%d onto origin/main.\n", prNumber)
+	return nil
 }
 
 // dispatchReviewAgent spawns a dispatched review agent for a needs-review task
