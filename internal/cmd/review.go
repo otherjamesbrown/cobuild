@@ -127,6 +127,23 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		pCfg := reviewConfigLoader()
 		session := getReviewSession(ctx, taskID)
 
+		// review.mode=dispatched (default): spawn a fresh agent to read the
+		// PR diff, design, and task scope and write a verdict. Same pattern
+		// as every other gate phase. Avoids the Anthropic API path entirely
+		// (cb-482378). The agent's verdict gets recorded by its runner script.
+		if pCfg.Review.EffectiveMode() == "dispatched" {
+			waiting, err := dispatchReviewAgent(ctx, cmd, taskID)
+			if err != nil {
+				return err
+			}
+			if waiting {
+				printNextStep(taskID, "waiting", "process-review")
+				return nil
+			}
+			// Fall-through (skip path returned false): continue with the
+			// existing builtin/external flow as a safety net.
+		}
+
 		var (
 			findings      []reviewFinding
 			reviewResult  *llmreview.ReviewResult
@@ -1032,6 +1049,51 @@ func reviewSectionTitle(source string) string {
 	default:
 		return "Review"
 	}
+}
+
+// dispatchReviewAgent spawns a dispatched review agent for a needs-review task
+// when review.mode=dispatched (cb-392091). The agent reads the PR diff + design
+// + task scope and writes a verdict to .cobuild/gate-verdict.json which the
+// runner script records via `cobuild review` after the agent exits.
+//
+// Returns (waiting=true, nil) when an agent was successfully dispatched (caller
+// should return waiting). Returns (waiting=false, nil) when dispatch was
+// skipped (e.g. an agent is already running for this task) — caller falls
+// through to the legacy builtin/external review path as a safety net.
+func dispatchReviewAgent(ctx context.Context, cmd *cobra.Command, taskID string) (bool, error) {
+	// If a review-phase agent is already running for this task, leave it.
+	// The dispatch guard would refuse anyway; check explicitly so we can
+	// surface a clear waiting message without printing a scary error.
+	if cbStore != nil {
+		sessions, err := cbStore.ListSessions(ctx, taskID)
+		if err == nil {
+			for _, s := range sessions {
+				if s.Status == "running" && s.Phase == "review" {
+					fmt.Printf("Review agent already running for %s (session %s).\n", taskID, s.ID)
+					return true, nil
+				}
+			}
+		}
+	}
+
+	// Dispatch — uses the task's current pipeline_run.phase, which should be
+	// "review" by now (cobuild complete advances implement→review on PR open).
+	// The dispatch.go writePhasePrompt review-case path uses the dispatch-review
+	// skill and tells the agent to write .cobuild/gate-verdict.json.
+	subCmd, _, err := rootCmd.Find([]string{"dispatch"})
+	if err != nil || subCmd == nil {
+		return false, fmt.Errorf("dispatch command not found")
+	}
+	subCmd.SetArgs([]string{taskID})
+	if err := subCmd.RunE(subCmd, []string{taskID}); err != nil {
+		// Dispatch refused (likely because of an existing session/window).
+		// Don't fail process-review; fall through to the legacy path so the
+		// task isn't permanently stuck.
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched review skipped: %v\n", err)
+		return false, nil
+	}
+	fmt.Printf("Dispatched review agent for %s. Will record verdict on agent exit.\n", taskID)
+	return true, nil
 }
 
 func init() {
