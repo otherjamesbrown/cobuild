@@ -91,6 +91,13 @@ failures.`,
 		}
 
 		err := newOrchestrateRunner(opts).Run(cmd.Context(), args[0])
+
+		// End-of-run maintenance: reconcile any stale state this run created
+		// or surfaced (zombie sessions, orphan tmux windows, inconsistent
+		// state). Always runs, even on failure, so dead-ends don't leave
+		// behind garbage. Best-effort — failures don't change the exit code.
+		runEndOfRunMaintenance(cmd.Context(), cmd.OutOrStdout())
+
 		if err == nil {
 			return nil
 		}
@@ -99,6 +106,30 @@ failures.`,
 		}
 		return commandErrorWithExitCode(err, 1)
 	},
+}
+
+// runEndOfRunMaintenance invokes the doctor's reconciliation pass after an
+// orchestrate run completes. It cleans up zombies/orphans this run may have
+// left behind, so the next dashboard view stays signal-rich (no accumulating
+// noise from prior runs).
+func runEndOfRunMaintenance(ctx context.Context, w io.Writer) {
+	if cbStore == nil || conn == nil {
+		return
+	}
+	fmt.Fprintln(w, "\n[maintenance] Reconciling stale state...")
+	subCmd, _, err := rootCmd.Find([]string{"doctor"})
+	if err != nil || subCmd == nil {
+		fmt.Fprintln(w, "[maintenance] doctor command not found; skipping")
+		return
+	}
+	subCmd.SetOut(w)
+	if err := subCmd.Flags().Set("fix", "true"); err != nil {
+		fmt.Fprintf(w, "[maintenance] failed to set --fix: %v\n", err)
+		return
+	}
+	if err := subCmd.RunE(subCmd, nil); err != nil {
+		fmt.Fprintf(w, "[maintenance] doctor --fix returned: %v\n", err)
+	}
 }
 
 func newBeforeStepPrompt(in io.Reader, out io.Writer) func(ctx context.Context, shardID, phase string) error {
