@@ -173,6 +173,59 @@ func TestNextMentionsRedispatchAfterLifecycleRecovery(t *testing.T) {
 	}
 }
 
+func TestDispatchRefusesZombieSessionConflictFromResolver(t *testing.T) {
+	taskID := "cb-task-zombie"
+	now := time.Now().UTC()
+
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{ID: taskID, Title: "Zombie task", Type: "task", Status: "in_progress"})
+
+	fs := newFakeStore()
+	fs.runs[taskID] = &store.PipelineRun{
+		ID:           "run-zombie",
+		DesignID:     taskID,
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.sessions = []store.SessionRecord{
+		{
+			ID:          "ps-zombie",
+			PipelineID:  "run-zombie",
+			DesignID:    taskID,
+			TaskID:      taskID,
+			Phase:       "implement",
+			Project:     "test-project",
+			Status:      "running",
+			StartedAt:   now.Add(-10 * time.Minute),
+			TmuxSession: stringPtr("cobuild-test-project"),
+			TmuxWindow:  stringPtr(taskID),
+		},
+	}
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	_ = dispatchCmd.Flags().Set("dry-run", "true")
+	t.Cleanup(func() {
+		_ = dispatchCmd.Flags().Set("dry-run", "false")
+	})
+
+	err := dispatchCmd.RunE(dispatchCmd, []string{taskID})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want resolver conflict refusal")
+	}
+	if !strings.Contains(err.Error(), "conflict in pipeline session") {
+		t.Fatalf("error = %v, want pipeline session source", err)
+	}
+	if !strings.Contains(err.Error(), "ps-zombie is still running") {
+		t.Fatalf("error = %v, want running session detail", err)
+	}
+}
+
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func stringPtr(value string) *string {
+	return &value
 }

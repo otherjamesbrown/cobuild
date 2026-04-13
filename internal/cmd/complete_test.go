@@ -12,6 +12,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -255,6 +256,10 @@ func TestCompleteRefusesOnGatePhase(t *testing.T) {
 }
 
 func installTestGlobals(t *testing.T, testConn connector.Connector, testStore store.Store, testProject string) func() {
+	return installTestGlobalsWithResolverExec(t, testConn, testStore, testProject, testResolverExec())
+}
+
+func installTestGlobalsWithResolverExec(t *testing.T, testConn connector.Connector, testStore store.Store, testProject string, execFn pipelinestate.CommandRunner) func() {
 	t.Helper()
 	prevConn := conn
 	prevStore := cbStore
@@ -266,11 +271,32 @@ func installTestGlobals(t *testing.T, testConn connector.Connector, testStore st
 	if cbClient == nil {
 		cbClient = &client.Client{}
 	}
+	pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
+		Connector: testConn,
+		Store:     testStore,
+		Exec:      execFn,
+	})
 	return func() {
 		conn = prevConn
 		cbStore = prevStore
 		projectName = prevProject
 		cbClient = prevClient
+		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{})
+	}
+}
+
+func testResolverExec() pipelinestate.CommandRunner {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, fmt.Errorf("unexpected command %q", name)
+		}
+		if len(args) >= 2 && args[0] == "list-sessions" {
+			return []byte(""), nil
+		}
+		if len(args) >= 3 && args[0] == "list-windows" {
+			return []byte(""), nil
+		}
+		return nil, fmt.Errorf("unexpected tmux args %v", args)
 	}
 }
 
@@ -481,6 +507,7 @@ type fakeStore struct {
 	gates           []store.PipelineGateInput
 	ended           map[string]store.SessionResult
 	runningSessions []store.SessionRecord
+	sessions        []store.SessionRecord
 	lastProject     string
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
@@ -542,7 +569,7 @@ func (f *fakeStore) UpdateRunStatus(ctx context.Context, designID, status string
 }
 
 func (f *fakeStore) SetRunMode(ctx context.Context, designID, mode string) error { return nil }
-func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error { return nil }
+func (f *fakeStore) ResetRun(ctx context.Context, designID, phase string) error  { return nil }
 
 func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInput) (*store.PipelineGateRecord, error) {
 	f.gates = append(f.gates, input)
@@ -594,7 +621,16 @@ func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.Sessi
 }
 
 func (f *fakeStore) ListSessions(ctx context.Context, designID string) ([]store.SessionRecord, error) {
-	return nil, nil
+	if designID == "" {
+		return append([]store.SessionRecord(nil), f.sessions...), nil
+	}
+	filtered := make([]store.SessionRecord, 0, len(f.sessions))
+	for _, session := range f.sessions {
+		if session.DesignID == designID {
+			filtered = append(filtered, session)
+		}
+	}
+	return filtered, nil
 }
 
 func (f *fakeStore) ListRunningSessions(ctx context.Context, project string) ([]store.SessionRecord, error) {
