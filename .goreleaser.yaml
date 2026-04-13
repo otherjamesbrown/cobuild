@@ -1,0 +1,69 @@
+version: 2
+
+project_name: cobuild
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cobuild
+    main: ./cmd/cobuild
+    binary: cobuild
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/otherjamesbrown/cobuild/internal/cmd.Version={{.Version}}
+
+archives:
+  - id: default
+    ids:
+      - cobuild
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+brews:
+  - repository:
+      owner: otherjamesbrown
+      name: cobuild
+      branch: main
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    homepage: https://github.com/otherjamesbrown/cobuild
+    description: Config-driven AI agent pipeline from design to deployed code
+    license: MIT
+    install: |
+      bin.install "cobuild"
+    test: |
+      system "#{bin}/cobuild", "version"
+
+release:
+  github:
+    owner: otherjamesbrown
+    name: cobuild
+  draft: false
+  prerelease: auto
