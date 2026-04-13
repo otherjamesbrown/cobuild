@@ -18,6 +18,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	cobuildruntime "github.com/otherjamesbrown/cobuild/internal/runtime"
 	_ "github.com/otherjamesbrown/cobuild/internal/runtime/claudecode" // register claude-code runtime
 	_ "github.com/otherjamesbrown/cobuild/internal/runtime/codex"      // register codex runtime
@@ -54,42 +55,22 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("task not found: %s", taskID)
 		}
 
-		if task.Status == "in_progress" {
-			// Allow re-dispatch if there's no LIVE tmux session (review feedback
-			// sets status back to in_progress for re-dispatch; autonomous
-			// orchestration re-dispatches across phases).
-			tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
-			windowOut, _ := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession,
-				"-F", "#{window_id} #{window_name} #{pane_dead}").Output()
-			liveWindow := false
-			deadWindowID := ""
-			for _, line := range strings.Split(string(windowOut), "\n") {
-				parts := strings.Fields(strings.TrimSpace(line))
-				if len(parts) < 2 {
-					continue
-				}
-				wid, name := parts[0], parts[1]
-				if name != taskID {
-					continue
-				}
-				dead := len(parts) >= 3 && parts[2] == "1"
-				if dead {
-					deadWindowID = wid
-				} else {
-					liveWindow = true
-				}
-			}
-			if liveWindow {
-				return fmt.Errorf("task already dispatched with active session (status: in_progress)")
-			}
-			if deadWindowID != "" {
-				// Kill the stale (dead-pane) window so the new dispatch can
-				// create a fresh window with the same name.
-				exec.CommandContext(ctx, "tmux", "kill-window", "-t", deadWindowID).Run()
-			}
+		resolvedState, err := pipelinestate.Resolve(ctx, taskID)
+		if err != nil && !errors.Is(err, pipelinestate.ErrNotFound) {
+			return fmt.Errorf("resolve pipeline state for %s: %w", taskID, err)
+		}
+		dispatchStatus := task.Status
+		if resolvedState != nil && resolvedState.WorkItem != nil && resolvedState.WorkItem.Status != "" {
+			dispatchStatus = resolvedState.WorkItem.Status
+		}
+		if conflict := dispatchConflictFromResolvedState(taskID, resolvedState); conflict != nil {
+			return fmt.Errorf("task not dispatchable: conflict in %s: %s", conflict.Source, conflict.Detail)
+		}
+
+		if dispatchStatus == "in_progress" {
 			fmt.Printf("Re-dispatching %s (status was in_progress, no live session).\n", taskID)
-		} else if task.Status != "open" && task.Status != "ready" {
-			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, or in_progress)", task.Status)
+		} else if dispatchStatus != "open" && dispatchStatus != "ready" {
+			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, or in_progress)", dispatchStatus)
 		}
 
 		// Check blocked-by edges
@@ -1084,6 +1065,70 @@ func resolveTaskProject(task *connector.WorkItem) string {
 		}
 	}
 	return projectName
+}
+
+type dispatchConflict struct {
+	Source string
+	Detail string
+}
+
+func dispatchConflictFromResolvedState(taskID string, state *pipelinestate.PipelineState) *dispatchConflict {
+	if state == nil {
+		return nil
+	}
+
+	for _, session := range state.Sessions {
+		if session.Status != "running" {
+			continue
+		}
+		if session.TaskID == "" || session.TaskID == taskID {
+			return &dispatchConflict{
+				Source: "pipeline session",
+				Detail: fmt.Sprintf("session %s is still running", session.ID),
+			}
+		}
+	}
+
+	for _, window := range state.Tmux {
+		if window.TargetID == taskID || window.WindowName == taskID {
+			return &dispatchConflict{
+				Source: "tmux",
+				Detail: fmt.Sprintf("window %s:%s is still present", window.SessionName, window.WindowName),
+			}
+		}
+	}
+
+	switch state.Health {
+	case pipelinestate.HealthInconsistent, pipelinestate.HealthZombie:
+		if len(state.Inconsistencies) > 0 {
+			return &dispatchConflict{
+				Source: classifyResolvedConflictSource(state.Inconsistencies[0]),
+				Detail: state.Inconsistencies[0],
+			}
+		}
+		return &dispatchConflict{
+			Source: "resolver",
+			Detail: fmt.Sprintf("pipeline health is %s", state.Health),
+		}
+	default:
+		return nil
+	}
+}
+
+func classifyResolvedConflictSource(detail string) string {
+	lower := strings.ToLower(detail)
+	switch {
+	case strings.Contains(lower, "tmux"):
+		return "tmux"
+	case strings.Contains(lower, "session"):
+		return "pipeline session"
+	case strings.Contains(lower, "work item"):
+		return "work item"
+	case strings.Contains(lower, "pipeline run"):
+		return "pipeline run"
+	default:
+		return "resolver"
+	}
 }
 
 // inferWorkflowFromType maps a work item to a workflow name.

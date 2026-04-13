@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/runtime"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
@@ -37,14 +39,16 @@ Steps:
 		// review, done) use gate verdicts, not the commit→PR→needs-review
 		// flow. Firing complete on a gate phase would skip phases.
 		if cbStore != nil {
-			if run, err := cbStore.GetRun(ctx, taskID); err == nil {
-				if runtime.IsGatePhase(run.CurrentPhase) {
-					if autoFlag {
-						fmt.Fprintf(os.Stderr, "Warning: --auto: skipping complete for %s (gate phase %q)\n", taskID, run.CurrentPhase)
-						return nil
-					}
-					return fmt.Errorf("cannot complete %s: pipeline is in gate phase %q (use gate commands instead)", taskID, run.CurrentPhase)
+			resolvedState, err := pipelinestate.Resolve(ctx, taskID)
+			if err != nil && !errors.Is(err, pipelinestate.ErrNotFound) {
+				return fmt.Errorf("resolve pipeline state for %s: %w", taskID, err)
+			}
+			if resolvedState != nil && resolvedState.Run != nil && runtime.IsGatePhase(resolvedState.Run.Phase) {
+				if autoFlag {
+					fmt.Fprintf(os.Stderr, "Warning: --auto: skipping complete for %s (gate phase %q)\n", taskID, resolvedState.Run.Phase)
+					return nil
 				}
+				return fmt.Errorf("cannot complete %s: pipeline is in gate phase %q (use gate commands instead)", taskID, resolvedState.Run.Phase)
 			}
 			// If no run found, proceed — may be a direct dispatch without pipeline tracking
 		}
