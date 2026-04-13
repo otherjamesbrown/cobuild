@@ -44,11 +44,27 @@ func Create(ctx context.Context, taskID, repoRoot, project string) (string, erro
 		return "", fmt.Errorf("cleanup stale worktree state: %w", err)
 	}
 
-	// Create branch from main
-	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "branch", branch, "main").CombinedOutput()
+	// Fetch latest origin/main so the worktree is branched from current
+	// remote state, not from a stale local main (cb-4d08ca). Without this,
+	// when wave N PRs merge to origin, wave N+1 worktrees branch from a
+	// local main that doesn't have the merged work — agents then write
+	// duplicates of files that already exist on origin.
+	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", "origin", "main").CombinedOutput(); err != nil {
+		// Non-fatal: log but proceed. If fetch fails (offline, no remote),
+		// fall back to local main rather than blocking dispatch.
+		fmt.Fprintf(os.Stderr, "Warning: fetch origin main failed (using local main): %s\n", strings.TrimSpace(string(out)))
+	}
+
+	// Create branch from origin/main (with fallback to local main if origin/main
+	// doesn't exist — happens in test repos with no remote)
+	base := "origin/main"
+	if err := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--verify", "origin/main").Run(); err != nil {
+		base = "main"
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "branch", branch, base).CombinedOutput()
 	if err != nil {
 		if !strings.Contains(string(out), "already exists") {
-			return "", fmt.Errorf("create branch %s in %s: %s\n%s", branch, repoRoot, err, string(out))
+			return "", fmt.Errorf("create branch %s in %s from %s: %s\n%s", branch, repoRoot, base, err, string(out))
 		}
 	}
 
