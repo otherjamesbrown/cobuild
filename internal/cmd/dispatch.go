@@ -222,6 +222,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
+		var mergedTasks []MergedTask
+		if currentPhase == "decompose" {
+			mergedTasks, err = collectMergedTasks(ctx, conn, task.ID, repoRootForWT)
+			if err != nil {
+				return fmt.Errorf("load merged work for decompose prompt: %w", err)
+			}
+		}
+
 		// Belt-and-braces: if the bug body already contains investigation content,
 		// downgrade from investigate to fix regardless of phase inference.
 		// Also persist the override to pipeline_runs so `cobuild status` reflects
@@ -249,6 +257,10 @@ config "dispatch.default_runtime" > "claude-code".`,
 			if designContext != "" {
 				promptBuilder.WriteString(designContext)
 				promptBuilder.WriteString("\n\n")
+			}
+			if currentPhase == "decompose" {
+				promptBuilder.WriteString(renderMergedWorkSection(mergedTasks))
+				promptBuilder.WriteString("\n")
 			}
 		} else {
 			promptBuilder.WriteString("## Task Content\n\n")
@@ -797,6 +809,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   `cxp shard metadata set <task-id> completion_mode direct`\n")
 		b.WriteString("9. Link dependencies between tasks:\n")
 		b.WriteString("   `cobuild wi links add <task-id> <blocker-id> blocked-by`\n")
+		b.WriteString("   Do NOT re-create tasks listed in the `Work already merged` section below. If new work depends on one of those merged tasks, create only the new task and add a `blocked-by` edge to the merged task instead.\n")
 		b.WriteString("10. **Write your verdict to `.cobuild/gate-verdict.json`** with this exact format:\n")
 		b.WriteString("   ```json\n")
 		b.WriteString(fmt.Sprintf("   {\"gate\": \"decomposition-review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<summary with spec-to-project-repo map and any tasks tagged `completion_mode: direct`>\"}\n", workItemID))
@@ -887,6 +900,26 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("- If a reviewer (Gemini, human) leaves a critical comment on your PR, you MUST address it before the PR can merge\n")
 		b.WriteString("- Check review comments: `gh pr view <pr-number> --comments`\n")
 	}
+}
+
+func renderMergedWorkSection(mergedTasks []MergedTask) string {
+	var b strings.Builder
+	b.WriteString("## Work already merged\n\n")
+	if len(mergedTasks) == 0 {
+		b.WriteString("None.\n\n")
+	} else {
+		for _, task := range mergedTasks {
+			files := "none"
+			if len(task.FilesChanged) > 0 {
+				files = strings.Join(task.FilesChanged, ", ")
+			}
+			b.WriteString(fmt.Sprintf("- `%s` — commit `%s` — files: %s\n", task.TaskID, task.CommitSHA, files))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Do NOT re-create these tasks. If new work depends on them, use `blocked-by` edges to link the new task to the merged task.\n")
+	b.WriteString("Command pattern: `cobuild wi links add <new-task> <merged-task> blocked-by`\n")
+	return b.String()
 }
 
 type dispatchRepoTarget struct {

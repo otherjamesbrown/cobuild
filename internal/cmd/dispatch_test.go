@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -29,6 +30,59 @@ func TestWritePhasePromptDecomposeMentionsCompletionModeDirect(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decompose prompt missing %q\nprompt:\n%s", want, got)
+		}
+	}
+}
+
+func TestWritePhasePromptDecomposeMentionsMergedWorkDedup(t *testing.T) {
+	var b strings.Builder
+	writePhasePrompt(&b, "decompose", "cb-parent", "cb-parent", nil)
+	got := b.String()
+
+	for _, want := range []string{
+		"Do NOT re-create tasks listed in the `Work already merged` section below.",
+		"add a `blocked-by` edge to the merged task instead",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decompose prompt missing %q\nprompt:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderMergedWorkSectionEmpty(t *testing.T) {
+	got := renderMergedWorkSection(nil)
+
+	for _, want := range []string{
+		"## Work already merged",
+		"None.",
+		"Do NOT re-create these tasks.",
+		"`cobuild wi links add <new-task> <merged-task> blocked-by`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("merged-work section missing %q\nsection:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderMergedWorkSectionPopulated(t *testing.T) {
+	got := renderMergedWorkSection([]MergedTask{
+		{
+			TaskID:       "cb-1dbec5",
+			CommitSHA:    "abc123def456",
+			MergedAt:     time.Date(2026, time.April, 13, 10, 0, 0, 0, time.UTC),
+			FilesChanged: []string{"internal/cmd/decompose_context.go", "internal/cmd/decompose_context_test.go"},
+		},
+	})
+
+	for _, want := range []string{
+		"## Work already merged",
+		"`cb-1dbec5`",
+		"`abc123def456`",
+		"internal/cmd/decompose_context.go, internal/cmd/decompose_context_test.go",
+		"Do NOT re-create these tasks.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("merged-work section missing %q\nsection:\n%s", want, got)
 		}
 	}
 }
