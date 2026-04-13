@@ -167,7 +167,9 @@ func ValidateDecompositionTaskRepos(ctx context.Context, cn connector.Connector,
 		if err != nil {
 			return fmt.Errorf("load child task %s: %w", edge.ItemID, err)
 		}
-		if task == nil || task.Type != "task" {
+		// Skip closed tasks — they won't be dispatched, so they don't need
+		// repo metadata. Also skip non-task children (review shards, etc).
+		if task == nil || task.Type != "task" || task.Status == "closed" {
 			continue
 		}
 
