@@ -208,6 +208,12 @@ func endTaskSession(ctx context.Context, taskID, worktreePath string, result sto
 	}
 	sessionID, _ := conn.GetMetadata(ctx, taskID, "session_id")
 	if sessionID == "" {
+		rec, err := cbStore.GetSession(ctx, taskID)
+		if err == nil && rec != nil && rec.Status == "running" {
+			sessionID = rec.ID
+		}
+	}
+	if sessionID == "" {
 		return
 	}
 	if worktreePath != "" {

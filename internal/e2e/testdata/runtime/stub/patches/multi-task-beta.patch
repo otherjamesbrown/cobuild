@@ -1,0 +1,7 @@
+diff --git a/beta-multi.txt b/beta-multi.txt
+new file mode 100644
+index 0000000..16b0ae7
+--- /dev/null
++++ b/beta-multi.txt
+@@ -0,0 +1 @@
++beta multi-project artifact

@@ -17,6 +17,8 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
+const postgresMigrateLockKey int64 = 0x434f4255
+
 // NewPostgresStore creates a store backed by a Postgres connection pool.
 func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -37,6 +39,16 @@ func (s *PostgresStore) Close() error {
 
 // Migrate creates the CoBuild tables if they don't exist.
 func (s *PostgresStore) Migrate(ctx context.Context) error {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migrate connection: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, postgresMigrateLockKey); err != nil {
+		return fmt.Errorf("acquire migrate advisory lock: %w", err)
+	}
+	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, postgresMigrateLockKey)
+
 	ddl := `
 	CREATE TABLE IF NOT EXISTS pipeline_runs (
 		id TEXT PRIMARY KEY,
@@ -89,7 +101,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 	ALTER TABLE IF EXISTS pipeline_runs
 		ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
 	`
-	_, err := s.pool.Exec(ctx, ddl)
+	_, err = conn.Exec(ctx, ddl)
 	return err
 }
 

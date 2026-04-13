@@ -1,0 +1,14 @@
+{
+  "phase": "implement",
+  "task_id": "cb-multi-task-beta",
+  "implement": {
+    "patch_file": "../patches/multi-task-beta.patch",
+    "commit_message": "[cb-multi-task-beta] add beta multi-project artifact"
+  },
+  "session": {
+    "input_tokens": 17,
+    "output_tokens": 7,
+    "turns": 1,
+    "last_message": "Applied the beta multi-project patch."
+  }
+}

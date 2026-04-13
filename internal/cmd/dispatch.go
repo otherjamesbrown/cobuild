@@ -88,7 +88,8 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
 		}
 
-		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, resolveTaskProject(task), cmd.ErrOrStderr())
+		taskProject := resolveTaskProject(task)
+		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, taskProject, cmd.ErrOrStderr())
 		if err != nil {
 			return err
 		}
@@ -109,11 +110,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 		if worktreePath == "" {
 			if dryRun {
 				fmt.Println("[dry-run] Would create worktree for " + taskID + " in " + repoRootForWT)
-				worktreePath = fmt.Sprintf("~/worktrees/%s/%s", projectName, taskID)
+				worktreePath = fmt.Sprintf("~/worktrees/%s/%s", taskProject, taskID)
 			} else {
 				fmt.Printf("Creating worktree for %s...\n", taskID)
 				var wtErr error
-				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, projectName)
+				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, taskProject)
 				if wtErr != nil {
 					return fmt.Errorf("failed to create worktree: %v", wtErr)
 				}
@@ -150,7 +151,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptBuilder.WriteString(fmt.Sprintf("**Task ID:** %s\n", task.ID))
 		promptBuilder.WriteString(fmt.Sprintf("**Agent:** %s\n\n", agent))
 
-		repoRoot, _ := config.RepoForProject(projectName)
+		repoRoot, _ := config.RepoForProject(taskProject)
 		pCfg, _ := config.LoadConfig(repoRoot)
 		if pCfg == nil {
 			pCfg, _ = config.LoadConfig(worktreePath)
@@ -195,7 +196,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				// No pipeline run — create one on the fly
 				workflow := inferWorkflowFromType(task)
 				firstPhase := firstPhaseOf(workflow, pCfg)
-				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, projectName, firstPhase, "manual")
+				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, taskProject, firstPhase, "manual")
 				if createErr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to auto-create pipeline run: %v\n", createErr)
 				} else {
@@ -367,7 +368,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := pCfg.ResolveTmuxSession(resolveTaskProject(task))
+		tmuxSession := pCfg.ResolveTmuxSession(taskProject)
 
 		// Ensure tmux session exists, create if not
 		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
@@ -381,10 +382,46 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// "gpt-5.4" without any phase-level override.
 		resolvedModel := pCfg.ModelForPhaseRuntime(currentPhase, "", rtName)
 
-		// Get session ID if it was stored in metadata (used for event tracking).
+		pipelineID := ""
+		designID := ""
+		parentEdges, _ = conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
+		if len(parentEdges) > 0 {
+			designID = parentEdges[0].ItemID
+			if cbStore != nil {
+				if run, err := cbStore.GetRun(ctx, designID); err == nil {
+					pipelineID = run.ID
+				}
+			}
+		}
+		if designID == "" {
+			designID = taskID // bug dispatched directly
+		}
+
+		// Create the session record before spawning tmux so fast runtimes can
+		// deterministically close the correct session during completion.
 		sessionID := ""
-		if conn != nil {
-			sessionID, _ = conn.GetMetadata(ctx, taskID, "session_id")
+		if !dryRun && cbStore != nil {
+			session, err := cbStore.CreateSession(ctx, store.SessionInput{
+				PipelineID:       pipelineID,
+				DesignID:         designID,
+				TaskID:           taskID,
+				Phase:            currentPhase,
+				Project:          taskProject,
+				Runtime:          rt.Name(),
+				Model:            resolvedModel,
+				PromptChars:      len(prompt),
+				Prompt:           prompt,
+				AssembledContext: assembledContext,
+				WorktreePath:     worktreePath,
+				TmuxSession:      tmuxSession,
+				TmuxWindow:       taskID,
+			})
+			if err != nil {
+				fmt.Printf("Warning: failed to record session: %v\n", err)
+			} else {
+				sessionID = session.ID
+				_ = conn.SetMetadata(ctx, taskID, "session_id", session.ID)
+			}
 		}
 
 		// Build the tmux runner script via the runtime. Each runtime owns the
@@ -448,6 +485,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 				_ = conn.UpdateStatus(ctx, taskID, task.Status)
 			}
 			syncPipelineTaskStatus(ctx, taskID, task.Status)
+			if cbStore != nil && sessionID != "" {
+				_ = cbStore.EndSession(ctx, sessionID, store.SessionResult{
+					ExitCode:       -1,
+					Status:         "cancelled",
+					Error:          fmt.Sprintf("dispatch spawn failed: %v", err),
+					CompletionNote: "Dispatch failed before tmux window started",
+				})
+			}
 			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
 		}
 
@@ -457,45 +502,6 @@ config "dispatch.default_runtime" > "claude-code".`,
 		logFile := filepath.Join(logDir, "session.log")
 		_ = tmuxRun(ctx, pCfg, "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),
 			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''")))
-
-		// Record session in store for analytics
-		if cbStore != nil {
-			pipelineID := ""
-			designID := ""
-			// Find parent design for this task
-			parentEdges, _ := conn.GetEdges(ctx, taskID, "outgoing", []string{"child-of"})
-			if len(parentEdges) > 0 {
-				designID = parentEdges[0].ItemID
-				if run, err := cbStore.GetRun(ctx, designID); err == nil {
-					pipelineID = run.ID
-				}
-			}
-			if designID == "" {
-				designID = taskID // bug dispatched directly
-			}
-
-			session, err := cbStore.CreateSession(ctx, store.SessionInput{
-				PipelineID:       pipelineID,
-				DesignID:         designID,
-				TaskID:           taskID,
-				Phase:            currentPhase,
-				Project:          projectName,
-				Runtime:          rt.Name(),
-				Model:            resolvedModel,
-				PromptChars:      len(prompt),
-				Prompt:           prompt,
-				AssembledContext: assembledContext,
-				WorktreePath:     worktreePath,
-				TmuxSession:      tmuxSession,
-				TmuxWindow:       taskID,
-			})
-			if err != nil {
-				fmt.Printf("Warning: failed to record session: %v\n", err)
-			} else {
-				// Store session ID in work item metadata so complete can find it
-				conn.SetMetadata(ctx, taskID, "session_id", session.ID)
-			}
-		}
 
 		// Record dispatch metadata
 		dispatchInfo := map[string]any{
