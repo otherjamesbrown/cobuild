@@ -183,6 +183,9 @@ func closeTaskAndAdvance(ctx context.Context, taskID string) {
 		return
 	}
 	for _, s := range siblings {
+		if s.Type != "" && s.Type != "task" {
+			continue
+		}
 		if s.Status != "closed" {
 			return
 		}

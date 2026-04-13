@@ -1,0 +1,38 @@
+{
+  "phase": "decompose",
+  "task_id": "cb-happy-path",
+  "create_items": [
+    {
+      "id": "cb-happy-task-a",
+      "title": "Implement alpha file",
+      "type": "task",
+      "parent_id": "cb-happy-path",
+      "content": "Create the alpha happy-path output.",
+      "metadata": {
+        "repo": "happy-e2e"
+      }
+    },
+    {
+      "id": "cb-happy-task-b",
+      "title": "Implement beta file",
+      "type": "task",
+      "parent_id": "cb-happy-path",
+      "content": "Create the beta happy-path output.",
+      "metadata": {
+        "repo": "happy-e2e"
+      }
+    }
+  ],
+  "gate_verdict": {
+    "gate": "decomposition-review",
+    "shard_id": "cb-happy-path",
+    "verdict": "pass",
+    "body": "Split into two implementation tasks for the happy-path e2e flow."
+  },
+  "session": {
+    "input_tokens": 18,
+    "output_tokens": 9,
+    "turns": 1,
+    "last_message": "Created two implementation tasks and recorded the decomposition gate."
+  }
+}

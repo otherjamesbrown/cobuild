@@ -502,6 +502,9 @@ func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
 
 	allDone := true
 	for _, s := range siblings {
+		if s.Type != "" && s.Type != "task" {
+			continue
+		}
 		if s.Status != "closed" {
 			allDone = false
 			break

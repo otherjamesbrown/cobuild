@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/otherjamesbrown/cobuild/internal/client"
@@ -37,6 +38,10 @@ type Harness struct {
 	StubFixturesDir string
 	RootDir         string
 	HomeDir         string
+	ToolBinDir      string
+	BinaryPath      string
+	GitHubStateDir  string
+	ConnectorState  string
 	Schema          string
 	BaseDSN         string
 	DSN             string
@@ -124,6 +129,13 @@ func Setup(t testing.TB, opts Options) *Harness {
 	cfg.Storage.Backend = "postgres"
 	cfg.Storage.DSN = dsn
 	cfg.GitHub.OwnerRepo = "acme/" + project
+	cfg.Connectors.WorkItems.Type = "fake"
+	cfg.Connectors.WorkItems.Config = map[string]string{
+		"state_file": filepath.Join(rootDir, "fake-connector-state.json"),
+		"id_prefix":  prefix + "fake",
+	}
+	cfg.Review.Provider = "external"
+	cfg.Review.Strategy = "external"
 
 	h := &Harness{
 		Project:         project,
@@ -132,6 +144,9 @@ func Setup(t testing.TB, opts Options) *Harness {
 		StubFixturesDir: fixturesDir,
 		RootDir:         rootDir,
 		HomeDir:         homeDir,
+		ToolBinDir:      filepath.Join(rootDir, "bin"),
+		GitHubStateDir:  filepath.Join(rootDir, "fake-gh"),
+		ConnectorState:  filepath.Join(rootDir, "fake-connector-state.json"),
 		Schema:          schema,
 		BaseDSN:         baseDSN,
 		DSN:             dsn,
@@ -142,8 +157,17 @@ func Setup(t testing.TB, opts Options) *Harness {
 		Store:           st,
 		pool:            pool,
 	}
+	if err := h.prepareTooling(); err != nil {
+		t.Fatalf("prepare tooling: %v", err)
+	}
+	if err := h.syncTmuxEnvironment(ctx); err != nil {
+		t.Fatalf("sync tmux environment: %v", err)
+	}
 	if err := h.writeHarnessConfig(); err != nil {
 		t.Fatalf("write harness config: %v", err)
+	}
+	if err := h.commitHarnessConfig(ctx); err != nil {
+		t.Fatalf("commit harness config: %v", err)
 	}
 
 	t.Cleanup(func() {
@@ -187,6 +211,8 @@ func (h *Harness) Env() []string {
 	env = setEnv(env, "HOME", h.HomeDir)
 	env = setEnv(env, "COBUILD_STUB_FIXTURES_DIR", h.StubFixturesDir)
 	env = setEnv(env, "COBUILD_TEST_POSTGRES_DSN", h.BaseDSN)
+	env = setEnv(env, "COBUILD_FAKE_GH_DIR", h.GitHubStateDir)
+	env = setEnv(env, "PATH", h.ToolBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return env
 }
 
@@ -233,7 +259,11 @@ func (h *Harness) writeHarnessConfig() error {
 			h.Project: {Path: h.Repo.Root, DefaultBranch: h.Repo.DefaultBranch},
 		},
 	}
-	if err := config.SaveRepoRegistry(reg); err != nil {
+	regData, err := yaml.Marshal(reg)
+	if err != nil {
+		return fmt.Errorf("marshal repo registry: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(h.HomeDir, ".cobuild", "repos.yaml"), regData, 0o644); err != nil {
 		return fmt.Errorf("save repo registry: %w", err)
 	}
 
@@ -247,6 +277,19 @@ func (h *Harness) writeHarnessConfig() error {
 	}
 	if err := os.WriteFile(filepath.Join(h.HomeDir, ".cobuild", "config.yaml"), clientData, 0o644); err != nil {
 		return fmt.Errorf("write client config: %w", err)
+	}
+	return nil
+}
+
+func (h *Harness) commitHarnessConfig(ctx context.Context) error {
+	if err := runGit(ctx, h.Repo.Root, "add", ".cobuild/pipeline.yaml", ".cobuild.yaml"); err != nil {
+		return fmt.Errorf("stage harness config: %w", err)
+	}
+	if err := runGit(ctx, h.Repo.Root, "commit", "-m", "add e2e harness config"); err != nil {
+		return fmt.Errorf("commit harness config: %w", err)
+	}
+	if err := runGit(ctx, h.Repo.Root, "push", "origin", h.Repo.DefaultBranch); err != nil {
+		return fmt.Errorf("push harness config: %w", err)
 	}
 	return nil
 }
@@ -285,7 +328,7 @@ var harnessCounter uint64
 
 func uniqueSchemaName(t testing.TB) string {
 	t.Helper()
-	return fmt.Sprintf("%s_%04d", pgtest.SchemaName(t), atomic.AddUint64(&harnessCounter, 1))
+	return fmt.Sprintf("%s_%d_%04d", pgtest.SchemaName(t), time.Now().UTC().UnixNano(), atomic.AddUint64(&harnessCounter, 1))
 }
 
 func setEnv(env []string, key, value string) []string {
