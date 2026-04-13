@@ -21,11 +21,14 @@ var (
 	pollerNow  = time.Now
 	pollerStat = os.Stat
 	pollerExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" {
+			args = tmuxCommandArgs(pipelineConfigLoader(), args...)
+		}
 		return exec.CommandContext(ctx, name, args...).CombinedOutput()
 	}
 	pollerKillWindow = func(ctx context.Context, sessionName, windowName string) error {
 		target := fmt.Sprintf("%s:%s", sessionName, windowName)
-		return exec.CommandContext(ctx, "tmux", "kill-window", "-t", target).Run()
+		return tmuxRun(ctx, pipelineConfigLoader(), "kill-window", "-t", target)
 	}
 )
 
@@ -479,10 +482,11 @@ func hasActiveSession(ctx context.Context, designID string) bool {
 			runProject = run.Project
 		}
 	}
-	tmuxSession := fmt.Sprintf("cobuild-%s", runProject)
+	pCfg := pipelineConfigLoader()
+	tmuxSession := pCfg.ResolveTmuxSession(runProject)
 
 	// Check for design-level window
-	out, err := exec.CommandContext(ctx, "tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}").CombinedOutput()
+	out, err := tmuxCombinedOutput(ctx, pCfg, "list-windows", "-t", tmuxSession, "-F", "#{window_name}")
 	if err != nil {
 		return false
 	}

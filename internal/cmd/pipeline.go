@@ -1241,7 +1241,14 @@ func killDesignOrchestrateProcesses(ctx context.Context, designID string) (int, 
 }
 
 func killDesignTmuxWindows(ctx context.Context, designID string) (int, error) {
-	windows, err := livestate.CollectTmux(ctx, pipelineCommandCombinedOutput)
+	pCfg := pipelineConfigLoader()
+	tmuxExec := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" {
+			args = tmuxCommandArgs(pCfg, args...)
+		}
+		return pipelineCommandCombinedOutput(ctx, name, args...)
+	}
+	windows, err := livestate.CollectTmux(ctx, tmuxExec)
 	if err != nil {
 		return 0, err
 	}
@@ -1251,7 +1258,7 @@ func killDesignTmuxWindows(ctx context.Context, designID string) (int, error) {
 			continue
 		}
 		if _, err := pipelinestate.KillOrphanTmuxWindow(ctx, pipelinestate.RecoveryDependencies{
-			Exec: pipelineCommandCombinedOutput,
+			Exec: tmuxExec,
 		}, pipelinestate.TmuxWindow{
 			SessionName: window.SessionName,
 			WindowID:    window.WindowID,

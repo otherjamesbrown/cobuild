@@ -153,6 +153,7 @@ CONFIGURATION:
 		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
 			Connector: conn,
 			Store:     cbStore,
+			Exec:      tmuxCommandRunner(pCfg),
 		})
 
 		return nil

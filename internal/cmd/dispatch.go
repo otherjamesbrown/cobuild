@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -368,14 +367,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptFile.Close()
 		promptPath := promptFile.Name()
 
-		tmuxSession := fmt.Sprintf("cobuild-%s", resolveTaskProject(task))
-		if pCfg.Dispatch.TmuxSession != "" {
-			tmuxSession = pCfg.Dispatch.TmuxSession
-		}
+		tmuxSession := pCfg.ResolveTmuxSession(resolveTaskProject(task))
 
 		// Ensure tmux session exists, create if not
-		if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", tmuxSession).Run(); err != nil {
-			if createErr := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", tmuxSession).Run(); createErr != nil {
+		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
+			if createErr := tmuxRun(ctx, pCfg, "new-session", "-d", "-s", tmuxSession); createErr != nil {
 				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
 			}
 		}
@@ -446,7 +442,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		syncPipelineTaskStatus(ctx, taskID, "in_progress")
 
 		// Spawn tmux
-		tmuxOut, err := exec.CommandContext(ctx, "tmux", tmuxArgs...).CombinedOutput()
+		tmuxOut, err := tmuxCombinedOutput(ctx, pCfg, tmuxArgs...)
 		if err != nil {
 			if conn != nil {
 				_ = conn.UpdateStatus(ctx, taskID, task.Status)
@@ -459,8 +455,8 @@ config "dispatch.default_runtime" > "claude-code".`,
 		logDir := filepath.Join(worktreePath, ".cobuild")
 		os.MkdirAll(logDir, 0755)
 		logFile := filepath.Join(logDir, "session.log")
-		exec.CommandContext(ctx, "tmux", "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),
-			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''"))).Run()
+		_ = tmuxRun(ctx, pCfg, "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, taskID),
+			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''")))
 
 		// Record session in store for analytics
 		if cbStore != nil {

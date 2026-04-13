@@ -126,6 +126,7 @@ type AgentCfg struct {
 type DispatchCfg struct {
 	MaxConcurrent  int    `yaml:"max_concurrent,omitempty"`
 	TmuxSession    string `yaml:"tmux_session,omitempty"`
+	TmuxSocket     string `yaml:"tmux_socket,omitempty"`
 	DefaultRuntime string `yaml:"default_runtime,omitempty"`
 	// WaveStrategy controls whether dispatch proceeds one dependency wave at a time
 	// ("serial") or dispatches all currently-eligible work at once ("parallel").
@@ -249,6 +250,28 @@ func (c *Config) ResolveWaveStrategy() string {
 	return normalizeWaveStrategy(c.Dispatch.WaveStrategy)
 }
 
+// ResolveTmuxSession returns the configured tmux session name or the default
+// per-project session when dispatch.tmux_session is unset.
+func (c *Config) ResolveTmuxSession(project string) string {
+	if c != nil && strings.TrimSpace(c.Dispatch.TmuxSession) != "" {
+		return strings.TrimSpace(c.Dispatch.TmuxSession)
+	}
+	return fmt.Sprintf("cobuild-%s", project)
+}
+
+// TmuxArgs prepends the configured tmux socket, when set, to the provided tmux
+// arguments so every tmux command hits the same isolated server.
+func (c *Config) TmuxArgs(args ...string) []string {
+	if c == nil || strings.TrimSpace(c.Dispatch.TmuxSocket) == "" {
+		return append([]string(nil), args...)
+	}
+	socket := strings.TrimSpace(c.Dispatch.TmuxSocket)
+	out := make([]string, 0, len(args)+2)
+	out = append(out, "-S", socket)
+	out = append(out, args...)
+	return out
+}
+
 // GitHubCfg holds GitHub repository information.
 type GitHubCfg struct {
 	OwnerRepo string `yaml:"owner_repo"`
@@ -344,6 +367,7 @@ func DefaultConfig() *Config {
 		Dispatch: DispatchCfg{
 			MaxConcurrent:  3,
 			TmuxSession:    "", // empty = auto: cobuild-<project>
+			TmuxSocket:     "",
 			WaveStrategy:   WaveStrategySerial,
 			DefaultRuntime: "claude-code",
 			Runtimes: map[string]RuntimeCfg{

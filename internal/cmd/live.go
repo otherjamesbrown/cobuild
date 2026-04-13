@@ -43,6 +43,7 @@ is one-shot — wrap with watch(1) for continuous updates.`,
 		}
 
 		collector := livestate.Collector{
+			Exec:     tmuxCommandRunner(pipelineConfigLoader()),
 			Store:    cbStore,
 			Sessions: cbStore,
 			Repos:    repos,

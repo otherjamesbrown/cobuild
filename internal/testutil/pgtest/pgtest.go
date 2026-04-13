@@ -3,8 +3,10 @@ package pgtest
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -23,20 +25,31 @@ type configFile struct {
 }
 
 type Harness struct {
-	DSN   string
-	Pool  *pgxpool.Pool
-	Store *store.PostgresStore
+	BaseDSN string
+	DSN     string
+	Schema  string
+	Pool    *pgxpool.Pool
+	Store   *store.PostgresStore
 }
 
 func New(tb testing.TB, ctx context.Context) *Harness {
 	tb.Helper()
 
-	dsn := DSN(tb)
+	baseDSN := DSN(tb)
+	schema := SchemaName(tb)
+	dsn := DSNWithSchema(tb, baseDSN, schema)
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		tb.Fatalf("pgxpool.New() error = %v", err)
 	}
-	tb.Cleanup(pool.Close)
+	tb.Cleanup(func() {
+		pool.Close()
+		dropSchema(tb, ctx, baseDSN, schema)
+	})
+
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+schema); err != nil {
+		tb.Fatalf("create schema %s: %v", schema, err)
+	}
 
 	s, err := store.NewPostgresStore(ctx, dsn)
 	if err != nil {
@@ -51,10 +64,41 @@ func New(tb testing.TB, ctx context.Context) *Harness {
 	}
 
 	return &Harness{
-		DSN:   dsn,
-		Pool:  pool,
-		Store: s,
+		BaseDSN: baseDSN,
+		DSN:     dsn,
+		Schema:  schema,
+		Pool:    pool,
+		Store:   s,
 	}
+}
+
+func SchemaName(tb testing.TB) string {
+	tb.Helper()
+
+	name := strings.ToLower(tb.Name())
+	name = schemaNameSanitizer.ReplaceAllString(name, "_")
+	name = strings.Trim(name, "_")
+	if name == "" {
+		name = "test"
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(tb.Name()))
+	return fmt.Sprintf("cbt_%s_%08x", name, h.Sum32())
+}
+
+func DSNWithSchema(tb testing.TB, dsn, schema string) string {
+	tb.Helper()
+
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		tb.Fatalf("pgxpool.ParseConfig() error = %v", err)
+	}
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	return cfg.ConnString()
 }
 
 func DSN(tb testing.TB) string {
@@ -107,5 +151,21 @@ func (h *Harness) CleanupDesign(tb testing.TB, ctx context.Context, designID str
 	}
 	if _, err := h.Pool.Exec(ctx, `DELETE FROM pipeline_runs WHERE design_id = $1`, designID); err != nil {
 		tb.Fatalf("cleanup pipeline_runs for %s: %v", designID, err)
+	}
+}
+
+var schemaNameSanitizer = regexp.MustCompile(`[^a-z0-9_]+`)
+
+func dropSchema(tb testing.TB, ctx context.Context, dsn, schema string) {
+	tb.Helper()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		tb.Fatalf("pgxpool.New() for schema cleanup error = %v", err)
+	}
+	defer pool.Close()
+
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`); err != nil {
+		tb.Fatalf("drop schema %s: %v", schema, err)
 	}
 }

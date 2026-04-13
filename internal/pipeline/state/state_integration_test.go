@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
+	"github.com/otherjamesbrown/cobuild/internal/testutil/pgtest"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,8 +22,8 @@ func TestResolveIntegrationWithPostgresAndTmux(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
-	testStore := newIntegrationPostgresStore(t, ctx)
-	dsn := integrationPostgresDSN(t)
+	pg := pgtest.New(t, ctx)
+	testStore := pg.Store
 	now := time.Now().UTC()
 	designID := fmt.Sprintf("cb-%x", now.UnixNano())
 	project := "cobuild-state-test"
@@ -38,7 +38,7 @@ func TestResolveIntegrationWithPostgresAndTmux(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testStore.CancelRunningSessions(ctx, designID)
 		_ = killTmuxServer(ctx, socketName)
-		cleanupIntegrationRun(t, ctx, dsn, designID)
+		pg.CleanupDesign(t, ctx, designID)
 	})
 
 	if _, err := testStore.CreateSession(ctx, store.SessionInput{
@@ -126,40 +126,6 @@ type integrationTestConfig struct {
 		User     string `yaml:"user"`
 		SSLMode  string `yaml:"sslmode"`
 	} `yaml:"connection"`
-}
-
-func newIntegrationPostgresStore(t *testing.T, ctx context.Context) *store.PostgresStore {
-	t.Helper()
-
-	dsn := integrationPostgresDSN(t)
-	pgStore, err := store.NewPostgresStore(ctx, dsn)
-	if err != nil {
-		t.Fatalf("NewPostgresStore() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = pgStore.Close()
-	})
-	if err := pgStore.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate() error = %v", err)
-	}
-	return pgStore
-}
-
-func cleanupIntegrationRun(t *testing.T, ctx context.Context, dsn, designID string) {
-	t.Helper()
-
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("pgxpool.New() error = %v", err)
-	}
-	defer pool.Close()
-
-	if _, err := pool.Exec(ctx, `DELETE FROM pipeline_sessions WHERE design_id = $1`, designID); err != nil {
-		t.Fatalf("cleanup pipeline_sessions for %s: %v", designID, err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM pipeline_runs WHERE design_id = $1`, designID); err != nil {
-		t.Fatalf("cleanup pipeline_runs for %s: %v", designID, err)
-	}
 }
 
 func integrationPostgresDSN(t *testing.T) string {
