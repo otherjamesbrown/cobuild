@@ -48,6 +48,7 @@ type Harness struct {
 	Config          *config.Config
 	Connector       *FakeConnector
 	Repo            *GitRepo
+	Repos           map[string]*GitRepo
 	Tmux            *TmuxServer
 	Store           *store.PostgresStore
 
@@ -153,6 +154,7 @@ func Setup(t testing.TB, opts Options) *Harness {
 		Config:          cfg,
 		Connector:       conn,
 		Repo:            repo,
+		Repos:           map[string]*GitRepo{project: repo},
 		Tmux:            tmuxServer,
 		Store:           st,
 		pool:            pool,
@@ -217,10 +219,7 @@ func (h *Harness) Env() []string {
 }
 
 func (h *Harness) CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = h.Repo.Root
-	cmd.Env = h.Env()
-	return cmd
+	return h.CommandContextInRepo(ctx, h.Repo, name, args...)
 }
 
 func (h *Harness) writeHarnessConfig() error {
@@ -254,17 +253,8 @@ func (h *Harness) writeHarnessConfig() error {
 		return fmt.Errorf("write .cobuild.yaml: %w", err)
 	}
 
-	reg := &config.RepoRegistry{
-		Repos: map[string]config.RepoEntry{
-			h.Project: {Path: h.Repo.Root, DefaultBranch: h.Repo.DefaultBranch},
-		},
-	}
-	regData, err := yaml.Marshal(reg)
-	if err != nil {
-		return fmt.Errorf("marshal repo registry: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(h.HomeDir, ".cobuild", "repos.yaml"), regData, 0o644); err != nil {
-		return fmt.Errorf("save repo registry: %w", err)
+	if err := h.writeRepoRegistry(); err != nil {
+		return err
 	}
 
 	clientCfg, err := clientConfigFromDSN(h.BaseDSN, h.Project, h.Prefix)

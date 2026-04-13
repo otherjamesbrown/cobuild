@@ -1,0 +1,14 @@
+{
+  "phase": "implement",
+  "task_id": "cb-multi-task-alpha",
+  "implement": {
+    "patch_file": "../patches/multi-task-alpha.patch",
+    "commit_message": "[cb-multi-task-alpha] add alpha multi-project artifact"
+  },
+  "session": {
+    "input_tokens": 16,
+    "output_tokens": 6,
+    "turns": 1,
+    "last_message": "Applied the alpha multi-project patch."
+  }
+}
