@@ -22,6 +22,7 @@ import (
 	cobuildruntime "github.com/otherjamesbrown/cobuild/internal/runtime"
 	_ "github.com/otherjamesbrown/cobuild/internal/runtime/claudecode" // register claude-code runtime
 	_ "github.com/otherjamesbrown/cobuild/internal/runtime/codex"      // register codex runtime
+	_ "github.com/otherjamesbrown/cobuild/internal/runtime/stub"       // register stub runtime
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"

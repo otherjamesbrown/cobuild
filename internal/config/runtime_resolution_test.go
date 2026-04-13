@@ -29,6 +29,11 @@ func TestResolveRuntime_Priority(t *testing.T) {
 	if got := nilCfg.ResolveRuntime("", ""); got != "claude-code" {
 		t.Errorf("nil receiver: got %q, want claude-code", got)
 	}
+
+	stubCfg := &Config{Dispatch: DispatchCfg{DefaultRuntime: "stub"}}
+	if got := stubCfg.ResolveRuntime("", ""); got != "stub" {
+		t.Errorf("stub config default: got %q, want stub", got)
+	}
 }
 
 func TestModelForPhaseRuntime(t *testing.T) {
