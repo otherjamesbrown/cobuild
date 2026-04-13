@@ -177,7 +177,7 @@ func doctorEntryFromState(ctx context.Context, resolved *pipelinestate.PipelineS
 	}
 
 	for _, recommendation := range pipelinestate.RecommendRecoveries(resolved) {
-		change, err := applyRecoveryRecommendation(ctx, recommendation, resolved)
+		change, err := applyDoctorRecommendation(ctx, recommendation, resolved)
 		if err != nil {
 			return entry, err
 		}
@@ -229,7 +229,7 @@ func doctorRecoveryAction(kind pipelinestate.RecoveryKind) string {
 	}
 }
 
-func applyRecoveryRecommendation(ctx context.Context, recommendation pipelinestate.RecoveryRecommendation, resolved *pipelinestate.PipelineState) (doctorChange, error) {
+func applyDoctorRecommendation(ctx context.Context, recommendation pipelinestate.RecoveryRecommendation, resolved *pipelinestate.PipelineState) (doctorChange, error) {
 	var (
 		result pipelinestate.RecoveryResult
 		err    error
