@@ -1,0 +1,18 @@
+{
+  "phase": "design",
+  "task_id": "cb-design-pass",
+  "gate_verdict": {
+    "gate": "readiness-review",
+    "shard_id": "cb-design-pass",
+    "verdict": "pass",
+    "readiness": 4,
+    "body": "Stub design fixture is ready for decomposition."
+  },
+  "session": {
+    "input_tokens": 12,
+    "cached_input_tokens": 0,
+    "output_tokens": 4,
+    "turns": 1,
+    "last_message": "Recorded readiness review from stub fixture."
+  }
+}

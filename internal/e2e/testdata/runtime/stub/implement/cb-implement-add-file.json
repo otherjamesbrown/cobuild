@@ -1,0 +1,15 @@
+{
+  "phase": "implement",
+  "task_id": "cb-implement-add-file",
+  "implement": {
+    "patch_file": "../patches/add-runtime-file.patch",
+    "commit_message": "[cb-implement-add-file] apply stub patch"
+  },
+  "session": {
+    "input_tokens": 21,
+    "cached_input_tokens": 2,
+    "output_tokens": 7,
+    "turns": 1,
+    "last_message": "Applied stub implementation patch and committed it."
+  }
+}
