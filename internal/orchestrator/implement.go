@@ -103,6 +103,21 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 
 		waiting := waitingTaskIDs(tasks)
 		if len(waiting) == 0 {
+			// All tasks finished (closed) and none in needs-review or
+			// in-progress. The design has nothing left to dispatch and no
+			// review to process — but the design's own pipeline phase is
+			// still "implement". Without this, the loop polls forever
+			// (cb-02f789). Trigger advancement by recording a review pass
+			// so the gate flow moves the design to the next phase.
+			if len(tasks) > 0 && r.opts.Reviewer != nil {
+				result, err := r.opts.Reviewer.ProcessReview(ctx, shardID)
+				if err != nil {
+					return fmt.Errorf("advance design after all tasks closed %s: %w", shardID, err)
+				}
+				r.emit(shardID, "implement", EventReview, formatReviewMessage(shardID, result))
+				// Phase should have advanced; loop top will detect and exit
+				continue
+			}
 			r.emit(shardID, "implement", EventPoll, "Phase: implement -> still waiting on pipeline state")
 		} else {
 			r.emit(shardID, "implement", EventPoll, fmt.Sprintf("Phase: implement -> still waiting on %s", strings.Join(waiting, ", ")))
