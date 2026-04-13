@@ -417,6 +417,99 @@ func TestDispatchDryRunUsesTaskRepoMetadataForWorktreeTargeting(t *testing.T) {
 	assertNotContains(t, out, cpRepo+" (from project: context-palace)")
 }
 
+func TestDispatchDryRunReviewUsesReviewSkillAndWindowPrefix(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+	writeTestRepoConfig(t, repoRoot, "cobuild")
+	if err := os.WriteFile(filepath.Join(repoRoot, "CLAUDE.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir repo .cobuild: %v", err)
+	}
+	pipelineYAML := "" +
+		"skills_dir: skills\n" +
+		"phases:\n" +
+		"  review:\n" +
+		"    gate: review\n" +
+		"    skill: review/dispatch-review.md\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".cobuild", "pipeline.yaml"), []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("write pipeline config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "skills", "review"), 0o755); err != nil {
+		t.Fatalf("mkdir review skills dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "skills", "review", "dispatch-review.md"), []byte("# review skill\n"), 0o644); err != nil {
+		t.Fatalf("write review skill: %v", err)
+	}
+	prevHome := os.Getenv("HOME")
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	if err := config.SaveRepoRegistry(&config.RepoRegistry{
+		Repos: map[string]config.RepoEntry{
+			"cobuild": {Path: repoRoot},
+		},
+	}); err != nil {
+		t.Fatalf("save repo registry: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+		_ = os.Chdir(prevWD)
+	})
+
+	fc := newFakeConnector()
+	fs := newFakeStore()
+	fs.runs["cb-task-review"] = &store.PipelineRun{
+		ID:           "run-review",
+		DesignID:     "cb-task-review",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-design",
+		Title:   "Review parent design",
+		Type:    "design",
+		Status:  "open",
+		Content: "Parent design context.",
+	})
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-task-review",
+		Title:   "Review shard",
+		Type:    "task",
+		Status:  "open",
+		Content: "Review this implementation PR.",
+	})
+	fc.parent["cb-task-review"] = "cb-design"
+
+	restore := installTestGlobals(t, fc, fs, "cobuild")
+	defer restore()
+
+	_ = dispatchCmd.Flags().Set("dry-run", "true")
+	t.Cleanup(func() {
+		_ = dispatchCmd.Flags().Set("dry-run", "false")
+	})
+
+	out := captureStdout(t, func() {
+		if err := dispatchCmd.RunE(dispatchCmd, []string{"cb-task-review"}); err != nil {
+			t.Fatalf("dispatch returned error: %v", err)
+		}
+	})
+
+	assertContains(t, out, "Follow the configured review skill `review/dispatch-review.md`:")
+	assertContains(t, out, "tmux new-window -n review-cb-task-review")
+}
+
 func TestDispatchRefusesMissingRepoMetadataWhenParentDesignReferencesMultipleRepos(t *testing.T) {
 	_, _ = setupDispatchRepoRegistry(t)
 

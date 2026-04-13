@@ -17,3 +17,12 @@ func TestTmuxCommandArgsUsesConfiguredSocket(t *testing.T) {
 		t.Fatalf("tmuxCommandArgs() = %#v, want %#v", got, want)
 	}
 }
+
+func TestDispatchTmuxWindowNamePrefixesReviewPhase(t *testing.T) {
+	if got := dispatchTmuxWindowName("review", "cb-task"); got != "review-cb-task" {
+		t.Fatalf("dispatchTmuxWindowName(review) = %q, want review-cb-task", got)
+	}
+	if got := dispatchTmuxWindowName("implement", "cb-task"); got != "cb-task" {
+		t.Fatalf("dispatchTmuxWindowName(implement) = %q, want cb-task", got)
+	}
+}
