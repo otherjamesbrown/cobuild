@@ -146,12 +146,12 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 				startPhase := "design"
 				repoRoot := findRepoRoot()
 				pCfg, _ := config.LoadConfig(repoRoot)
-				if pCfg != nil {
-					sp := pCfg.StartPhaseForType(item.Type)
-					if sp != "" {
-						startPhase = sp
-					}
+				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(&item, pCfg)
+				if resolveErr != nil {
+					fmt.Fprintf(os.Stderr, "  [auto] resolve bootstrap for %s failed: %v\n", item.ID, resolveErr)
+					continue
 				}
+				startPhase = bootstrap.StartPhase
 				itemProject := item.Project
 				if itemProject == "" {
 					itemProject = projectName // fallback to global

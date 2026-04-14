@@ -59,12 +59,11 @@ var initCmd = &cobra.Command{
 			if err == nil {
 				repoRoot := findRepoRoot()
 				pCfg, _ := config.LoadConfig(repoRoot)
-				if pCfg != nil {
-					sp := pCfg.StartPhaseForType(item.Type)
-					if sp != "" {
-						startPhase = sp
-					}
+				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
+				if resolveErr != nil {
+					return fmt.Errorf("resolve pipeline bootstrap for %s: %w", id, resolveErr)
 				}
+				startPhase = bootstrap.StartPhase
 				fmt.Printf("Work item type: %s → start phase: %s\n", item.Type, startPhase)
 			}
 		}
@@ -979,9 +978,11 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 		if conn != nil {
 			item, err := conn.Get(ctx, id)
 			if err == nil && item != nil {
-				if sp := pipelineConfigLoader().StartPhaseForType(item.Type); sp != "" {
-					phase = sp
+				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pipelineConfigLoader())
+				if resolveErr != nil {
+					return fmt.Errorf("resolve pipeline bootstrap for %s: %w", id, resolveErr)
 				}
+				phase = bootstrap.StartPhase
 			}
 		}
 	}

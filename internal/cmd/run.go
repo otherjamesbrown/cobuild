@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
 
@@ -49,12 +50,11 @@ merge PRs, and run retrospectives.`,
 				if err == nil {
 					repoRoot := findRepoRoot()
 					pCfg, _ := config.LoadConfig(repoRoot)
-					if pCfg != nil {
-						sp := pCfg.StartPhaseForType(item.Type)
-						if sp != "" {
-							startPhase = sp
-						}
+					bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
+					if resolveErr != nil {
+						return fmt.Errorf("resolve pipeline bootstrap for %s: %w", id, resolveErr)
 					}
+					startPhase = bootstrap.StartPhase
 					fmt.Printf("Work item type: %s → start phase: %s\n", item.Type, startPhase)
 				}
 			}

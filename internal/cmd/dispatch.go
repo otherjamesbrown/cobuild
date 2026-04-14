@@ -223,14 +223,16 @@ config "dispatch.default_runtime" > "claude-code".`,
 				currentPhase = run.CurrentPhase
 			} else if errors.Is(err, store.ErrNotFound) {
 				// No pipeline run — create one on the fly
-				workflow := inferWorkflowFromType(task)
-				firstPhase := firstPhaseOf(workflow, pCfg)
-				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, taskProject, firstPhase, "manual")
+				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(task, pCfg)
+				if resolveErr != nil {
+					return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, resolveErr)
+				}
+				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, taskProject, bootstrap.StartPhase, "manual")
 				if createErr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to auto-create pipeline run: %v\n", createErr)
 				} else {
 					currentPhase = newRun.CurrentPhase
-					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, workflow, currentPhase)
+					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, bootstrap.Workflow, currentPhase)
 				}
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to look up pipeline run: %v\n", err)
@@ -238,18 +240,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 		}
 		// Fallback if store unavailable or run creation failed
 		if currentPhase == "" {
-			switch task.Type {
-			case "bug":
-				if hasLabel(task.Labels, "needs-investigation") {
-					currentPhase = "investigate"
-				} else {
-					currentPhase = "fix"
-				}
-			case "design":
-				currentPhase = "design"
-			default:
-				currentPhase = "implement"
+			bootstrap, err := pipelinestate.ResolveBootstrap(task, pCfg)
+			if err != nil {
+				return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, err)
 			}
+			currentPhase = bootstrap.StartPhase
 		}
 
 		var mergedTasks []MergedTask
@@ -1339,39 +1334,6 @@ func classifyResolvedConflictSource(detail string) string {
 		return "pipeline run"
 	default:
 		return "resolver"
-	}
-}
-
-// inferWorkflowFromType maps a work item to a workflow name.
-// Bugs labeled needs-investigation use the bug-complex workflow (investigate → implement → review → done).
-// All other bugs use the default bug workflow (fix → review → done).
-func inferWorkflowFromType(task *connector.WorkItem) string {
-	if task.Type == "bug" && hasLabel(task.Labels, "needs-investigation") {
-		return "bug-complex"
-	}
-	switch task.Type {
-	case "bug", "design", "task":
-		return task.Type
-	default:
-		return "task"
-	}
-}
-
-// firstPhaseOf returns the first phase of the named workflow from config.
-// Falls back to hardcoded defaults if the workflow is not defined in config.
-func firstPhaseOf(workflow string, cfg *config.Config) string {
-	if cfg != nil {
-		if wf, ok := cfg.Workflows[workflow]; ok && len(wf.Phases) > 0 {
-			return wf.Phases[0]
-		}
-	}
-	switch workflow {
-	case "bug":
-		return "fix"
-	case "design":
-		return "design"
-	default:
-		return "implement"
 	}
 }
 
