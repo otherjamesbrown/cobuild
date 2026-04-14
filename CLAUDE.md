@@ -174,16 +174,17 @@ Key concepts:
 
 CoBuild is newly extracted and needs work. Focus areas in priority order:
 
-### 1. Make it standalone
-CoBuild still depends on Context Palace's database for storage. It should work independently:
-- Own database (SQLite for single-user, Postgres for teams) OR pluggable backend
-- Own shard model (or thin adapter over CP)
-- ~~Remove all `cxp` shell-outs from pipeline logic~~ **DONE** — all shard operations are now native via CPConnector (which shells out to `cxp` CLI with `-o json`)
+### 1. Finish the `internal/client` → `internal/store` + `internal/connector` migration
+**Status: partial.** `internal/store` and `internal/connector` exist and cover the new write path, but `internal/client` is still live as a shadow backend. 15+ unused exported functions in `internal/client/pipeline.go`, hardcoded CP defaults (`host="dev02.brown.chat"`), and a silent fallback at `pipeline.go:324–342` that picks between the two backends at runtime. Tracked by:
+- cb-88707a — CLI bootstrap refactor (unlocks the rest)
+- cb-3f5be6 — Migrate pipeline commands off legacy client
+- cb-b2f3ac — Complete legacy client removal
+- cb-75a471 — review rollup covering all of the above
 
-### 2. ~~Rename `.cxp/` to `.cobuild/`~~ **DONE**
-Config directory, registry file, env vars, and all references updated. Legacy `.cxp/` paths are still supported as fallback.
+### 2. Rename `.cxp/` to `.cobuild/` — **partial, deprecation pending**
+Config directory, registry file, env vars, and most references updated. The legacy `.cxp/` fallback is still live in `internal/client/client.go:71–73` and `internal/cmd/setup.go:140` (which also still reads `.cp.yaml`). No deprecation warning is emitted today. Tracked by cb-9a336c.
 
-### 3. ~~Dispatch reliability~~ **DONE** (cb-7aa91d)
+### 3. Dispatch reliability — mostly shipped (cb-7aa91d), with caveats
 Major rework of the dispatch → completion flow, driven by dogfooding on penfold:
 - ~~Agent sometimes doesn't exit~~ → **Stop hook** writes `.claude/settings.local.json` into worktrees; `cobuild complete` runs automatically on agent termination
 - ~~CLAUDE.md overwritten with context dump~~ → Context now goes to `.cobuild/dispatch-context.md`; CLAUDE.md gets a small pointer section appended (idempotent)
@@ -193,8 +194,11 @@ Major rework of the dispatch → completion flow, driven by dogfooding on penfol
 - ~~Bug workflow forced read-only investigation~~ → Default bug workflow is now `fix → review → done`; label `needs-investigation` escalates to `investigate → implement → review → done`
 - ~~`.claude/` edits stall agents~~ → Worktree `.claude/settings.local.json` includes deny list for `.claude/**` edits
 
+**Known caveat:** `internal/cmd/root.go:100, 132` still discards `config.LoadConfig()` and `connector.New()` errors with `_`, so a broken config silently degrades to a partial backend instead of failing loud. Tracked by cb-663873.
+
 ### 4. Fix remaining known bugs
-- Squash merge + dependent branches causes conflicts on every merge — need auto-rebase or regular merges (see cb-7dd0d4)
+- cb-7dd0d4 (squash merge + dependent branches) — **shipped**. Test coverage gap tracked by cb-383574.
+- **cb-0e0482** — Both runtimes dying mid-dispatch on some designs. Observability shipped (cb-1d8abc: `dispatch-error.log`, `early_death` column, HEALTH column on `cobuild status`). Needs a repro.
 
 ### 5. Build the deploy agent
 Deploy is currently a shell command. Should be a sub-agent with:
@@ -313,6 +317,10 @@ Implementations: `CPConnector` (shells out to `cxp` CLI with `-o json`), `BeadsC
 4. **Fail visible** — no silent failures. If something goes wrong, it's in the shard and the audit trail
 5. **Self-improving** — `cobuild insights` + `cobuild improve` detect patterns and suggest fixes
 6. **Claude-native patterns** — use Claude Code/CoWork terminology and patterns (connectors, skills, hooks, scopes)
+7. **`internal/cmd` is a composition boundary, not a home for new logic** — new phase inference, workflow routing, bootstrap, or store-vs-legacy decisions belong in reusable packages (`internal/orchestrator`, `internal/pipeline/*`, a future `internal/domain`). A cobra `RunE` should wire components together, not contain them.
+8. **One canonical implementation of phase/workflow inference** — if you change phase routing, audit every entry point that initialises or resumes a pipeline (`pipeline.go`, `run.go`, `orchestrate.go`, `poller.go`, `dispatch.go`). Never patch only the path you touched.
+9. **Hermetic tests first** — `go test ./...` should pass without live Postgres, tmux, or network. Test layers: hermetic → postgres-backed → tmux-backed → real-runtime. When a non-hermetic layer is skipped (dev environment can't reach Postgres, etc.) state it explicitly rather than silently skipping.
+10. **No magic phase/gate/metadata strings** — phase names, gate names, metadata keys (`"pr_url"`, `"worktree_path"`, `"session_id"`, `"dispatch_runtime"`) go through constants, not string literals. Literal strings in Go code are a signal config-over-code has leaked (tracked by cb-9a336c).
 
 ## Don't
 
@@ -320,3 +328,7 @@ Implementations: `CPConnector` (shells out to `cxp` CLI with `-o json`), `BeadsC
 - Don't add features that only work for one repo — everything must be configurable
 - Don't skip the audit trail — every action must be recorded
 - Don't invent new terms when Claude already has one — use "connector" not "adapter", "skill" not "command"
+- **Don't silently suppress errors.** `_ = err` is forbidden outside deliberate cleanup, and even there, log. Audit writes (`SetMetadata`, `EndSession`, `RecordGate`, `AppendContent`) must never be discarded — the "audit everything" principle requires that failure to audit is itself audited. A lint rule for this is pending (cb-663873).
+- **Don't grow cobra `RunE` handlers past ~150 lines.** Extract named, testable functions (`resolveDispatchPrerequisites`, `prepareDispatchContext`, `spawnDispatchSession`, …); keep `RunE` an orchestrator that wires them together. `dispatchCmd.RunE` (592 lines) and `processReviewCmd.RunE` (800+ lines) are the reference for what not to do.
+- **Don't merge behaviour changes without tests.** New or modified logic in `internal/merge`, `internal/worktree`, `internal/connector`, `internal/runtime`, or gate/phase transitions needs a unit test in the same PR. "Covered by e2e" is not sufficient for these packages — the e2e harness uses stubs and a FakeConnector, so it doesn't prove real-runtime behaviour.
+- **Don't stack migrations.** If you touch a half-migrated area (`internal/client` → `internal/store`+`internal/connector`, or `.cxp/` → `.cobuild/`), finish retiring the old path or leave it alone. Never introduce a third parallel approach.
