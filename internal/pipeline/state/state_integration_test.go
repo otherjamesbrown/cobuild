@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,15 +12,13 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/testutil/pgtest"
-	"gopkg.in/yaml.v3"
+	"github.com/otherjamesbrown/cobuild/internal/testutil/tmuxtest"
 )
 
 func TestResolveIntegrationWithPostgresAndTmux(t *testing.T) {
 	ctx := context.Background()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-
+	tmuxtest.Skip(t)
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 	testStore := pg.Store
 	now := time.Now().UTC()
@@ -117,50 +114,4 @@ func killTmuxServer(ctx context.Context, socketName string) error {
 		return nil
 	}
 	return fmt.Errorf("kill-server: %w: %s", err, strings.TrimSpace(string(out)))
-}
-
-type integrationTestConfig struct {
-	Connection struct {
-		Host     string `yaml:"host"`
-		Database string `yaml:"database"`
-		User     string `yaml:"user"`
-		SSLMode  string `yaml:"sslmode"`
-	} `yaml:"connection"`
-}
-
-func integrationPostgresDSN(t *testing.T) string {
-	t.Helper()
-
-	if dsn := strings.TrimSpace(os.Getenv("COBUILD_TEST_POSTGRES_DSN")); dsn != "" {
-		return dsn
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("set COBUILD_TEST_POSTGRES_DSN for integration tests")
-	}
-	cfgPath := filepath.Join(home, ".cobuild", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Skip("set COBUILD_TEST_POSTGRES_DSN for integration tests")
-	}
-
-	var cfg integrationTestConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Skipf("parse %s: %v", cfgPath, err)
-	}
-	if cfg.Connection.Host == "" || cfg.Connection.Database == "" || cfg.Connection.User == "" {
-		t.Skipf("set COBUILD_TEST_POSTGRES_DSN for integration tests; incomplete connection config in %s", cfgPath)
-	}
-
-	sslMode := cfg.Connection.SSLMode
-	if sslMode == "" {
-		sslMode = "disable"
-	}
-	return fmt.Sprintf("postgres://%s@%s/%s?sslmode=%s",
-		cfg.Connection.User,
-		cfg.Connection.Host,
-		cfg.Connection.Database,
-		sslMode,
-	)
 }

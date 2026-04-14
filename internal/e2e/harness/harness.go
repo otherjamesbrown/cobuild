@@ -19,6 +19,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/testutil/pgtest"
+	"github.com/otherjamesbrown/cobuild/internal/testutil/tmuxtest"
 	"gopkg.in/yaml.v3"
 )
 
@@ -59,6 +60,8 @@ func Setup(t testing.TB, opts Options) *Harness {
 	t.Helper()
 
 	ctx := context.Background()
+	tmuxtest.Skip(t)
+	pgtest.Skip(t, ctx)
 	baseDSN := pgtest.DSN(t)
 	project := strings.TrimSpace(opts.Project)
 	if project == "" {
