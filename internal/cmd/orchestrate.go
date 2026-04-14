@@ -12,6 +12,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/orchestrator"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
 
@@ -98,11 +99,11 @@ failures.`,
 				if item, itemErr := conn.Get(cmd.Context(), shardID); itemErr == nil && item != nil {
 					repoRoot := findRepoRoot()
 					pCfg, _ := config.LoadConfig(repoRoot)
-					if pCfg != nil {
-						if sp := pCfg.StartPhaseForType(item.Type); sp != "" {
-							startPhase = sp
-						}
+					bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
+					if resolveErr != nil {
+						return fmt.Errorf("resolve pipeline bootstrap for %s: %w", shardID, resolveErr)
 					}
+					startPhase = bootstrap.StartPhase
 					fmt.Fprintf(cmd.OutOrStdout(), "Auto-init: no pipeline run for %s (type=%s) — creating at phase %s (manual mode)\n",
 						shardID, item.Type, startPhase)
 				}

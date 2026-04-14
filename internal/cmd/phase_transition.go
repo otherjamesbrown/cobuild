@@ -6,6 +6,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -110,10 +111,17 @@ func resolveNextPhase(
 	currentPhase string,
 ) (string, error) {
 	// Primary: resolve from workflow config
-	if pCfg != nil && cn != nil {
+	if cn != nil {
 		if item, err := cn.Get(ctx, designID); err == nil && item != nil {
-			workflow := inferWorkflowFromType(item)
-			if next := pCfg.NextPhaseInWorkflow(workflow, currentPhase); next != "" {
+			bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			cfg := pCfg
+			if cfg == nil {
+				cfg = config.DefaultConfig()
+			}
+			if next := cfg.NextPhaseInWorkflow(bootstrap.Workflow, currentPhase); next != "" {
 				return next, nil
 			}
 		}
