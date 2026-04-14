@@ -87,25 +87,36 @@ func TestRenderMergedWorkSectionPopulated(t *testing.T) {
 	}
 }
 
-func TestWritePhasePromptImplementAndFixRequireExplicitExit(t *testing.T) {
+// Implement and fix prompts intentionally do NOT instruct the agent to type
+// /exit — that's a REPL-only command that gets rendered as text rather than
+// interpreted, leaving the process alive at an empty prompt (cb-e619cb /
+// cb-eaef03). The dispatch runner watchdog handles cleanup instead.
+func TestWritePhasePromptImplementAndFixDoNotInstructExit(t *testing.T) {
 	tests := []struct {
-		phase string
-		want  []string
+		phase     string
+		wantHave  []string
+		wantNotHave []string
 	}{
 		{
 			phase: "implement",
-			want: []string{
+			wantHave: []string{
 				"Implement this task following the acceptance criteria above.",
 				"Do this as your LAST action.",
-				"After `cobuild complete` finishes, immediately exit the session",
+				"`/exit`",
+			},
+			wantNotHave: []string{
+				"immediately exit the session with `/exit`",
 			},
 		},
 		{
 			phase: "fix",
-			want: []string{
+			wantHave: []string{
 				"Fix this bug.",
 				"Commit — the Stop hook will run `cobuild complete`",
-				"IMPORTANT: After the Stop hook completes, immediately exit the session",
+				"`/exit`",
+			},
+			wantNotHave: []string{
+				"immediately exit the session with `/exit`",
 			},
 		},
 	}
@@ -116,9 +127,14 @@ func TestWritePhasePromptImplementAndFixRequireExplicitExit(t *testing.T) {
 			writePhasePrompt(&b, tt.phase, "cb-task", "cb-task", nil)
 			got := b.String()
 
-			for _, want := range tt.want {
+			for _, want := range tt.wantHave {
 				if !strings.Contains(got, want) {
 					t.Fatalf("%s prompt missing %q\nprompt:\n%s", tt.phase, want, got)
+				}
+			}
+			for _, want := range tt.wantNotHave {
+				if strings.Contains(got, want) {
+					t.Fatalf("%s prompt unexpectedly contains %q\nprompt:\n%s", tt.phase, want, got)
 				}
 			}
 		})

@@ -993,7 +993,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("3. Reproduce, investigate lightly, append findings to the bug\n")
 		b.WriteString("4. Implement the fix, run tests, build\n")
 		b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
-		b.WriteString("6. IMPORTANT: After the Stop hook completes, immediately exit the session with `/exit` so the dispatched run terminates cleanly\n")
+		b.WriteString("6. After the Stop hook completes, your work is done — stop. The dispatch runner cleans up the session itself; do NOT type `/exit` (it's a REPL-only command and will be rendered as text in your final message rather than terminating the process — see cb-e619cb / cb-eaef03).\n")
 
 	case "investigate":
 		b.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
@@ -1055,7 +1055,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 			step++
 		}
 		b.WriteString(fmt.Sprintf("%d. **Run `cobuild complete %s`** -- this commits remaining changes, pushes, creates the PR, appends evidence, and marks the task needs-review. Do this as your LAST action.\n\n", step, taskID))
-		b.WriteString("**IMPORTANT:** After `cobuild complete` finishes, immediately exit the session with `/exit` so the dispatched run terminates cleanly.\n\n")
+		b.WriteString("After `cobuild complete` returns successfully, your work is done — stop. The dispatch runner cleans up the session itself; you do NOT need to type `/exit` (it's a REPL-only command and will be rendered as text in your final message, not interpreted as an exit signal — see cb-e619cb / cb-eaef03).\n\n")
 		b.WriteString("**IMPORTANT RULES:**\n")
 		b.WriteString("- NEVER use raw `git merge` or `git push` to main — always use `cobuild complete` which creates a PR\n")
 		b.WriteString("- NEVER merge PRs yourself — the orchestrating agent handles merge via `cobuild merge` after review\n")
