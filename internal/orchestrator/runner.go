@@ -1,3 +1,16 @@
+// Package orchestrator drives a pipeline through its phases from the
+// current state to a terminal state (done, deploy-approval-required,
+// timeout, or unrecoverable block). It calls out to a Dispatcher for
+// single-shard phases, a WaveDispatcher for design implement phases,
+// and a Reviewer for review-phase polling, but owns no transport
+// specifics itself — wiring lives in cmd/orchestrate.go.
+//
+// The Runner is deliberately small: it reads the current phase from a
+// PhaseSource, fans out to one of runImplement / runReview / step
+// based on the phase name, and waits for the phase to advance. Retry
+// logic for failed gates (cb-13744c), dead-agent recovery
+// (cb-f93173), and the task-shard direct-dispatch path (cb-55f364)
+// all hang off this loop.
 package orchestrator
 
 import (

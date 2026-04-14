@@ -1,3 +1,15 @@
+// Package state resolves the effective state of a pipeline task by
+// combining three sources: the work-item record (connector), the
+// pipeline_run / pipeline_sessions rows (store), and any live process
+// or tmux window observed on the host. The resolver normalises these
+// into a single view so command handlers can reason about "is this
+// task dispatchable right now?" without re-running the classification
+// logic in every caller.
+//
+// Call sites: cobuild dispatch (conflict detection + self-heal),
+// cobuild doctor, cobuild recover, and the orchestrator's progress
+// monitor. A parallel, richer view — including process-level liveness
+// — lives in the sibling livestate package.
 package state
 
 import (

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 )
+
+// errNotImpl reports that a fakeConnector method was called by a test
+// that wasn't expected to exercise it. Returning an error instead of
+// panicking keeps a leaked stub from tearing down the test binary —
+// the failing assertion shows up scoped to the specific test
+// (cb-6d598a).
+func errNotImpl(method string) error {
+	return fmt.Errorf("fakeConnector.%s: not implemented in this test", method)
+}
 
 type fakeConnector struct {
 	items map[string]*connector.WorkItem
@@ -24,7 +34,7 @@ func (f *fakeConnector) Get(_ context.Context, id string) (*connector.WorkItem, 
 }
 
 func (f *fakeConnector) List(context.Context, connector.ListFilters) (*connector.ListResult, error) {
-	panic("not implemented")
+	return nil, errNotImpl("List")
 }
 
 func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string, _ []string) ([]connector.Edge, error) {
@@ -32,35 +42,35 @@ func (f *fakeConnector) GetEdges(_ context.Context, id string, direction string,
 }
 
 func (f *fakeConnector) GetMetadata(context.Context, string, string) (string, error) {
-	panic("not implemented")
+	return "", errNotImpl("GetMetadata")
 }
 
 func (f *fakeConnector) Create(context.Context, connector.CreateRequest) (string, error) {
-	panic("not implemented")
+	return "", errNotImpl("Create")
 }
 
 func (f *fakeConnector) UpdateStatus(context.Context, string, string) error {
-	panic("not implemented")
+	return errNotImpl("UpdateStatus")
 }
 
 func (f *fakeConnector) AppendContent(context.Context, string, string) error {
-	panic("not implemented")
+	return errNotImpl("AppendContent")
 }
 
 func (f *fakeConnector) SetMetadata(context.Context, string, string, any) error {
-	panic("not implemented")
+	return errNotImpl("SetMetadata")
 }
 
 func (f *fakeConnector) UpdateMetadataMap(context.Context, string, map[string]any) error {
-	panic("not implemented")
+	return errNotImpl("UpdateMetadataMap")
 }
 
 func (f *fakeConnector) AddLabel(context.Context, string, string) error {
-	panic("not implemented")
+	return errNotImpl("AddLabel")
 }
 
 func (f *fakeConnector) CreateEdge(context.Context, string, string, string) error {
-	panic("not implemented")
+	return errNotImpl("CreateEdge")
 }
 
 func TestExtractAcceptanceCriteria(t *testing.T) {

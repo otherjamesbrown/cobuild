@@ -1,3 +1,15 @@
+// Package livestate takes a snapshot of what is actually running on
+// the host for a pipeline: tmux windows, orchestrate/poller processes,
+// and active pipeline_sessions rows. It joins those observations with
+// the durable state (pipeline_runs, connector shard status) to produce
+// a HEALTH classification — ACTIVE / STALE / DEAD / ZOMBIE — used by
+// cobuild status and cobuild doctor.
+//
+// The distinction from the state package: state answers "what does
+// the DB say about this task", livestate answers "what is actually
+// running right now on this machine". The two can disagree (zombie =
+// DB says running, host has no process) and that disagreement is the
+// whole point of this package.
 package livestate
 
 import (
