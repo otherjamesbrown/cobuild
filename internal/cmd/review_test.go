@@ -531,6 +531,10 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "auto"
+	// Opt the test into the builtin path; the default (dispatched) would
+	// refuse on this test's task status and no longer falls through since
+	// cb-6f9ed6 (silent fall-through was creating spurious fail gates).
+	cfg.Review.Mode = "builtin"
 	postTrue := true
 	waitTrue := true
 	cfg.Review.PostComments = &postTrue
@@ -631,6 +635,9 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "claude"
+	// Opt into the builtin path explicitly; dispatched is now the default
+	// and no longer falls through on refusal (cb-6f9ed6).
+	cfg.Review.Mode = "builtin"
 	postTrue := true
 	waitTrue := true
 	cfg.Review.PostComments = &postTrue

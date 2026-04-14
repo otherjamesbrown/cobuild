@@ -1357,10 +1357,12 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 // + task scope and writes a verdict to .cobuild/gate-verdict.json which the
 // runner script records via `cobuild review` after the agent exits.
 //
-// Returns (waiting=true, nil) when an agent was successfully dispatched (caller
-// should return waiting). Returns (waiting=false, nil) when dispatch was
-// skipped (e.g. an agent is already running for this task) — caller falls
-// through to the legacy builtin/external review path as a safety net.
+// Returns (waiting=true, nil) on successful dispatch, on "agent already
+// running" for this task, or on transient dispatch refusal — all three cases
+// mean "stay at review, retry next poll". Previously a dispatch error
+// returned (false, nil) which caused the caller to fall through to the
+// builtin/external path; on repos without ANTHROPIC_API_KEY that path 401s
+// and records a spurious review/fail gate against a healthy PR (cb-6f9ed6).
 func dispatchReviewAgent(ctx context.Context, cmd *cobra.Command, taskID string) (bool, error) {
 	// If a review-phase agent is already running for this task, leave it.
 	// The dispatch guard would refuse anyway; check explicitly so we can
@@ -1387,11 +1389,12 @@ func dispatchReviewAgent(ctx context.Context, cmd *cobra.Command, taskID string)
 	}
 	subCmd.SetArgs([]string{taskID})
 	if err := subCmd.RunE(subCmd, []string{taskID}); err != nil {
-		// Dispatch refused (likely because of an existing session/window).
-		// Don't fail process-review; fall through to the legacy path so the
-		// task isn't permanently stuck.
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched review skipped: %v\n", err)
-		return false, nil
+		// Dispatch refused (orphan tmux window, stale session conflict,
+		// worktree issue, etc.). Stay at review and retry next poll —
+		// falling through to builtin claude on an API-key-less repo would
+		// 401 and record a spurious review/fail gate (cb-6f9ed6).
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched review skipped for %s: %v — will retry\n", taskID, err)
+		return true, nil
 	}
 	fmt.Printf("Dispatched review agent for %s. Will record verdict on agent exit.\n", taskID)
 	return true, nil
