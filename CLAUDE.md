@@ -96,7 +96,7 @@ When you finish fixing a bug or completing a task that has a shard — whether y
 
 1. **Commit** with the shard ID in the subject or body. One commit per shard is the default; bundle only when the change genuinely spans shards and can't be split.
 2. **Push** so the fix is preserved off-machine and visible to anyone else watching the repo.
-3. **Close the shard** with `cxp shard close <id> "Fixed in <commit-sha>"` (or a short reason pointing at the commit). An "open" bug in the backlog that's actually fixed is noise — it hides the real open work behind stale entries.
+3. **Close the shard** with `cxp --project cobuild shard close <id> "Fixed in <commit-sha>"` (or a short reason pointing at the commit). The `--project cobuild` flag is required when the shard has no project metadata — without it, close fails with "Shard not found". An "open" bug in the backlog that's actually fixed is noise — it hides the real open work behind stale entries.
 
 Leaving shard fixes uncommitted is how we end up with 50-file working-tree dumps at end-of-day where the trail back to each bug is lost. Leaving shards open after fixing is how `cxp shard list --type bug --status open` stops being a reliable signal — at one point we had six open bug shards and only one was actually open.
 
