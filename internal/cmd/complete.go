@@ -215,7 +215,9 @@ Steps:
 				} else {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("PR created: %s\n", prURL)
-					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
+					if err := conn.SetMetadata(ctx, taskID, "pr_url", prURL); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to record PR URL metadata for %s: %v\n", taskID, err)
+					}
 				}
 			} else {
 				fmt.Println("Could not detect GitHub repo -- skipping PR creation")
@@ -256,7 +258,9 @@ Steps:
 		// Best-effort — failure here is not a blocker.
 		if worktreePath != "" {
 			flagPath := filepath.Join(worktreePath, ".cobuild", "complete.done")
-			_ = os.WriteFile(flagPath, []byte{}, 0o644)
+			if err := os.WriteFile(flagPath, []byte{}, 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write completion flag for %s: %v\n", taskID, err)
+			}
 		}
 
 		// Transition the pipeline run to the review phase so `cobuild status`
@@ -328,7 +332,9 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 				if err == nil {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("Validation: PR created: %s\n", prURL)
-					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
+					if err := conn.SetMetadata(ctx, taskID, "pr_url", prURL); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to record PR URL metadata for %s during validation: %v\n", taskID, err)
+					}
 				}
 			}
 		}

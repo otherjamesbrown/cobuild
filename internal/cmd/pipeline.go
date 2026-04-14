@@ -41,6 +41,12 @@ var (
 	}
 )
 
+func warnCommandReadError(cmd *cobra.Command, what string, err error) {
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to %s: %v\n", what, err)
+	}
+}
+
 var initCmd = &cobra.Command{
 	Use:     "init <shard-id>",
 	Short:   "Initialize pipeline metadata on a design shard",
@@ -150,8 +156,16 @@ cobuild init, review, gate, and dispatch all write to.`,
 		var gates []store.PipelineGateRecord
 		var tasks []store.PipelineTaskRecord
 		if cbStore != nil {
-			gates, _ = cbStore.GetGateHistory(ctx, id)
-			tasks, _ = cbStore.ListTasks(ctx, run.ID)
+			if records, err := cbStore.GetGateHistory(ctx, id); err != nil {
+				warnCommandReadError(cmd, "read gate history", err)
+			} else {
+				gates = records
+			}
+			if records, err := cbStore.ListTasks(ctx, run.ID); err != nil {
+				warnCommandReadError(cmd, "read pipeline tasks", err)
+			} else {
+				tasks = records
+			}
 		}
 
 		if outputFormat == "json" {
@@ -574,8 +588,16 @@ var auditCmd = &cobra.Command{
 		var gates []store.PipelineGateRecord
 		var sessions []store.SessionRecord
 		if cbStore != nil {
-			gates, _ = cbStore.GetGateHistory(ctx, designID)
-			sessions, _ = cbStore.ListSessions(ctx, designID)
+			if records, err := cbStore.GetGateHistory(ctx, designID); err != nil {
+				warnCommandReadError(cmd, "read gate history", err)
+			} else {
+				gates = records
+			}
+			if records, err := cbStore.ListSessions(ctx, designID); err != nil {
+				warnCommandReadError(cmd, "read session history", err)
+			} else {
+				sessions = records
+			}
 		}
 		lifecycleEvents := sessionLifecycleEvents(sessions)
 
@@ -808,8 +830,12 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 				continue
 			}
 			if conn != nil {
-				_ = conn.SetMetadata(ctx, state.TaskID, "worktree_path", "")
-				_ = conn.SetMetadata(ctx, state.TaskID, "session_id", "")
+				if err := conn.SetMetadata(ctx, state.TaskID, "worktree_path", ""); err != nil {
+					fmt.Printf("Warning: failed to clear worktree_path metadata for %s: %v\n", state.TaskID, err)
+				}
+				if err := conn.SetMetadata(ctx, state.TaskID, "session_id", ""); err != nil {
+					fmt.Printf("Warning: failed to clear session_id metadata for %s: %v\n", state.TaskID, err)
+				}
 			}
 			removed++
 		}

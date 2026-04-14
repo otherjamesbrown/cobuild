@@ -97,6 +97,8 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 			if earlyDeaths > 0 {
 				fmt.Fprintf(w, "Early-death sessions: %d (agent died <60s after dispatch — see .cobuild/dispatch-error.log in the worktree)\n", earlyDeaths)
 			}
+		} else {
+			fmt.Fprintf(w, "Early-death sessions: unavailable (%v)\n", err)
 		}
 	}
 
@@ -115,6 +117,8 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 			fmt.Fprintf(w, "Tasks: %d (%s)\n", len(tasks), strings.Join(parts, ", "))
 		} else if err == nil {
 			fmt.Fprintln(w, "Tasks: none tracked in pipeline_tasks")
+		} else {
+			fmt.Fprintf(w, "Tasks: unavailable (%v)\n", err)
 		}
 	}
 
@@ -128,6 +132,8 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 				humanAgo(latest.CreatedAt))
 		} else if err == nil {
 			fmt.Fprintln(w, "Gates: none recorded")
+		} else {
+			fmt.Fprintf(w, "Gates: unavailable (%v)\n", err)
 		}
 	}
 
@@ -148,15 +154,28 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 	// We don't have a direct shardID→PR mapping here, but we can at least
 	// surface the count via conn metadata if the tasks are known.
 	if conn != nil && run != nil {
-		tasks, _ := cbStore.ListTasks(ctx, run.ID)
+		tasks, err := cbStore.ListTasks(ctx, run.ID)
+		if err != nil {
+			fmt.Fprintf(w, "PRs on tasks: unavailable (list tasks failed: %v)\n", err)
+			return
+		}
 		prCount := 0
+		prReadFailures := 0
 		for _, t := range tasks {
-			if pr, _ := conn.GetMetadata(ctx, t.TaskShardID, "pr_url"); pr != "" {
+			pr, err := conn.GetMetadata(ctx, t.TaskShardID, "pr_url")
+			if err != nil {
+				prReadFailures++
+				continue
+			}
+			if pr != "" {
 				prCount++
 			}
 		}
 		if prCount > 0 {
 			fmt.Fprintf(w, "PRs on tasks: %d (check mergeability with `gh pr list`)\n", prCount)
+		}
+		if prReadFailures > 0 {
+			fmt.Fprintf(w, "PR metadata reads failed on %d task(s)\n", prReadFailures)
 		}
 	}
 }

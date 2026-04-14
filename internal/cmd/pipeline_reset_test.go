@@ -184,6 +184,73 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRunPipelineResetWarnsWhenCleanupMetadataClearFails(t *testing.T) {
+	ctx := context.Background()
+	fc := newFakeConnector()
+	fs := newFakeStore()
+
+	designID := "cb-reset-warn"
+	taskID := "cb-task-warn"
+	worktreePath := filepath.Join(t.TempDir(), taskID)
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	fs.runs[designID] = &store.PipelineRun{
+		ID:           "run-warn",
+		DesignID:     designID,
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+	fs.tasks = []store.PipelineTaskRecord{
+		{PipelineID: "run-warn", TaskShardID: taskID, DesignID: designID, Status: "needs-review"},
+	}
+	fc.addItem(&connector.WorkItem{
+		ID:     taskID,
+		Title:  "Warn child task",
+		Type:   "task",
+		Status: "needs-review",
+		Metadata: map[string]any{
+			"worktree_path": worktreePath,
+		},
+	})
+	fc.setMetadataErr[taskID+":worktree_path"] = fmt.Errorf("metadata unavailable")
+	fc.setMetadataErr[taskID+":session_id"] = fmt.Errorf("metadata unavailable")
+
+	restore := installTestGlobals(t, fc, fs, "cobuild")
+	defer restore()
+
+	prevOutput := pipelineCommandOutput
+	prevCombined := pipelineCommandCombinedOutput
+	prevRun := pipelineCommandRun
+	prevConfig := pipelineConfigLoader
+	t.Cleanup(func() {
+		pipelineCommandOutput = prevOutput
+		pipelineCommandCombinedOutput = prevCombined
+		pipelineCommandRun = prevRun
+		pipelineConfigLoader = prevConfig
+	})
+	pipelineConfigLoader = func() *config.Config { return config.DefaultConfig() }
+	pipelineCommandOutput = func(context.Context, string, ...string) ([]byte, error) { return nil, fmt.Errorf("no git metadata") }
+	pipelineCommandRun = func(context.Context, string, ...string) error { return nil }
+	pipelineCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) { return []byte(""), nil }
+
+	out := captureStdout(t, func() {
+		if err := runPipelineReset(ctx, designID, resetOptions{Phase: "implement"}); err != nil {
+			t.Fatalf("runPipelineReset() error = %v", err)
+		}
+	})
+
+	for _, want := range []string{
+		"Warning: failed to clear worktree_path metadata for cb-task-warn: metadata unavailable",
+		"Warning: failed to clear session_id metadata for cb-task-warn: metadata unavailable",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("reset output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestResetCommandIntegrationCleansTmuxWorktreeAndStoreState(t *testing.T) {
 	ctx := context.Background()
 	tmux := withTestTmux(t)

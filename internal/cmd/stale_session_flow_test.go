@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +172,84 @@ func TestNextMentionsRedispatchAfterLifecycleRecovery(t *testing.T) {
 
 	if !strings.Contains(out, "pending redispatch after a stale-killed/orphaned session") {
 		t.Fatalf("next output missing redispatch guidance:\n%s", out)
+	}
+}
+
+func TestNextWarnsWhenPipelineReadEnrichmentFails(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{ID: "cb-design", Title: "Warning design", Type: "design", Status: "in_progress"})
+
+	fs := newFakeStore()
+	fs.runs["cb-design"] = &store.PipelineRun{
+		ID:           "pr-1",
+		DesignID:     "cb-design",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
+	fs.gateHistoryErr = fmt.Errorf("gate history offline")
+	fs.listTasksErr = fmt.Errorf("tasks offline")
+	fs.listSessionsErr = fmt.Errorf("sessions offline")
+
+	restore := installTestGlobals(t, fc, fs, "")
+	defer restore()
+
+	out, err := runCommandWithOutputs(t, nextCmd, []string{"cb-design"})
+	if err != nil {
+		t.Fatalf("next failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"Warning: failed to read gate history: gate history offline",
+		"Warning: failed to read pipeline tasks: tasks offline",
+		"Warning: failed to read session history: sessions offline",
+		"Next step:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("next output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDoctorDiagnoseReportsUnavailableSectionsWhenStoreReadsFail(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{ID: "cb-design", Title: "Diagnosis design", Type: "design", Status: "in_progress"})
+
+	fs := newFakeStore()
+	fs.runs["cb-design"] = &store.PipelineRun{
+		ID:           "pr-1",
+		DesignID:     "cb-design",
+		CurrentPhase: "implement",
+		Status:       "active",
+		UpdatedAt:    time.Now(),
+	}
+	fs.listTasksErr = fmt.Errorf("tasks offline")
+	fs.listSessionsErr = fmt.Errorf("sessions offline")
+	fs.gateHistoryErr = fmt.Errorf("gates offline")
+
+	restore := installTestGlobals(t, fc, fs, "")
+	defer restore()
+
+	prevCombined := pipelineCommandCombinedOutput
+	pipelineCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(""), nil
+	}
+	defer func() {
+		pipelineCommandCombinedOutput = prevCombined
+	}()
+
+	var out bytes.Buffer
+	runDoctorDiagnose(context.Background(), &out, "cb-design")
+	got := out.String()
+
+	for _, want := range []string{
+		"Early-death sessions: unavailable (sessions offline)",
+		"Tasks: unavailable (tasks offline)",
+		"Gates: unavailable (gates offline)",
+		"PRs on tasks: unavailable (list tasks failed: tasks offline)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("doctor diagnose output missing %q:\n%s", want, got)
+		}
 	}
 }
 
