@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
@@ -27,9 +27,7 @@ var (
 	projectPrefix string              // from .cobuild.yaml (e.g., "cb-")
 	conn          connector.Connector // work-item connector
 	cbStore       store.Store         // CoBuild's own data store
-
-	// Legacy client — being migrated away (cb-3f5be6). Still needed for some pipeline commands.
-	cbClient *client.Client
+	storeDSN      string              // Postgres DSN for commands that need raw pgx (dashboard, admin tooling)
 )
 
 var Version = "0.1.0"
@@ -55,7 +53,6 @@ COMMANDS:
   review <shard-id>              Phase 1 readiness review
   decompose <shard-id>           Phase 2 decomposition
   audit <shard-id>               Show pipeline audit trail
-  lock/unlock/lock-check <id>    Pipeline lock management
 
   dispatch <task-id>             Dispatch task to agent via tmux
   complete <task-id>             Post-agent completion bookkeeping
@@ -71,8 +68,9 @@ COMMANDS:
     links add <from> <to> <type> Create a relationship
 
 CONFIGURATION:
-  Uses ~/.cobuild/config.yaml and .cobuild.yaml for project/agent.
-  Legacy ~/.cxp/ and .cxp.yaml paths are also supported.`,
+  Uses ~/.cobuild/config.yaml (global) and .cobuild.yaml (per-repo).
+  COBUILD_HOST / COBUILD_DATABASE / COBUILD_USER / COBUILD_SSLMODE env
+  vars override the config file. No legacy ~/.cxp/ fallback.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -131,23 +129,16 @@ CONFIGURATION:
 		agent := agentFlag
 		conn, _ = connector.New(pCfg, projectName, agent, debugFlag)
 
-		// Try to initialize legacy client + store (needs database)
-		cfg, err := client.LoadClientConfig(configFlag)
-		if err == nil {
-			if projectFlag != "" {
-				cfg.Project = projectFlag
+		// Initialize store from ~/.cobuild/config.yaml (or --config override).
+		// Empty DSN / missing config means no store; commands that need one
+		// fail cleanly when they try to use it (cb-3f5be6 / cb-b2f3ac —
+		// legacy internal/client and its dev02.brown.chat default are gone).
+		if storeCfg, err := cliutil.LoadStoreConfig(configFlag); err == nil {
+			if storeCfg.Defaults != nil && storeCfg.Defaults.Output != "" && !cmd.Flags().Changed("output") {
+				outputFormat = storeCfg.Defaults.Output
 			}
-			if agentFlag != "" {
-				cfg.Agent = agentFlag
-			}
-			if cfg.Defaults != nil && cfg.Defaults.Output != "" && !cmd.Flags().Changed("output") {
-				outputFormat = cfg.Defaults.Output
-			}
-
-			cbClient = client.NewClient(cfg)
-
-			dsn := cbClient.ConnectionString()
-			cbStore, _ = store.New(cmd.Context(), pCfg, dsn)
+			storeDSN = storeCfg.DSN()
+			cbStore, _ = store.New(cmd.Context(), pCfg, storeDSN)
 		}
 
 		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{

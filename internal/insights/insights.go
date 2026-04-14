@@ -1,18 +1,24 @@
-package client
+// Package insights gathers aggregate pipeline statistics for `cobuild
+// insights` and `cobuild improve`. Ported from internal/client/insights.go
+// in the cb-3f5be6 / cb-b2f3ac big-bang migration — behavior unchanged,
+// just no longer coupled to the legacy client.
+package insights
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
-// InsightsStats holds all data needed for the pipeline insights report.
-type InsightsStats struct {
+// Stats holds all data needed for the pipeline insights report.
+type Stats struct {
 	Project   string    `json:"project"`
 	Generated time.Time `json:"generated"`
 
-	Overview       InsightsOverview   `json:"overview"`
+	Overview       Overview           `json:"overview"`
 	GateStats      []GatePassRate     `json:"gate_stats"`
 	FailureReasons []GateFailureGroup `json:"failure_reasons"`
 	AgentPerf      AgentPerformance   `json:"agent_performance"`
@@ -20,8 +26,8 @@ type InsightsStats struct {
 	Improvements   []string           `json:"improvements"`
 }
 
-// InsightsOverview holds pipeline run and task counts.
-type InsightsOverview struct {
+// Overview holds pipeline run and task counts.
+type Overview struct {
 	DesignsCompleted  int `json:"designs_completed"`
 	DesignsInProgress int `json:"designs_in_progress"`
 	DesignsBlocked    int `json:"designs_blocked"`
@@ -60,22 +66,13 @@ type AgentPerformance struct {
 	RebaseNeeded   int     `json:"rebase_needed"`
 }
 
-// GetInsightsStats gathers all pipeline insights data for a project.
-func (c *Client) GetInsightsStats(ctx context.Context, project string) (*InsightsStats, error) {
-	if project == "" {
-		project = c.Config.Project
-	}
-
-	stats := &InsightsStats{
+// Get gathers all pipeline insights data for a project. Caller is
+// responsible for the pgx connection lifecycle; Get will not close it.
+func Get(ctx context.Context, conn *pgx.Conn, project string) (*Stats, error) {
+	stats := &Stats{
 		Project:   project,
 		Generated: time.Now(),
 	}
-
-	conn, err := c.Connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close(ctx)
 
 	tableExists := true
 	rows, err := conn.Query(ctx, `
@@ -278,7 +275,7 @@ func extractFailureReasons(body string) []string {
 	return reasons
 }
 
-func detectFrictionPoints(stats *InsightsStats) []string {
+func detectFrictionPoints(stats *Stats) []string {
 	var points []string
 	if stats.AgentPerf.RebaseNeeded > 0 {
 		points = append(points, fmt.Sprintf(
@@ -303,7 +300,7 @@ func detectFrictionPoints(stats *InsightsStats) []string {
 	return points
 }
 
-func suggestImprovements(stats *InsightsStats) []string {
+func suggestImprovements(stats *Stats) []string {
 	var improvements []string
 	for _, fg := range stats.FailureReasons {
 		for _, r := range fg.Reasons {
@@ -324,4 +321,12 @@ func suggestImprovements(stats *InsightsStats) []string {
 		improvements = append(improvements, "Task completion: ensure task-complete hook always runs to create PRs")
 	}
 	return improvements
+}
+
+func isTableMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "does not exist") || strings.Contains(msg, "relation") || strings.Contains(msg, "table not found")
 }

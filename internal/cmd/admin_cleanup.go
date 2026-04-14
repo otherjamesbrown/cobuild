@@ -160,11 +160,7 @@ func cleanSessionData(ctx context.Context, cutoff time.Time, dryRun bool) (int, 
 
 	// Count old sessions and events via direct SQL
 	// We trim bulk text (prompt, assembled_context, session_log) but keep the row
-	dsn := ""
-	if cbClient != nil {
-		dsn = cbClient.ConnectionString()
-	}
-	if dsn == "" {
+	if storeDSN == "" {
 		return 0, 0
 	}
 

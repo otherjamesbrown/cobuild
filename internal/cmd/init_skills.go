@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -58,7 +58,7 @@ Existing files are not overwritten unless --force or --update is specified.`,
 		repoRoot, err := config.RepoForProject(projectName)
 		if err != nil {
 			cwd, _ := os.Getwd()
-			repoRoot, err = client.GitRepoRoot(cwd)
+			repoRoot, err = cliutil.GitRepoRoot(cwd)
 			if err != nil {
 				return fmt.Errorf("not in a git repo and project not registered")
 			}
@@ -78,7 +78,7 @@ Existing files are not overwritten unless --force or --update is specified.`,
 		sourceDirs := []string{}
 		cwd, _ := os.Getwd()
 		if cwd != "" {
-			if cwdRepo, err := client.GitRepoRoot(cwd); err == nil {
+			if cwdRepo, err := cliutil.GitRepoRoot(cwd); err == nil {
 				sourceDirs = append(sourceDirs, filepath.Join(cwdRepo, "skills"))
 			}
 		}

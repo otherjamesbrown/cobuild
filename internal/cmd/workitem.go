@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/spf13/cobra"
 )
@@ -33,7 +33,7 @@ var wiShowCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(item)
+			s, _ := cliutil.FormatJSON(item)
 			fmt.Println(s)
 			return nil
 		}
@@ -85,7 +85,7 @@ var wiListCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(result)
+			s, _ := cliutil.FormatJSON(result)
 			fmt.Println(s)
 			return nil
 		}
@@ -103,7 +103,7 @@ var wiListCmd = &cobra.Command{
 				item.ID,
 				item.Type,
 				item.Status,
-				client.Truncate(item.Title, 60))
+				cliutil.Truncate(item.Title, 60))
 		}
 		if result.Total > len(result.Items) {
 			fmt.Printf("\nShowing %d of %d\n", len(result.Items), result.Total)
@@ -136,7 +136,7 @@ var wiLinksCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(edges)
+			s, _ := cliutil.FormatJSON(edges)
 			fmt.Println(s)
 			return nil
 		}
@@ -154,7 +154,7 @@ var wiLinksCmd = &cobra.Command{
 				e.EdgeType,
 				e.ItemID,
 				e.Status,
-				client.Truncate(e.Title, 50))
+				cliutil.Truncate(e.Title, 50))
 		}
 		return nil
 	},
@@ -254,7 +254,7 @@ var wiCreateCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(map[string]string{"id": id})
+			s, _ := cliutil.FormatJSON(map[string]string{"id": id})
 			fmt.Println(s)
 			return nil
 		}

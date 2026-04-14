@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -305,13 +304,9 @@ func installTestGlobalsWithResolverExec(t *testing.T, testConn connector.Connect
 	prevConn := conn
 	prevStore := cbStore
 	prevProject := projectName
-	prevClient := cbClient
 	conn = testConn
 	cbStore = testStore
 	projectName = testProject
-	if cbClient == nil {
-		cbClient = &client.Client{}
-	}
 	pipelinestate.ConfigureDefault(pipelinestate.Dependencies{
 		Connector: testConn,
 		Store:     testStore,
@@ -321,7 +316,6 @@ func installTestGlobalsWithResolverExec(t *testing.T, testConn connector.Connect
 		conn = prevConn
 		cbStore = prevStore
 		projectName = prevProject
-		cbClient = prevClient
 		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{})
 	}
 }

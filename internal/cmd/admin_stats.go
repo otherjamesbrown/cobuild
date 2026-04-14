@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/spf13/cobra"
 )
 
@@ -13,11 +14,11 @@ var adminStatsCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
-		if cbClient == nil {
-			return fmt.Errorf("no database connection")
+		if storeDSN == "" {
+			return fmt.Errorf("no database connection — set up ~/.cobuild/config.yaml or COBUILD_* env vars")
 		}
 
-		conn, err := cbClient.Connect(ctx)
+		conn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 		if err != nil {
 			return fmt.Errorf("connect: %v", err)
 		}

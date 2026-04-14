@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -18,19 +19,19 @@ import (
 type kbSyncGateVerdict string
 
 const (
-	kbSyncVerdictNoChanges    kbSyncGateVerdict = "no-changes-needed"
-	kbSyncVerdictUpdated      kbSyncGateVerdict = "updated"
+	kbSyncVerdictNoChanges     kbSyncGateVerdict = "no-changes-needed"
+	kbSyncVerdictUpdated       kbSyncGateVerdict = "updated"
 	kbSyncVerdictPartialUpdate kbSyncGateVerdict = "partial-update"
 	kbSyncVerdictAllRolledBack kbSyncGateVerdict = "all-rolled-back"
 )
 
 // factcheckResult is the JSON output of the kb-factcheck skill.
 type factcheckResult struct {
-	Verdict         string              `json:"verdict"`
-	ClaimsChecked   int                 `json:"claims_checked"`
-	ClaimsVerified  int                 `json:"claims_verified"`
-	ClaimsFailed    []factcheckClaim    `json:"claims_failed"`
-	ClaimsAmbiguous []factcheckClaim    `json:"claims_ambiguous"`
+	Verdict         string           `json:"verdict"`
+	ClaimsChecked   int              `json:"claims_checked"`
+	ClaimsVerified  int              `json:"claims_verified"`
+	ClaimsFailed    []factcheckClaim `json:"claims_failed"`
+	ClaimsAmbiguous []factcheckClaim `json:"claims_ambiguous"`
 }
 
 type factcheckClaim struct {
@@ -41,9 +42,9 @@ type factcheckClaim struct {
 
 // judgeResult is the JSON output of the kb-judge skill.
 type judgeResult struct {
-	Verdict        string        `json:"verdict"`
-	Issues         []judgeIssue  `json:"issues"`
-	GapsIdentified []string      `json:"gaps_identified"`
+	Verdict        string       `json:"verdict"`
+	Issues         []judgeIssue `json:"issues"`
+	GapsIdentified []string     `json:"gaps_identified"`
 }
 
 type judgeIssue struct {
@@ -164,13 +165,13 @@ Gate verdict is non-blocking: all-rolled-back still advances the work item to do
 // checkKBModelFamilyConstraint verifies that kb_sync and kb_judge routing rules
 // use different model families. Refuses to run if they share a family.
 func checkKBModelFamilyConstraint(ctx context.Context) error {
-	if cbClient == nil {
+	if storeDSN == "" {
 		// No DB connection — skip constraint check with a warning
 		fmt.Println("Warning: no database connection, skipping model-family constraint check.")
 		return nil
 	}
 
-	dbConn, err := cbClient.Connect(ctx)
+	dbConn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 	if err != nil {
 		fmt.Printf("Warning: cannot connect to DB for model-family check: %v\n", err)
 		return nil

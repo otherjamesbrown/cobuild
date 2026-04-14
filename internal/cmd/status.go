@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +37,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(runs)
+			s, _ := cliutil.FormatJSON(runs)
 			fmt.Println(s)
 			return nil
 		}
@@ -50,7 +50,7 @@ var statusCmd = &cobra.Command{
 				taskSummary = fmt.Sprintf("%d/%d", r.TaskDone, r.TaskTotal)
 			}
 
-			lastActivity := client.TimeAgo(r.LastProgress)
+			lastActivity := cliutil.TimeAgo(r.LastProgress)
 			health := statusHealthFor(r.Status, r.LastProgress)
 
 			fmt.Printf("%-12s %-14s %-10s %-8s %-6s %s\n",

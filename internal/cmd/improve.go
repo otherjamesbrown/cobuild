@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/insights"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,7 @@ Run with --apply to auto-apply the changes.`,
 		repoRoot, _ := config.RepoForProject(project)
 		if repoRoot == "" {
 			cwd, _ := os.Getwd()
-			repoRoot, _ = client.GitRepoRoot(cwd)
+			repoRoot, _ = cliutil.GitRepoRoot(cwd)
 		}
 
 		pCfg, _ := config.LoadConfig(repoRoot)
@@ -47,7 +48,16 @@ Run with --apply to auto-apply the changes.`,
 			pCfg = config.DefaultConfig()
 		}
 
-		stats, err := cbClient.GetInsightsStats(ctx, project)
+		if storeDSN == "" {
+			return fmt.Errorf("no database connection — set up ~/.cobuild/config.yaml or COBUILD_* env vars")
+		}
+		dbConn, err := cliutil.ConnectPostgres(ctx, storeDSN)
+		if err != nil {
+			return fmt.Errorf("connect: %v", err)
+		}
+		defer dbConn.Close(ctx)
+
+		stats, err := insights.Get(ctx, dbConn, project)
 		if err != nil {
 			return fmt.Errorf("failed to get insights: %v", err)
 		}
@@ -55,7 +65,7 @@ Run with --apply to auto-apply the changes.`,
 		actions := generateImprovements(stats, pCfg, repoRoot)
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(actions)
+			s, _ := cliutil.FormatJSON(actions)
 			fmt.Println(s)
 			return nil
 		}
@@ -97,7 +107,7 @@ Run with --apply to auto-apply the changes.`,
 	},
 }
 
-func generateImprovements(stats *client.InsightsStats, cfg *config.Config, repoRoot string) []ImprovementAction {
+func generateImprovements(stats *insights.Stats, cfg *config.Config, repoRoot string) []ImprovementAction {
 	var actions []ImprovementAction
 
 	for _, gs := range stats.GateStats {

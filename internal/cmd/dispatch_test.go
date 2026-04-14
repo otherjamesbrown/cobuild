@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -584,7 +583,6 @@ func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {
 	testDir := setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
 
 	prevConn := conn
-	prevClient := cbClient
 	prevProject := projectName
 	conn = newDispatchWaveTestConnector(
 		dispatchWaveTestItem("design-1", "design", "open", nil),
@@ -592,11 +590,9 @@ func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {
 		dispatchWaveTestItem("task-2", "task", "open", map[string]any{"wave": 1}),
 		dispatchWaveTestItem("task-3", "task", "open", map[string]any{"wave": 2}),
 	)
-	cbClient = &client.Client{}
 	projectName = "cb-test"
 	t.Cleanup(func() {
 		conn = prevConn
-		cbClient = prevClient
 		projectName = prevProject
 	})
 
@@ -679,7 +675,6 @@ func TestDispatchWaveParallelKeepsMultiWaveDispatch(t *testing.T) {
 	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: parallel\n  max_concurrent: 3\n")
 
 	prevConn := conn
-	prevClient := cbClient
 	prevProject := projectName
 	conn = newDispatchWaveTestConnector(
 		dispatchWaveTestItem("design-1", "design", "open", nil),
@@ -687,11 +682,9 @@ func TestDispatchWaveParallelKeepsMultiWaveDispatch(t *testing.T) {
 		dispatchWaveTestItem("task-2", "task", "open", map[string]any{"wave": 2}),
 		dispatchWaveTestItem("task-3", "task", "open", map[string]any{"wave": 3}),
 	)
-	cbClient = &client.Client{}
 	projectName = "cb-test"
 	t.Cleanup(func() {
 		conn = prevConn
-		cbClient = prevClient
 		projectName = prevProject
 	})
 
@@ -720,7 +713,6 @@ func TestDispatchWaveAppliesConcurrencyAfterWaveSelection(t *testing.T) {
 	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 1\n  runtimes:\n    claude-code:\n      max_concurrent: 1\n")
 
 	prevConn := conn
-	prevClient := cbClient
 	prevProject := projectName
 	conn = newDispatchWaveTestConnector(
 		dispatchWaveTestItem("design-1", "design", "open", nil),
@@ -728,11 +720,9 @@ func TestDispatchWaveAppliesConcurrencyAfterWaveSelection(t *testing.T) {
 		dispatchWaveTestItem("task-2", "task", "open", map[string]any{"wave": 1}),
 		dispatchWaveTestItem("task-3", "task", "open", map[string]any{"wave": 2}),
 	)
-	cbClient = &client.Client{}
 	projectName = "cb-test"
 	t.Cleanup(func() {
 		conn = prevConn
-		cbClient = prevClient
 		projectName = prevProject
 	})
 
@@ -763,7 +753,6 @@ func TestDispatchWaveAppliesPerRuntimeCaps(t *testing.T) {
 	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: parallel\n  max_concurrent: 10\n  runtimes:\n    codex:\n      max_concurrent: 1\n    claude-code:\n      max_concurrent: 2\n")
 
 	prevConn := conn
-	prevClient := cbClient
 	prevProject := projectName
 	conn = newDispatchWaveTestConnector(
 		dispatchWaveTestItem("design-1", "design", "open", nil),
@@ -772,11 +761,9 @@ func TestDispatchWaveAppliesPerRuntimeCaps(t *testing.T) {
 		dispatchWaveTestItem("task-cc-b", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "claude-code"}),
 		dispatchWaveTestItem("task-cc-c", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "claude-code"}),
 	)
-	cbClient = &client.Client{}
 	projectName = "cb-test"
 	t.Cleanup(func() {
 		conn = prevConn
-		cbClient = prevClient
 		projectName = prevProject
 	})
 

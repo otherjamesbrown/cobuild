@@ -8,20 +8,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
 
 // DeployResult tracks the outcome of deploying a service.
 type DeployResult struct {
-	Service    string `json:"service"`
-	Triggered  bool   `json:"triggered"`
-	Deployed   bool   `json:"deployed"`
-	SmokePassed bool  `json:"smoke_passed"`
-	RolledBack bool   `json:"rolled_back"`
-	Error      string `json:"error,omitempty"`
-	Duration   string `json:"duration,omitempty"`
+	Service     string `json:"service"`
+	Triggered   bool   `json:"triggered"`
+	Deployed    bool   `json:"deployed"`
+	SmokePassed bool   `json:"smoke_passed"`
+	RolledBack  bool   `json:"rolled_back"`
+	Error       string `json:"error,omitempty"`
+	Duration    string `json:"duration,omitempty"`
 }
 
 var deployCmd = &cobra.Command{
@@ -222,7 +222,7 @@ Only deploys services whose trigger_paths match the changed files.`,
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(results)
+			s, _ := cliutil.FormatJSON(results)
 			fmt.Println(s)
 			return nil
 		}

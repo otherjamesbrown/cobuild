@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/merge"
 	"github.com/spf13/cobra"
@@ -145,7 +145,7 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 		plan := merge.GeneratePlan(designID, cm, sr)
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(plan)
+			s, _ := cliutil.FormatJSON(plan)
 			fmt.Println(s)
 			return nil
 		}

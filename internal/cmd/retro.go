@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +49,7 @@ In autonomous mode, the poller triggers this automatically.`,
 				"status":    run.Status,
 				"gates":     gates,
 			}
-			s, _ := client.FormatJSON(data)
+			s, _ := cliutil.FormatJSON(data)
 			fmt.Println(s)
 			return nil
 		}
@@ -65,7 +65,7 @@ In autonomous mode, the poller triggers this automatically.`,
 			for _, g := range gates {
 				bodyStr := ""
 				if g.Body != nil {
-					bodyStr = client.Truncate(*g.Body, 50)
+					bodyStr = cliutil.Truncate(*g.Body, 50)
 				}
 				fmt.Printf("  %-24s %-8d %-8s %s\n", g.GateName, g.Round, g.Verdict, bodyStr)
 			}

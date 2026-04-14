@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/testutil/pgtest"
@@ -295,13 +295,13 @@ func (h *Harness) commitHarnessConfig(ctx context.Context) error {
 	return nil
 }
 
-func clientConfigFromDSN(dsn, project, prefix string) (*client.ClientConfig, error) {
+func clientConfigFromDSN(dsn, project, prefix string) (*cliutil.StoreConfig, error) {
 	pgCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse base dsn: %w", err)
 	}
-	cfg := &client.ClientConfig{
-		Connection: client.ConnectionConfig{
+	cfg := &cliutil.StoreConfig{
+		Connection: cliutil.ConnectionConfig{
 			Host:     pgCfg.ConnConfig.Host,
 			Database: pgCfg.ConnConfig.Database,
 			User:     pgCfg.ConnConfig.User,

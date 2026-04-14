@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
+	"github.com/otherjamesbrown/cobuild/internal/insights"
 	"github.com/spf13/cobra"
 )
 
@@ -25,19 +26,28 @@ task statuses, and agent performance to produce an insights report.`,
 			project = p
 		}
 
-		stats, err := cbClient.GetInsightsStats(ctx, project)
+		if storeDSN == "" {
+			return fmt.Errorf("no database connection — set up ~/.cobuild/config.yaml or COBUILD_* env vars")
+		}
+		dbConn, err := cliutil.ConnectPostgres(ctx, storeDSN)
+		if err != nil {
+			return fmt.Errorf("connect: %v", err)
+		}
+		defer dbConn.Close(ctx)
+
+		stats, err := insights.Get(ctx, dbConn, project)
 		if err != nil {
 			return err
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(stats)
+			s, _ := cliutil.FormatJSON(stats)
 			fmt.Println(s)
 			return nil
 		}
 
 		if outputFormat == "yaml" {
-			s, _ := client.FormatYAML(stats)
+			s, _ := cliutil.FormatYAML(stats)
 			fmt.Print(s)
 			return nil
 		}
@@ -47,7 +57,7 @@ task statuses, and agent performance to produce an insights report.`,
 	},
 }
 
-func printInsightsText(stats *client.InsightsStats) {
+func printInsightsText(stats *insights.Stats) {
 	fmt.Printf("Pipeline Insights -- %s\n", stats.Project)
 	fmt.Printf("Generated: %s\n", stats.Generated.Format(time.DateOnly))
 	fmt.Println()

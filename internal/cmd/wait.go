@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +21,7 @@ Exit codes:
   0 — all tasks reached target status
   1 — timeout reached before all tasks completed
   2 — a task reached a terminal failure state (blocked)`,
-	Args:    cobra.MinimumNArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	Example: `  cobuild wait pf-abc123 pf-def456              # wait for needs-review
   cobuild wait pf-abc123 --status closed          # wait for closed
   cobuild wait pf-abc123 --timeout 30m            # custom timeout
@@ -82,7 +82,7 @@ Exit codes:
 				}
 
 				statusLines = append(statusLines, fmt.Sprintf("  %s: %-14s [%s] %s",
-					id, item.Status, marker, client.Truncate(item.Title, 50)))
+					id, item.Status, marker, cliutil.Truncate(item.Title, 50)))
 
 				if !done {
 					allDone = false

@@ -367,4 +367,3 @@ func expectedPhaseForGate(gateName string) string {
 		return ""
 	}
 }
-

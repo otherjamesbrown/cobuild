@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/spf13/cobra"
 )
 
@@ -25,14 +25,14 @@ type transcriptMessage struct {
 }
 
 type sessionTokenSummary struct {
-	Turns              int     `json:"turns"`
-	InputTokens        int     `json:"input_tokens"`
-	OutputTokens       int     `json:"output_tokens"`
-	CacheReadTokens    int     `json:"cache_read_tokens"`
-	CacheCreateTokens  int     `json:"cache_create_tokens"`
-	TotalTokens        int     `json:"total_tokens"`
-	EstimatedCostUSD   float64 `json:"estimated_cost_usd"`
-	MaxContextTokens   int     `json:"max_context_tokens"`
+	Turns             int     `json:"turns"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	CacheReadTokens   int     `json:"cache_read_tokens"`
+	CacheCreateTokens int     `json:"cache_create_tokens"`
+	TotalTokens       int     `json:"total_tokens"`
+	EstimatedCostUSD  float64 `json:"estimated_cost_usd"`
+	MaxContextTokens  int     `json:"max_context_tokens"`
 }
 
 var adminTokensCmd = &cobra.Command{
@@ -81,7 +81,7 @@ Outputs: turns, input/output/cache tokens, estimated cost, max context size.`,
 		}
 
 		if outputFormat == "json" {
-			s, _ := client.FormatJSON(summary)
+			s, _ := cliutil.FormatJSON(summary)
 			fmt.Println(s)
 		} else {
 			fmt.Printf("Transcript: %s\n\n", transcriptPath)

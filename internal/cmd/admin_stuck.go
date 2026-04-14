@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/spf13/cobra"
 )
@@ -37,7 +37,7 @@ var adminStuckCmd = &cobra.Command{
 							fmt.Printf("Stuck Pipelines (no progress in >%dh):\n", staleHours)
 						}
 						fmt.Printf("  %-12s %-14s last activity: %s\n",
-							r.DesignID, r.Phase, client.TimeAgo(r.LastProgress))
+							r.DesignID, r.Phase, cliutil.TimeAgo(r.LastProgress))
 						stuckCount++
 					}
 				}
@@ -67,7 +67,7 @@ var adminStuckCmd = &cobra.Command{
 							wtPath = *s.WorktreePath
 						}
 						fmt.Printf("  %-12s %-12s started: %s  worktree: %s\n",
-							s.ID[:12], s.TaskID, client.TimeAgo(s.StartedAt), wtPath)
+							s.ID[:12], s.TaskID, cliutil.TimeAgo(s.StartedAt), wtPath)
 						abandonedCount++
 					}
 				}
@@ -93,8 +93,8 @@ var adminStuckCmd = &cobra.Command{
 								fmt.Printf("Orphan Tasks (open, never dispatched, >%dh old):\n", staleHours)
 							}
 							fmt.Printf("  %-12s created: %s  %s\n",
-								item.ID, client.TimeAgo(item.CreatedAt),
-								client.Truncate(item.Title, 50))
+								item.ID, cliutil.TimeAgo(item.CreatedAt),
+								cliutil.Truncate(item.Title, 50))
 							orphanCount++
 						}
 					}

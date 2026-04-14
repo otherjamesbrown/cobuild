@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
@@ -34,11 +34,11 @@ Use --project to filter to one project. Use --json for structured output.`,
 		ctx := context.Background()
 		projectFilter, _ := cmd.Flags().GetString("project")
 
-		if cbClient == nil {
-			return fmt.Errorf("no database connection")
+		if storeDSN == "" {
+			return fmt.Errorf("no database connection — set up ~/.cobuild/config.yaml or COBUILD_* env vars")
 		}
 
-		conn, err := cbClient.Connect(ctx)
+		conn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 		if err != nil {
 			return fmt.Errorf("connect: %v", err)
 		}
@@ -291,14 +291,14 @@ func buildDashboardActivePipelineRows(ctx context.Context, rows interface {
 
 func buildDashboardActivePipelineRow(ctx context.Context, seed dashboardActivePipelineSeed, resolver dashboardPipelineResolver) dashboardActivePipelineRow {
 	row := dashboardActivePipelineRow{
-		ID:           client.Truncate(seed.DesignID, 16),
+		ID:           cliutil.Truncate(seed.DesignID, 16),
 		Project:      seed.Project,
 		Phase:        seed.Phase,
 		Mode:         seed.Mode,
 		Tasks:        formatDashboardTasks(seed.TaskDone, seed.TaskTotal),
 		Health:       string(pipelinestate.HealthMissing),
 		Signals:      "-",
-		LastActivity: client.TimeAgo(seed.UpdatedAt),
+		LastActivity: cliutil.TimeAgo(seed.UpdatedAt),
 	}
 
 	if resolver == nil {
@@ -327,7 +327,7 @@ func buildDashboardActivePipelineRow(ctx context.Context, seed dashboardActivePi
 			row.Mode = state.Run.Mode
 		}
 		if !state.Run.UpdatedAt.IsZero() {
-			row.LastActivity = client.TimeAgo(state.Run.UpdatedAt)
+			row.LastActivity = cliutil.TimeAgo(state.Run.UpdatedAt)
 		}
 	}
 
@@ -391,5 +391,5 @@ func truncateDashboardSignals(value string) string {
 	if value == "" {
 		return "-"
 	}
-	return client.Truncate(value, 120)
+	return cliutil.Truncate(value, 120)
 }

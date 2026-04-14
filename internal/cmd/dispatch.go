@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
@@ -624,7 +624,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				"tmux_window":   tmuxWindow,
 				"dispatched_at": dispatchInfo["dispatched_at"],
 			}
-			s, _ := client.FormatJSON(out)
+			s, _ := cliutil.FormatJSON(out)
 			fmt.Println(s)
 			dispatchSucceeded = true
 			return nil
@@ -648,9 +648,6 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if cbClient == nil {
-			return fmt.Errorf("no client configured")
-		}
 		if conn == nil {
 			return fmt.Errorf("no connector configured")
 		}

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/client"
+	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +57,7 @@ gate history, and task status. Use this first when a pipeline is stuck
 		}
 
 		if outputFormat == "json" {
-			s, err := client.FormatJSON(report)
+			s, err := cliutil.FormatJSON(report)
 			if err != nil {
 				return err
 			}
