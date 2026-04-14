@@ -336,18 +336,22 @@ func testResolverExec() pipelinestate.CommandRunner {
 }
 
 type fakeConnector struct {
-	items    map[string]*connector.WorkItem
-	metadata map[string]map[string]string
-	parent   map[string]string
-	edges    map[string]map[string][]connector.Edge
+	items          map[string]*connector.WorkItem
+	metadata       map[string]map[string]string
+	parent         map[string]string
+	edges          map[string]map[string][]connector.Edge
+	setMetadataErr map[string]error
+	getMetadataErr map[string]error
 }
 
 func newFakeConnector() *fakeConnector {
 	return &fakeConnector{
-		items:    map[string]*connector.WorkItem{},
-		metadata: map[string]map[string]string{},
-		parent:   map[string]string{},
-		edges:    map[string]map[string][]connector.Edge{},
+		items:          map[string]*connector.WorkItem{},
+		metadata:       map[string]map[string]string{},
+		parent:         map[string]string{},
+		edges:          map[string]map[string][]connector.Edge{},
+		setMetadataErr: map[string]error{},
+		getMetadataErr: map[string]error{},
 	}
 }
 
@@ -401,6 +405,9 @@ func (f *fakeConnector) GetEdges(ctx context.Context, id string, direction strin
 }
 
 func (f *fakeConnector) GetMetadata(ctx context.Context, id string, key string) (string, error) {
+	if err := f.getMetadataErr[id+":"+key]; err != nil {
+		return "", err
+	}
 	if f.metadata[id] != nil {
 		if value, ok := f.metadata[id][key]; ok {
 			return value, nil
@@ -441,6 +448,9 @@ func (f *fakeConnector) AppendContent(ctx context.Context, id string, content st
 }
 
 func (f *fakeConnector) SetMetadata(ctx context.Context, id string, key string, value any) error {
+	if err := f.setMetadataErr[id+":"+key]; err != nil {
+		return err
+	}
 	if f.metadata[id] == nil {
 		f.metadata[id] = map[string]string{}
 	}
@@ -545,6 +555,9 @@ type fakeStore struct {
 	sessions        []store.SessionRecord
 	lastProject     string
 	resetCalls      int
+	gateHistoryErr  error
+	listTasksErr    error
+	listSessionsErr error
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
 	tasks []store.PipelineTaskRecord
@@ -674,6 +687,9 @@ func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInpu
 }
 
 func (f *fakeStore) GetGateHistory(ctx context.Context, designID string) ([]store.PipelineGateRecord, error) {
+	if f.gateHistoryErr != nil {
+		return nil, f.gateHistoryErr
+	}
 	return nil, nil
 }
 
@@ -693,6 +709,9 @@ func (f *fakeStore) AddTask(ctx context.Context, pipelineID, taskShardID, design
 }
 
 func (f *fakeStore) ListTasks(ctx context.Context, pipelineID string) ([]store.PipelineTaskRecord, error) {
+	if f.listTasksErr != nil {
+		return nil, f.listTasksErr
+	}
 	if f.tasks != nil {
 		return append([]store.PipelineTaskRecord(nil), f.tasks...), nil
 	}
@@ -740,6 +759,9 @@ func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.Sessi
 }
 
 func (f *fakeStore) ListSessions(ctx context.Context, designID string) ([]store.SessionRecord, error) {
+	if f.listSessionsErr != nil {
+		return nil, f.listSessionsErr
+	}
 	if designID == "" {
 		return append([]store.SessionRecord(nil), f.sessions...), nil
 	}

@@ -60,12 +60,25 @@ Exit codes:
 				title = item.Title
 			}
 		}
-		gates, _ := cbStore.GetGateHistory(ctx, id)
+		var gates []store.PipelineGateRecord
+		if records, err := cbStore.GetGateHistory(ctx, id); err != nil {
+			warnCommandReadError(cmd, "read gate history", err)
+		} else {
+			gates = records
+		}
 		var tasks []store.PipelineTaskRecord
 		var sessions []store.SessionRecord
 		if run != nil {
-			tasks, _ = cbStore.ListTasks(ctx, run.ID)
-			sessions, _ = cbStore.ListSessions(ctx, id)
+			if records, err := cbStore.ListTasks(ctx, run.ID); err != nil {
+				warnCommandReadError(cmd, "read pipeline tasks", err)
+			} else {
+				tasks = records
+			}
+			if records, err := cbStore.ListSessions(ctx, id); err != nil {
+				warnCommandReadError(cmd, "read session history", err)
+			} else {
+				sessions = records
+			}
 		}
 		latestSessions := latestSessionByTask(sessions)
 
