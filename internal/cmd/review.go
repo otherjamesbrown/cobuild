@@ -133,6 +133,13 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// PR diff, design, and task scope and write a verdict. Same pattern
 		// as every other gate phase. Avoids the Anthropic API path entirely
 		// (cb-482378). The agent's verdict gets recorded by its runner script.
+		//
+		// cb-9792e7: this branch always returns — it MUST NOT fall through
+		// to the builtin/external path below. On repos without
+		// ANTHROPIC_API_KEY (the whole point of dispatched mode), the
+		// builtin claude reviewer 401s and records a spurious review/fail
+		// gate. Any ambiguous state from dispatchReviewAgent resolves to
+		// "waiting, retry next poll" — never to "try the builtin path".
 		if pCfg.Review.EffectiveMode() == "dispatched" {
 			// Fallback verdict reader for cb-3b091b. If a prior dispatched
 			// agent already wrote .cobuild/gate-verdict.json but the runner
@@ -148,16 +155,15 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 				return nil
 			}
 
-			waiting, err := dispatchReviewAgent(ctx, cmd, taskID)
-			if err != nil {
+			if _, err := dispatchReviewAgent(ctx, cmd, taskID); err != nil {
 				return err
 			}
-			if waiting {
-				printNextStep(taskID, "waiting", "process-review")
-				return nil
-			}
-			// Fall-through (skip path returned false): continue with the
-			// existing builtin/external flow as a safety net.
+			// Always wait for the dispatched agent's verdict. The prior
+			// code path returned waiting only when the dispatcher said so
+			// and otherwise fell through to builtin; that fall-through is
+			// exactly cb-9792e7.
+			printNextStep(taskID, "waiting", "process-review")
+			return nil
 		}
 
 		var (
