@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,8 @@ const geminiBotLogin = "gemini-code-assist[bot]"
 const directReviewPassBody = "Direct-mode task, no PR review required"
 
 var (
-	reviewCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	reviewWarningWriter io.Writer = os.Stderr
+	reviewCommandOutput           = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).Output()
 	}
 	reviewCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -42,6 +44,10 @@ var (
 		return llmreview.NewReviewer(provider, cfg)
 	}
 )
+
+func reviewWarnf(format string, args ...any) {
+	fmt.Fprintf(reviewWarningWriter, format, args...)
+}
 
 var processReviewCmd = &cobra.Command{
 	Use:   "process-review <task-id>",
@@ -593,7 +599,9 @@ func recordMergeFailure(ctx context.Context, taskID, prURL, detail string) {
 		_, _ = fmt.Sscanf(existing, "%d", &count)
 	}
 	count++
-	_ = conn.SetMetadata(ctx, taskID, "merge_retry_count", fmt.Sprintf("%d", count))
+	if err := conn.SetMetadata(ctx, taskID, "merge_retry_count", fmt.Sprintf("%d", count)); err != nil {
+		reviewWarnf("Warning: failed to record merge retry count for %s: %v\n", taskID, err)
+	}
 
 	if count < mergeMaxRetries {
 		return
@@ -607,8 +615,12 @@ func recordMergeFailure(ctx context.Context, taskID, prURL, detail string) {
 			"  - close the PR and let the orchestrator re-dispatch the task.",
 		count, prURL, strings.TrimSpace(detail), taskID,
 	)
-	_ = conn.AppendContent(ctx, taskID, note)
-	_ = conn.AddLabel(ctx, taskID, "merge-blocked")
+	if err := conn.AppendContent(ctx, taskID, note); err != nil {
+		reviewWarnf("Warning: failed to append merge-blocked note to %s: %v\n", taskID, err)
+	}
+	if err := conn.AddLabel(ctx, taskID, "merge-blocked"); err != nil {
+		reviewWarnf("Warning: failed to add merge-blocked label to %s: %v\n", taskID, err)
+	}
 }
 
 // mergeIsBlocked reports whether the merge retry cap has already been hit
@@ -665,7 +677,10 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
 	}
 	// Clear retry counter on success so a re-merged/re-opened PR starts fresh.
-	_ = conn.SetMetadata(ctx, taskID, "merge_retry_count", "")
+	if err := conn.SetMetadata(ctx, taskID, "merge_retry_count", ""); err != nil {
+		// Best-effort cleanup; a stale retry counter is recoverable by clearing metadata manually.
+		reviewWarnf("Warning: failed to clear merge retry count for %s: %v\n", taskID, err)
+	}
 	fmt.Println("  Merged.")
 
 	// Rebase sibling branches onto updated main to prevent merge conflicts
@@ -1326,11 +1341,13 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		if sessions, lerr := cbStore.ListSessions(ctx, taskID); lerr == nil {
 			for _, s := range sessions {
 				if s.Status == "running" && s.Phase == "review" {
-					_ = cbStore.EndSession(ctx, s.ID, store.SessionResult{
+					if err := cbStore.EndSession(ctx, s.ID, store.SessionResult{
 						ExitCode:       0,
 						Status:         "completed",
 						CompletionNote: "dispatched review verdict consumed by process-review",
-					})
+					}); err != nil {
+						reviewWarnf("Warning: failed to close review session %s for %s: %v\n", s.ID, taskID, err)
+					}
 				}
 			}
 		}
