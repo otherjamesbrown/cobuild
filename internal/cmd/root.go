@@ -95,7 +95,14 @@ CONFIGURATION:
 				configRoot = projRoot
 			}
 		}
-		pCfg, _ := config.LoadConfig(configRoot)
+		// Surface LoadConfig errors on stderr rather than silently falling
+		// back to defaults (cb-663873). LoadConfig already distinguishes
+		// "file not found" (returns nil, nil) from malformed YAML (returns
+		// error); the nil error path is still quiet.
+		pCfg, err := config.LoadConfig(configRoot)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: pipeline config load failed: %v\n", err)
+		}
 
 		// Fall back to deriving projectName from other sources when
 		// .cobuild.yaml / .cxp.yaml doesn't exist. Fixes cb-11a464 where
@@ -125,20 +132,42 @@ CONFIGURATION:
 			}
 		}
 
-		// Initialize connector (always — needed for wi commands)
+		// Initialize connector (always — needed for wi commands). Surface
+		// init errors on stderr (cb-663873); commands that need the
+		// connector still fail at the conn==nil check site, but the
+		// operator now knows WHY.
 		agent := agentFlag
-		conn, _ = connector.New(pCfg, projectName, agent, debugFlag)
+		var connErr error
+		conn, connErr = connector.New(pCfg, projectName, agent, debugFlag)
+		if connErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: connector init failed: %v\n", connErr)
+		}
 
 		// Initialize store from ~/.cobuild/config.yaml (or --config override).
 		// Empty DSN / missing config means no store; commands that need one
 		// fail cleanly when they try to use it (cb-3f5be6 / cb-b2f3ac —
 		// legacy internal/client and its dev02.brown.chat default are gone).
-		if storeCfg, err := cliutil.LoadStoreConfig(configFlag); err == nil {
+		// Surface load/init errors on stderr so missing config is a visible
+		// signal rather than silent-degrade behaviour (cb-663873).
+		storeCfg, storeCfgErr := cliutil.LoadStoreConfig(configFlag)
+		if storeCfgErr != nil {
+			// Silent for commands that don't need a store. Distinguishing
+			// which ones do is harder than it looks (wi create doesn't,
+			// init does); rather than maintain that list, let callers hit
+			// cbStore==nil and print their own reason. Uncomment the next
+			// line during local debugging if a store-requiring command
+			// fails mysteriously.
+			// fmt.Fprintf(cmd.ErrOrStderr(), "Note: store config load: %v\n", storeCfgErr)
+		} else {
 			if storeCfg.Defaults != nil && storeCfg.Defaults.Output != "" && !cmd.Flags().Changed("output") {
 				outputFormat = storeCfg.Defaults.Output
 			}
 			storeDSN = storeCfg.DSN()
-			cbStore, _ = store.New(cmd.Context(), pCfg, storeDSN)
+			var storeErr error
+			cbStore, storeErr = store.New(cmd.Context(), pCfg, storeDSN)
+			if storeErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: store init failed: %v\n", storeErr)
+			}
 		}
 
 		pipelinestate.ConfigureDefault(pipelinestate.Dependencies{

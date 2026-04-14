@@ -25,7 +25,7 @@ type Runtime struct{}
 func New() *Runtime { return &Runtime{} }
 
 func init() {
-	runtime.Register(New())
+	runtime.MustRegister(New())
 }
 
 func (r *Runtime) Name() string { return Name }

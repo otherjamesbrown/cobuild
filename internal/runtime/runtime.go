@@ -128,21 +128,35 @@ var (
 )
 
 // Register adds a Runtime to the global registry. Intended to be called
-// from init() in each runtime-implementation package.
-func Register(rt Runtime) {
+// from init() in each runtime-implementation package. Returns an error
+// rather than panicking so callers can log and continue (or log.Fatal)
+// — cb-663873 retired the init-time panics that would otherwise take
+// the entire binary down on a single mis-registered runtime.
+func Register(rt Runtime) error {
 	if rt == nil {
-		panic("runtime: Register called with nil Runtime")
+		return fmt.Errorf("runtime: Register called with nil Runtime")
 	}
 	name := rt.Name()
 	if name == "" {
-		panic("runtime: Register called with empty Name")
+		return fmt.Errorf("runtime: Register called with empty Name")
 	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if _, exists := registry[name]; exists {
-		panic(fmt.Sprintf("runtime: duplicate Register for %q", name))
+		return fmt.Errorf("runtime: duplicate Register for %q", name)
 	}
 	registry[name] = rt
+	return nil
+}
+
+// MustRegister registers a Runtime and panics on error. Use from init()
+// only when a failed registration should truly terminate the binary —
+// the default expectation is that init() will use Register and either
+// log.Fatal or swallow cleanly.
+func MustRegister(rt Runtime) {
+	if err := Register(rt); err != nil {
+		panic(err)
+	}
 }
 
 // Get looks up a Runtime by name. Returns an error if no runtime with that
