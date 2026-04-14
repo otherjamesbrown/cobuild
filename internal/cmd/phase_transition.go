@@ -102,7 +102,11 @@ func advancePipelinePhaseTo(
 }
 
 // resolveNextPhase determines the next phase using the workflow config.
-// Falls back to hardcoded gate-name mapping when config/connector unavailable.
+// Returns an error when the connector / config is unavailable or the
+// current phase isn't declared in any workflow — the previous hardcoded
+// phase-ordering fallback was the exact "config over code" drift the
+// 2026-04-14 review flagged (cb-9a336c). Callers should surface the
+// error rather than silently advancing.
 func resolveNextPhase(
 	ctx context.Context,
 	cn connector.Connector,
@@ -110,43 +114,31 @@ func resolveNextPhase(
 	designID string,
 	currentPhase string,
 ) (string, error) {
-	// Primary: resolve from workflow config
-	if cn != nil {
-		if item, err := cn.Get(ctx, designID); err == nil && item != nil {
-			bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
-			if resolveErr != nil {
-				return "", resolveErr
-			}
-			cfg := pCfg
-			if cfg == nil {
-				cfg = config.DefaultConfig()
-			}
-			if next := cfg.NextPhaseInWorkflow(bootstrap.Workflow, currentPhase); next != "" {
-				return next, nil
-			}
-		}
+	if cn == nil {
+		return "", fmt.Errorf("resolve next phase for %s: no connector configured (cb-9a336c)", designID)
+	}
+	item, err := cn.Get(ctx, designID)
+	if err != nil {
+		return "", fmt.Errorf("resolve next phase for %s: get work item: %w", designID, err)
+	}
+	if item == nil {
+		return "", fmt.Errorf("resolve next phase for %s: work item not found", designID)
 	}
 
-	// Fallback: hardcoded phase ordering for when config/connector unavailable.
-	// This matches the default workflows in config.DefaultConfig.
-	switch currentPhase {
-	case "design":
-		return "decompose", nil
-	case "decompose":
-		return "implement", nil
-	case "investigate":
-		return "implement", nil
-	case "fix":
-		return "review", nil
-	case "implement":
-		return "review", nil
-	case "review":
-		return "done", nil
-	case "kb-sync":
-		return "done", nil
-	default:
-		return "", fmt.Errorf("unknown phase %q for %s", currentPhase, designID)
+	bootstrap, resolveErr := pipelinestate.ResolveBootstrap(item, pCfg)
+	if resolveErr != nil {
+		return "", fmt.Errorf("resolve next phase for %s: %w", designID, resolveErr)
 	}
+	cfg := pCfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	next := cfg.NextPhaseInWorkflow(bootstrap.Workflow, currentPhase)
+	if next == "" {
+		return "", fmt.Errorf("resolve next phase for %s: no phase after %q in workflow %q (check pipeline.yaml)",
+			designID, currentPhase, bootstrap.Workflow)
+	}
+	return next, nil
 }
 
 // advanceDesignToCompleted marks a parent design's pipeline as done/completed.
