@@ -4,3 +4,6 @@ dist/
 
 # Local Claude Code state (scheduler locks, etc.)
 .claude/
+
+# Coverage output (make test-cover)
+coverage.out

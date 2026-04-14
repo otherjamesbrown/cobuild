@@ -216,7 +216,10 @@ Auto-update docs after designs complete. Runs as a gate on the `done` phase.
 go build -o ~/bin/cobuild ./cmd/cobuild/
 go test ./...
 go vet ./...
+make test-cover-check  # enforce coverage floor (cb-60f26b); CI runs this
 ```
+
+The coverage floor (Makefile `COVERAGE_FLOOR`) ratchets up as tests land. Don't lower it without a root-cause note in the commit message.
 
 ## Architecture
 
