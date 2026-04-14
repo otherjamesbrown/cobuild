@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
@@ -246,6 +247,17 @@ Steps:
 			}
 		}
 		syncPipelineTaskStatus(ctx, taskID, "needs-review")
+
+		// cb-e619cb: signal to the dispatch runner's post-completion
+		// watchdog that the PR flow finished successfully. The interactive
+		// Claude Code agent sometimes types /exit as text instead of as a
+		// REPL command and the process stays alive at the prompt; the
+		// watchdog kills the tmux window N seconds after this flag appears.
+		// Best-effort — failure here is not a blocker.
+		if worktreePath != "" {
+			flagPath := filepath.Join(worktreePath, ".cobuild", "complete.done")
+			_ = os.WriteFile(flagPath, []byte{}, 0o644)
+		}
 
 		// Transition the pipeline run to the review phase so `cobuild status`
 		// reflects where the work actually is (cb-2e5044). Uses AdvancePhase

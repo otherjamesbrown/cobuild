@@ -184,6 +184,30 @@ PROMPT=$(cat "$PROMPT_FILE")
 echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
 rm -f "$PROMPT_FILE"
 
+# Post-completion watchdog (cb-e619cb). The interactive Claude Code agent
+# occasionally types /exit as its last message — claude-code renders it as
+# agent text rather than intercepting it as a REPL command, and the process
+# stays alive at the prompt. That leaves the tmux window and the runner
+# script's wait-for-claude both blocked forever. cobuild complete touches
+# .cobuild/complete.done on success; this watchdog kills the tmux window
+# 60 s after that flag appears, so a hung /exit no longer strands the
+# pipeline. Only runs for interactive phases; gate phases (-p) auto-exit.
+if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
+    (
+        for _ in $(seq 1 3600); do
+            if [ -f .cobuild/complete.done ]; then
+                sleep 60
+                echo "[$(date)] cb-e619cb watchdog: killing tmux window 60s post-completion" >> "$LOGFILE"
+                if [ -n "$TMUX_PANE" ]; then
+                    tmux kill-window -t "$TMUX_PANE" 2>/dev/null
+                fi
+                exit 0
+            fi
+            sleep 1
+        done
+    ) &
+fi
+
 # Run claude — gate phases use -p (headless) mode for auto-exit;
 # implement/fix use interactive mode for multi-turn work.
 if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
