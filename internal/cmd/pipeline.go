@@ -310,21 +310,24 @@ var reviewCmd = &cobra.Command{
 			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
 		}
 
-		// Pick the gate from the pipeline phase. Design phase → readiness
-		// review (requires 1-5 score); review phase → PR review. This keeps
-		// `cobuild review` usable by both the design-gate runner scripts and
-		// the new dispatched-review runner-script arm (cb-3b091b). Falls
-		// back to "readiness-review" when the store lookup fails so the
-		// existing behaviour is preserved.
-		gateName := "readiness-review"
-		if cbStore != nil {
-			if run, err := cbStore.GetRun(ctx, shardID); err == nil && run != nil && run.CurrentPhase == "review" {
-				gateName = "review"
+		// Pick the gate from the readiness flag, not the pipeline phase.
+		// readiness > 0 → caller is recording a readiness-review (Phase 1
+		// design gate), so require the 1-5 score. readiness == 0 (default
+		// when --readiness wasn't passed) → caller is recording a PR
+		// review verdict from the dispatched-review runner script.
+		//
+		// Earlier (cb-3b091b) this derived gate from pipeline_run.CurrentPhase
+		// — but that broke for any task whose phase had already advanced past
+		// "review" (e.g. to "done" after a previous successful review), and
+		// for direct calls where the lookup returned ErrNotFound. The flag
+		// presence is the caller's actual intent and doesn't depend on
+		// transient pipeline state.
+		gateName := "review"
+		if readiness > 0 {
+			gateName = "readiness-review"
+			if readiness > 5 {
+				return fmt.Errorf("--readiness must be 1-5 for readiness-review, got %d", readiness)
 			}
-		}
-
-		if gateName == "readiness-review" && (readiness < 1 || readiness > 5) {
-			return fmt.Errorf("--readiness must be 1-5 for readiness-review, got %d", readiness)
 		}
 
 		content, err := resolveBody(body, bodyFile)
