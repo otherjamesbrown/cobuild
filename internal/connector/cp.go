@@ -320,7 +320,7 @@ func projectForShardID(id string) string {
 // are looked up globally, and explicit --project flags (added by run() for
 // list/create ops) still take precedence over the neutral cwd.
 func (c *CPConnector) exec(ctx context.Context, args ...string) (json.RawMessage, error) {
-	cmd := exec.CommandContext(ctx, "cxp", args...)
+	cmd := connectorCommandContext(ctx, "cxp", args...)
 	cmd.Dir = os.TempDir()
 	if c.Debug {
 		fmt.Printf("[connector:cp] cxp %s\n", strings.Join(args, " "))
