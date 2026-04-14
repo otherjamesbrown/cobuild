@@ -248,7 +248,7 @@ func (c *BeadsConnector) CreateEdge(ctx context.Context, fromID string, toID str
 // --- Helpers ---
 
 func (c *BeadsConnector) run(ctx context.Context, args ...string) (json.RawMessage, error) {
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := connectorCommandContext(ctx, "bd", args...)
 
 	// Set working directory to the project repo so bd auto-discovers .beads/
 	if c.Repo != "" {
