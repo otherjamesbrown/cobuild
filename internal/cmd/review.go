@@ -109,19 +109,29 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		stateOut, err := reviewCommandOutput(ctx, "gh", "pr", "view", prURL,
 			"--json", "state", "--jq", ".state")
 		if err == nil {
+			// Validate against the known GitHub PR state set rather than
+			// silently treating unexpected values as "not merged" — the
+			// prior implementation would skip the MERGED/CLOSED fast-paths
+			// on any typo, version skew, or future state (cb-6d598a row 18).
 			state := strings.TrimSpace(string(stateOut))
-			if state == "MERGED" {
+			switch state {
+			case "MERGED":
 				fmt.Printf("PR already merged for %s. Reconciling local state.\n", taskID)
 				if _, err := reconcileReviewedTask(ctx, taskID); err != nil {
 					return err
 				}
-
 				printNextStep(taskID, "merged", "process-review")
 				return nil
-			}
-			if state == "CLOSED" {
+			case "CLOSED":
 				fmt.Printf("PR is closed (not merged) for %s, skipping.\n", taskID)
 				return nil
+			case "OPEN":
+				// fall through to review flow below
+			default:
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"Warning: unexpected PR state %q from `gh pr view --json state`; "+
+						"proceeding as if OPEN. Check gh version / GitHub API if this repeats.\n",
+					state)
 			}
 		}
 
