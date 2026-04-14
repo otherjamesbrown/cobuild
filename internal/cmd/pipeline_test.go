@@ -10,6 +10,8 @@ import (
 )
 
 func TestDecomposeCmdPassesForMultiRepoDesignSplitIntoSingleRepoTasks(t *testing.T) {
+	setupDispatchRepoRegistry(t)
+
 	ctx := context.Background()
 	fc := newFakeConnector()
 	fs := newFakeStore()
@@ -82,6 +84,8 @@ func TestDecomposeCmdPassesForMultiRepoDesignSplitIntoSingleRepoTasks(t *testing
 }
 
 func TestDecomposeCmdFailsWhenChildTaskRepoTargetingIsMissingOrAmbiguous(t *testing.T) {
+	setupDispatchRepoRegistry(t)
+
 	fc := newFakeConnector()
 	fs := newFakeStore()
 	fs.runs["cb-design"] = &store.PipelineRun{

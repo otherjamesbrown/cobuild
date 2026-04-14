@@ -187,6 +187,7 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 func TestResetCommandIntegrationCleansTmuxWorktreeAndStoreState(t *testing.T) {
 	ctx := context.Background()
 	tmux := withTestTmux(t)
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 
 	designID := fmt.Sprintf("cb-reset-int-%d", time.Now().UnixNano())

@@ -13,6 +13,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/testutil/pgtest"
+	"github.com/otherjamesbrown/cobuild/internal/testutil/tmuxtest"
 )
 
 type testTmux struct{}
@@ -20,11 +21,9 @@ type testTmux struct{}
 func withTestTmux(t *testing.T) *testTmux {
 	t.Helper()
 
-	tmuxPath, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux not installed")
-	}
+	tmuxPath := tmuxtest.Skip(t)
 
+	var err error
 	dir, err := os.MkdirTemp("", "cbtmux-")
 	if err != nil {
 		t.Fatalf("mktemp tmux dir: %v", err)
@@ -84,6 +83,7 @@ func (tm testTmux) hasWindow(t *testing.T, sessionName, windowName string) bool 
 func TestPollerStaleHelpersUseSharedTmuxAndPostgresFixtures(t *testing.T) {
 	ctx := context.Background()
 	tmux := withTestTmux(t)
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 
 	designID := fmt.Sprintf("cb-stale-helper-%d", time.Now().UnixNano())

@@ -15,6 +15,7 @@ func TestPostgresStoreGetTasksByWave(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 	s := pg.Store
 	designID := fmt.Sprintf("cb-store-wave-%d", time.Now().UnixNano())
@@ -63,6 +64,7 @@ func TestPostgresStoreIsWaveClosed(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 	s := pg.Store
 	designID := fmt.Sprintf("cb-store-closed-%d", time.Now().UnixNano())
@@ -124,6 +126,7 @@ func TestPostgresStoreAdvancePhase(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
+	pgtest.Skip(t, ctx)
 	pg := pgtest.New(t, ctx)
 	s := pg.Store
 	designID := fmt.Sprintf("cb-store-advance-%d", time.Now().UnixNano())

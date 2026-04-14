@@ -93,8 +93,8 @@ func TestRenderMergedWorkSectionPopulated(t *testing.T) {
 // cb-eaef03). The dispatch runner watchdog handles cleanup instead.
 func TestWritePhasePromptImplementAndFixDoNotInstructExit(t *testing.T) {
 	tests := []struct {
-		phase     string
-		wantHave  []string
+		phase       string
+		wantHave    []string
 		wantNotHave []string
 	}{
 		{
@@ -632,11 +632,19 @@ func setupDispatchRepoRegistry(t *testing.T) (string, string) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(cpRepo, ".cobuild.yaml"), []byte("project: context-palace\nprefix: cp-\n"), 0o644); err != nil {
-		t.Fatalf("write context-palace config: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(pfRepo, ".cobuild.yaml"), []byte("project: penfold\nprefix: pf-\n"), 0o644); err != nil {
-		t.Fatalf("write penfold config: %v", err)
+	for repo, project := range map[string]string{
+		cpRepo: "context-palace",
+		pfRepo: "penfold",
+	} {
+		writeTestRepoConfig(t, repo, project)
+		runGit(t, repo, "init", "-b", "main")
+		runGit(t, repo, "config", "user.email", "test@example.com")
+		runGit(t, repo, "config", "user.name", "Test User")
+		if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte(project+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s README: %v", project, err)
+		}
+		runGit(t, repo, "add", ".")
+		runGit(t, repo, "commit", "-m", "initial")
 	}
 
 	prevHome := os.Getenv("HOME")
