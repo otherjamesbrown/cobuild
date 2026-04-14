@@ -96,6 +96,18 @@ func TestResolveReviewer(t *testing.T) {
 			wantProvider:  ProviderClaude,
 			wantModel:     DefaultClaudeModel,
 		},
+		{
+			name:         "gemini provider routes to external (cb-efe119)",
+			cfg:          config.ReviewCfg{Provider: "gemini"},
+			wantProvider: ProviderExternal,
+			wantModel:    "",
+		},
+		{
+			name:         "unknown provider defaults to external not claude (cb-efe119)",
+			cfg:          config.ReviewCfg{Provider: "copilot"},
+			wantProvider: ProviderExternal,
+			wantModel:    "",
+		},
 	}
 
 	for _, tc := range tests {

@@ -133,6 +133,10 @@ func normalizeProvider(provider string) string {
 	case ProviderClaude:
 		return ProviderClaude
 	default:
-		return ProviderClaude
+		// Unknown provider — route through external rather than silently
+		// degrading to Claude. Callers setting review.provider to something
+		// unrecognised (e.g. "gemini" before cb-efe119) expected external
+		// PR-comment handling, not an authenticated Anthropic API call.
+		return ProviderExternal
 	}
 }

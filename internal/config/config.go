@@ -792,15 +792,34 @@ func (r ReviewCfg) EffectiveMode() string {
 }
 
 // EffectiveProvider returns the configured review provider with legacy
-// strategy-based fallback preserved for older repos.
+// strategy-based fallback preserved for older repos. Named external-only
+// reviewers (gemini, code-assist, etc.) map to "external" so downstream
+// routing picks the PR-comment flow instead of silently degrading to
+// Claude — see cb-efe119.
 func (r ReviewCfg) EffectiveProvider() string {
 	if provider := strings.ToLower(strings.TrimSpace(r.Provider)); provider != "" {
+		if isExternalReviewerName(provider) {
+			return "external"
+		}
 		return provider
 	}
 	if strategy := strings.ToLower(strings.TrimSpace(r.Strategy)); strategy == "external" {
 		return "external"
 	}
 	return "auto"
+}
+
+// isExternalReviewerName reports whether a provider string names an
+// external PR-comment reviewer that CoBuild doesn't call directly — it
+// waits for the reviewer's comments to appear on the PR. Used to route
+// such configs to the external flow instead of letting them hit an
+// unknown-provider default in normalizeProvider (cb-efe119).
+func isExternalReviewerName(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "gemini", "code-assist", "gemini-code-assist", "copilot":
+		return true
+	}
+	return false
 }
 
 // CrossModelEnabled defaults to true when the field is unset.
