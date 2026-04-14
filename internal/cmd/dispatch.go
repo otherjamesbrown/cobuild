@@ -451,7 +451,9 @@ config "dispatch.default_runtime" > "claude-code".`,
 				fmt.Printf("Warning: failed to record session: %v\n", err)
 			} else {
 				sessionID = session.ID
-				_ = conn.SetMetadata(ctx, taskID, "session_id", session.ID)
+				if err := conn.SetMetadata(ctx, taskID, "session_id", session.ID); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to record session_id metadata for %s: %v\n", taskID, err)
+				}
 			}
 		}
 
@@ -522,12 +524,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 			fgCmd.Stderr = cmd.ErrOrStderr()
 			if err := fgCmd.Run(); err != nil {
 				if cbStore != nil && sessionID != "" {
-					_ = cbStore.EndSession(ctx, sessionID, store.SessionResult{
+					if endErr := cbStore.EndSession(ctx, sessionID, store.SessionResult{
 						ExitCode:       -1,
 						Status:         "failed",
 						Error:          fmt.Sprintf("foreground dispatch exited with error: %v", err),
 						CompletionNote: "Foreground dispatch exited non-zero",
-					})
+					}); endErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to close foreground session %s for %s: %v\n", sessionID, taskID, endErr)
+					}
 				}
 				return fmt.Errorf("foreground dispatch: %w", err)
 			}
@@ -541,16 +545,20 @@ config "dispatch.default_runtime" > "claude-code".`,
 		tmuxOut, err := tmuxCombinedOutput(ctx, pCfg, tmuxArgs...)
 		if err != nil {
 			if conn != nil {
-				_ = conn.UpdateStatus(ctx, taskID, task.Status)
+				if statusErr := conn.UpdateStatus(ctx, taskID, task.Status); statusErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to restore status for %s after tmux spawn failure: %v\n", taskID, statusErr)
+				}
 			}
 			syncPipelineTaskStatus(ctx, taskID, task.Status)
 			if cbStore != nil && sessionID != "" {
-				_ = cbStore.EndSession(ctx, sessionID, store.SessionResult{
+				if endErr := cbStore.EndSession(ctx, sessionID, store.SessionResult{
 					ExitCode:       -1,
 					Status:         "cancelled",
 					Error:          fmt.Sprintf("dispatch spawn failed: %v", err),
 					CompletionNote: "Dispatch failed before tmux window started",
-				})
+				}); endErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to close cancelled session %s for %s: %v\n", sessionID, taskID, endErr)
+				}
 			}
 			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
 		}
@@ -576,12 +584,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 			cleanupCtx := context.Background()
 			_ = tmuxRun(cleanupCtx, pCfg, "kill-window", "-t", target)
 			if cbStore != nil && sessionID != "" {
-				_ = cbStore.EndSession(cleanupCtx, sessionID, store.SessionResult{
+				if endErr := cbStore.EndSession(cleanupCtx, sessionID, store.SessionResult{
 					ExitCode:       -1,
 					Status:         "cancelled",
 					Error:          "dispatch failed after tmux window created",
 					CompletionNote: "Dispatch returned non-nil error after window spawn — auto-cancelled by defer",
-				})
+				}); endErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to close deferred cleanup session %s for %s: %v\n", sessionID, taskID, endErr)
+				}
 			}
 		}()
 

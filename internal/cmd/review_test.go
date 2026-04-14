@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -14,11 +15,14 @@ import (
 )
 
 type reviewFakeConnector struct {
-	items         map[string]*connector.WorkItem
-	edges         map[string][]connector.Edge
-	created       []connector.CreateRequest
-	createdEdges  []struct{ fromID, toID, edgeType string }
-	statusUpdates []struct{ id, status string }
+	items          map[string]*connector.WorkItem
+	edges          map[string][]connector.Edge
+	created        []connector.CreateRequest
+	createdEdges   []struct{ fromID, toID, edgeType string }
+	statusUpdates  []struct{ id, status string }
+	setMetadataErr error
+	appendErr      error
+	addLabelErr    error
 }
 
 func (f *reviewFakeConnector) Name() string { return "fake" }
@@ -92,6 +96,9 @@ func (f *reviewFakeConnector) UpdateStatus(_ context.Context, id string, status 
 }
 
 func (f *reviewFakeConnector) AppendContent(_ context.Context, id string, content string) error {
+	if f.appendErr != nil {
+		return f.appendErr
+	}
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -101,6 +108,9 @@ func (f *reviewFakeConnector) AppendContent(_ context.Context, id string, conten
 }
 
 func (f *reviewFakeConnector) SetMetadata(_ context.Context, id string, key string, value any) error {
+	if f.setMetadataErr != nil {
+		return f.setMetadataErr
+	}
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -127,6 +137,9 @@ func (f *reviewFakeConnector) UpdateMetadataMap(_ context.Context, id string, pa
 }
 
 func (f *reviewFakeConnector) AddLabel(_ context.Context, id string, label string) error {
+	if f.addLabelErr != nil {
+		return f.addLabelErr
+	}
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("item not found: %s", id)
@@ -702,6 +715,47 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 	}
 	if !strings.Contains(body, "**Reviewer:** ci-fallback") {
 		t.Fatalf("gate body missing fallback reviewer: %q", body)
+	}
+}
+
+func TestRecordMergeFailureLogsAuditWriteErrors(t *testing.T) {
+	origConn := conn
+	origWarningWriter := reviewWarningWriter
+	defer func() {
+		conn = origConn
+		reviewWarningWriter = origWarningWriter
+	}()
+
+	var warnings bytes.Buffer
+	reviewWarningWriter = &warnings
+	conn = &reviewFakeConnector{
+		items: map[string]*connector.WorkItem{
+			"cb-task": {
+				ID:      "cb-task",
+				Type:    "task",
+				Status:  "needs-review",
+				Content: "body",
+				Metadata: map[string]any{
+					"merge_retry_count": fmt.Sprintf("%d", mergeMaxRetries-1),
+				},
+			},
+		},
+		setMetadataErr: fmt.Errorf("metadata write failed"),
+		appendErr:      fmt.Errorf("append failed"),
+		addLabelErr:    fmt.Errorf("label failed"),
+	}
+
+	recordMergeFailure(context.Background(), "cb-task", "https://github.com/acme/cobuild/pull/42", "merge conflict")
+
+	got := warnings.String()
+	for _, want := range []string{
+		"failed to record merge retry count for cb-task",
+		"failed to append merge-blocked note to cb-task",
+		"failed to add merge-blocked label to cb-task",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("warnings = %q, want substring %q", got, want)
+		}
 	}
 }
 
