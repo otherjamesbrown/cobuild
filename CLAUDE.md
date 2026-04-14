@@ -221,6 +221,17 @@ make test-cover-check  # enforce coverage floor (cb-60f26b); CI runs this
 
 The coverage floor (Makefile `COVERAGE_FLOOR`) ratchets up as tests land. Don't lower it without a root-cause note in the commit message.
 
+### Test layers
+
+`go test ./...` runs in four layers of progressively stronger guarantees. A contributor on a fresh laptop should only need layer 1 to pass. Higher layers opt in via environment variables or build tags, and tests skip cleanly (with a `t.Skip` reason) when their infra isn't available — no tests hard-fail the default run because of missing external dependencies (cb-999bec).
+
+1. **Hermetic** (always runs). Pure Go, no network, no Postgres, no tmux, no `cxp`/`bd`/`gh` binaries required. Everything under `internal/config`, `internal/orchestrator`, `internal/pipeline/state`, `internal/merge`, `internal/worktree`, `internal/connector` (exec-stubbed), and the command-layer handler tests. If this layer goes red on a clean shell, stop and fix.
+2. **Postgres-backed** (opt-in). Tests that use `internal/testutil/pgtest` skip with a clear message when Postgres is unreachable. To enable, set `COBUILD_TEST_PG_DSN=...` (or keep `~/.cobuild/config.yaml` pointing at a reachable store). `pgtest.Skip(t)` is the canonical call at the top of any such test.
+3. **tmux-backed** (opt-in). Tests that need a running tmux server (e.g. `internal/pipeline/state/state_integration_test.go`) use `internal/testutil/tmuxtest` to skip cleanly when `exec.LookPath("tmux")` fails. Start tmux to enable; no env var required.
+4. **Real-runtime e2e** (build-tag). `internal/e2e/*` plus the `codex_e2e_smoke_test.go` files sit behind `//go:build e2e` (or similar) and aren't part of `go test ./...`. Invoke via `make test-e2e`.
+
+When reporting test results, state clearly which layers ran and which were skipped. "Tests pass" without that caveat is a common source of confusion.
+
 ## Architecture
 
 ```

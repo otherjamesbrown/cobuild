@@ -400,6 +400,13 @@ config "dispatch.default_runtime" > "claude-code".`,
 
 		tmuxSession := pCfg.ResolveTmuxSession(taskProject)
 		tmuxWindow := dispatchTmuxWindowName(currentPhase, taskID)
+
+		// Ensure tmux session exists, create if not
+		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
+			if createErr := tmuxRun(ctx, pCfg, "new-session", "-d", "-s", tmuxSession); createErr != nil {
+				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
+			}
+		}
 		// Resolve the model for the current phase, runtime-aware. Phase/gate
 		// overrides still take precedence; the runtime-specific default is
 		// used as a fallback so claude-code gets "sonnet" and codex gets
@@ -492,13 +499,6 @@ config "dispatch.default_runtime" > "claude-code".`,
 			fmt.Printf("=== tmux Command ===\n")
 			fmt.Printf("tmux %s\n", strings.Join(tmuxArgs, " "))
 			return nil
-		}
-
-		// Ensure tmux session exists, create if not.
-		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
-			if createErr := tmuxRun(ctx, pCfg, "new-session", "-d", "-s", tmuxSession); createErr != nil {
-				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
-			}
 		}
 
 		// Set task status
