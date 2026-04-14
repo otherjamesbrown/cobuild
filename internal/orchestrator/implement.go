@@ -206,6 +206,18 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 
 	deadline := r.opts.Now().Add(r.opts.PhaseTimeout)
 
+	// Cap consecutive fail-gate retries so a reviewer that keeps rejecting
+	// the PR surfaces a BlockedError instead of polling to PhaseTimeout.
+	// Ports the cb-13744c retry logic from Run into the review path —
+	// previously runReview had no cap at all, so cb-999bec piled up 139
+	// review/fail gates in 1h before timing out (cb-87371e).
+	maxRetries := r.opts.MaxGateRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	gateCountAtEntry, _ := r.gateCount(ctx, shardID)
+	failCount := 0
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return normalizeContextError(ctx, err)
@@ -227,6 +239,23 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 		if currentPhase != "review" {
 			r.emit(shardID, "review", EventTransition, fmt.Sprintf("Phase: review -> %s", currentPhase))
 			return nil
+		}
+
+		// Phase hasn't moved. If a new gate appeared it must be a fail
+		// (pass would have advanced the phase). Count it toward the cap.
+		if cur, _ := r.gateCount(ctx, shardID); cur > gateCountAtEntry {
+			failCount += cur - gateCountAtEntry
+			gateCountAtEntry = cur
+			if failCount >= maxRetries {
+				return &BlockedError{
+					ShardID:     shardID,
+					Phase:       "review",
+					Reason:      StopReasonBlockedReview,
+					Message:     fmt.Sprintf("review rejected %d times in a row — needs human intervention (see latest review gate for findings)", failCount),
+					Recoverable: true,
+				}
+			}
+			r.emit(shardID, "review", EventPoll, fmt.Sprintf("Phase: review -> retry %d/%d after failed gate", failCount, maxRetries))
 		}
 
 		r.emit(shardID, "review", EventPoll, fmt.Sprintf("Phase: review -> still waiting on %s", shardID))

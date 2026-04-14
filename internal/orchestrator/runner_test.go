@@ -391,6 +391,98 @@ func TestRunReviewProcessesPipelineItem(t *testing.T) {
 	assertMessages(t, logs.events, wantMessages)
 }
 
+// TestRunReviewRetryCapReturnsBlockedError verifies that a review phase whose
+// reviewer keeps producing new fail gates surfaces a BlockedError after
+// MaxGateRetries attempts rather than polling until PhaseTimeout. Regression
+// test for cb-87371e — cb-999bec piled up 139 review/fail gates in 1h before
+// timeout because runReview had no cap at all.
+func TestRunReviewRetryCapReturnsBlockedError(t *testing.T) {
+	// Phase source always returns "review" so the loop can never exit via
+	// phase advancement.
+	source := &fakePhaseSource{phases: []string{"review"}}
+	// Reviewer returns "waiting" every time — would loop forever without the cap.
+	reviewer := &fakeReviewer{
+		results: map[string][]ReviewResult{
+			"cb-review": {
+				{Outcome: "waiting"},
+				{Outcome: "waiting"},
+				{Outcome: "waiting"},
+				{Outcome: "waiting"},
+				{Outcome: "waiting"},
+			},
+		},
+	}
+	gateHistory := &fakeGateHistory{step: 1} // one new fail gate per poll
+
+	clock := &fakeClock{current: time.Date(2026, 4, 14, 13, 0, 0, 0, time.UTC)}
+	runner := NewRunner(source, &fakeDispatcher{}, Options{
+		PollInterval:   time.Second,
+		PhaseTimeout:   time.Hour, // much larger than the 3 retries will take
+		MaxGateRetries: 3,
+		Now:            clock.Now,
+		Sleep:          clock.Sleep,
+		Reviewer:       reviewer,
+		GateHistory:    gateHistory,
+	})
+
+	err := runner.Run(context.Background(), "cb-review")
+	if err == nil {
+		t.Fatalf("Run() error = nil, want BlockedError after 3 failed gates")
+	}
+	var blockedErr *BlockedError
+	if !errors.As(err, &blockedErr) {
+		t.Fatalf("Run() error = %v, want BlockedError", err)
+	}
+	if blockedErr.Reason != StopReasonBlockedReview {
+		t.Fatalf("Reason = %s, want %s", blockedErr.Reason, StopReasonBlockedReview)
+	}
+	if blockedErr.Phase != "review" {
+		t.Fatalf("Phase = %s, want review", blockedErr.Phase)
+	}
+	if !blockedErr.Recoverable {
+		t.Fatalf("Recoverable = false, want true")
+	}
+	// Upper bound: we should have stopped after ~3 reviewer calls, not
+	// exhausted the results slice or run indefinitely. The exact count
+	// depends on gate-check ordering; 5 calls is a generous ceiling.
+	if len(reviewer.calls) > 5 {
+		t.Fatalf("reviewer called %d times, want <=5 (cap did not engage)", len(reviewer.calls))
+	}
+}
+
+// TestRunReviewPassDoesNotTriggerRetryCap verifies that normal "waiting → merged"
+// flows finish successfully without triggering the retry cap (no fail gates
+// accumulated, so the counter never increments).
+func TestRunReviewPassDoesNotTriggerRetryCap(t *testing.T) {
+	source := &fakePhaseSource{phases: []string{"review", "review", "done"}}
+	reviewer := &fakeReviewer{
+		results: map[string][]ReviewResult{
+			"cb-review": {
+				{Outcome: "waiting"},
+				{Outcome: "merged"},
+			},
+		},
+	}
+	// GateHistory is flat — no new gates between calls (a "waiting" outcome
+	// didn't record a fail). Retry counter stays at 0.
+	gateHistory := &fakeGateHistory{step: 0}
+
+	clock := &fakeClock{current: time.Date(2026, 4, 14, 13, 0, 0, 0, time.UTC)}
+	runner := NewRunner(source, &fakeDispatcher{}, Options{
+		PollInterval:   time.Second,
+		PhaseTimeout:   time.Minute,
+		MaxGateRetries: 3,
+		Now:            clock.Now,
+		Sleep:          clock.Sleep,
+		Reviewer:       reviewer,
+		GateHistory:    gateHistory,
+	})
+
+	if err := runner.Run(context.Background(), "cb-review"); err != nil {
+		t.Fatalf("Run() = %v, want nil (happy path should not hit cap)", err)
+	}
+}
+
 func TestRunInterruptedReturnsStructuredStop(t *testing.T) {
 	source := &fakePhaseSource{phases: []string{"fix", "fix"}}
 	dispatcher := &fakeDispatcher{}
@@ -584,6 +676,24 @@ func (f *fakeReviewer) ProcessReview(_ context.Context, shardID string) (ReviewR
 	result := f.results[shardID][0]
 	f.results[shardID] = f.results[shardID][1:]
 	return result, nil
+}
+
+// fakeGateHistory returns a growing number of gate records so each call
+// looks like "a new failed gate just appeared". Used to exercise the
+// retry-cap logic in runReview (cb-87371e) without hitting the store.
+type fakeGateHistory struct {
+	calls int
+	step  int // how many gates appear per call; 1 means one new fail per poll
+}
+
+func (f *fakeGateHistory) GetGateHistory(_ context.Context, _ string) ([]store.PipelineGateRecord, error) {
+	if f.step <= 0 {
+		f.step = 1
+	}
+	f.calls++
+	n := f.calls * f.step
+	records := make([]store.PipelineGateRecord, n)
+	return records, nil
 }
 
 func assertMessages(t *testing.T, events []Event, want []string) {
