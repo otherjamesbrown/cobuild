@@ -105,7 +105,7 @@ CONFIGURATION:
 		}
 
 		// Fall back to deriving projectName from other sources when
-		// .cobuild.yaml / .cxp.yaml doesn't exist. Fixes cb-11a464 where
+		// .cobuild.yaml doesn't exist. Fixes cb-11a464 where
 		// `cobuild update-agents` produced an empty **Name:** field for
 		// repos that were set up via `cobuild setup` (which historically
 		// didn't write .cobuild.yaml). Try in order of specificity:

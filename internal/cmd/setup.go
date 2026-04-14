@@ -137,7 +137,8 @@ func detectSetupProject(flagValue, repoRoot string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	for _, name := range []string{".cobuild.yaml", ".cxp.yaml", ".cp.yaml"} {
+	// .cxp.yaml / .cp.yaml fallbacks retired in cb-3f5be6 / cb-9a336c.
+	for _, name := range []string{".cobuild.yaml"} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
 			continue

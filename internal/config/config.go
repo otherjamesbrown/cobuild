@@ -512,7 +512,59 @@ func LoadConfig(repoRoot string) (*Config, error) {
 		}
 	}
 
+	if err := base.validateReferentialIntegrity(); err != nil {
+		return nil, err
+	}
 	return base, nil
+}
+
+// validateReferentialIntegrity cross-checks that every phase name referenced
+// by a workflow (cfg.Workflows[X].Phases) is actually declared somewhere —
+// either in cfg.Phases (operator-declared) or in the built-in set that
+// orchestrator + runtime code understand. Catches typos at config-load time
+// rather than at dispatch time, per cb-663873 slice 3.
+//
+// Known built-in phase names come from internal/orchestrator/runner.go
+// (nonImplementPhases) and internal/runtime/runtime.go (IsGatePhase);
+// keep this list in sync when adding phases upstream.
+func (cfg *Config) validateReferentialIntegrity() error {
+	builtinPhases := map[string]struct{}{
+		"design":       {},
+		"decompose":    {},
+		"investigate":  {},
+		"fix":          {},
+		"implement":    {},
+		"review":       {},
+		"kb-sync":      {},
+		"monitoring":   {},
+		"done":         {},
+		"deploy":       {},
+		"retrospective": {},
+	}
+	known := func(phase string) bool {
+		if _, ok := builtinPhases[phase]; ok {
+			return true
+		}
+		if cfg.Phases != nil {
+			if _, ok := cfg.Phases[phase]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	for wfName, wf := range cfg.Workflows {
+		for _, phase := range wf.Phases {
+			if !known(phase) {
+				return fmt.Errorf(
+					"pipeline config: workflow %q references phase %q which is not declared "+
+						"in phases: and is not a built-in phase name (cb-663873). "+
+						"Typo, or add phases:\\n  %s:\\n    gate: ... to your pipeline.yaml",
+					wfName, phase, phase,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 // loadConfigFile reads and parses a single pipeline YAML file.

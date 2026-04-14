@@ -30,7 +30,10 @@ type projectYAML struct {
 // readProjectConfigFromYAML reads project config from .cobuild.yaml in the repo root.
 func readProjectConfigFromYAML(repoRoot string) projectYAML {
 	var result projectYAML
-	for _, name := range []string{".cobuild.yaml", ".cxp.yaml"} {
+	// Only .cobuild.yaml is recognised — the .cxp.yaml / .cp.yaml legacy
+	// fallbacks were retired in cb-3f5be6 / cb-9a336c. Repos that still
+	// have a legacy config should rename it.
+	for _, name := range []string{".cobuild.yaml"} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
 			continue
