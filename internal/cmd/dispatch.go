@@ -92,8 +92,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 
 		if dispatchStatus == "in_progress" {
 			fmt.Printf("Re-dispatching %s (status was in_progress, no live session).\n", taskID)
+		} else if dispatchStatus == "needs-review" {
+			// Expected state for review-phase dispatches: cobuild complete
+			// sets status=needs-review before handing off to review, so the
+			// dispatched review agent's target IS exactly this. Rejecting
+			// needs-review blocked every review-phase retry (cb-2fd178).
+			fmt.Printf("Dispatching %s for review (status was needs-review).\n", taskID)
 		} else if dispatchStatus != "open" && dispatchStatus != "ready" {
-			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, or in_progress)", dispatchStatus)
+			return fmt.Errorf("task not dispatchable (status: %s, must be open, ready, in_progress, or needs-review)", dispatchStatus)
 		}
 
 		// Check blocked-by edges
