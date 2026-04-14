@@ -1,0 +1,7 @@
+{
+  "gate": "readiness-review",
+  "shard_id": "wx-1000",
+  "verdict": "pass",
+  "readiness": 5,
+  "body": "Problem, user, success criteria, scope, and rollout are concrete. Decompose into API, UI, and smoke/deploy tasks."
+}

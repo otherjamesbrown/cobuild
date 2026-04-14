@@ -1,0 +1,67 @@
+# Treat this directory as a miniature repo root for the walkthrough.
+# The config stays deliberately small, but still shows connector, runtime,
+# context, review, and deploy settings in one place.
+
+github:
+  owner_repo: example/cobuild-walkthrough
+
+build:
+  - "printf 'walkthrough build\\n'"
+
+test:
+  - "printf 'walkthrough test\\n'"
+
+connectors:
+  work_items:
+    type: context-palace
+
+storage:
+  backend: postgres
+
+workflows:
+  design:
+    phases: [design, decompose, implement, review, done]
+  bug:
+    phases: [fix, review, done]
+  bug-complex:
+    phases: [investigate, implement, review, done]
+  task:
+    phases: [implement, review, done]
+
+review:
+  strategy: external
+  external_reviewers: [gemini]
+  ci:
+    mode: pr-only
+    wait: true
+
+dispatch:
+  max_concurrent: 1
+  default_runtime: codex
+  runtimes:
+    codex:
+      model: gpt-5.4-mini
+
+deploy:
+  services:
+    - name: demo-service
+      trigger_paths:
+        - work-items/**
+        - README.md
+      command: "printf 'deploy walkthrough demo-service\\n'"
+      smoke_test: "printf 'smoke ok\\n'"
+      rollback: "printf 'rollback walkthrough demo-service\\n'"
+
+context:
+  layers:
+    - name: design-skill
+      source: skills:design/gate-readiness-review.md
+      when: phase:design
+    - name: task-prompt
+      source: dispatch-prompt
+      when: dispatch
+    - name: design-context
+      source: parent-design
+      when: dispatch
+
+skills_dir: skills
