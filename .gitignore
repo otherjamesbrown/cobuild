@@ -1,3 +1,6 @@
 # Binary
 cobuild
 dist/
+
+# Local Claude Code state (scheduler locks, etc.)
+.claude/

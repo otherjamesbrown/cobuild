@@ -90,6 +90,14 @@ EOF
 
 Bug shards must capture: what happened, where (file paths if relevant), how reproduced, suggested fix or files to investigate. The user can act on a well-written shard later; they cannot act on a forgotten Slack-style mention. Even if you fix the bug inline immediately, file the shard first so the fix has a paper trail.
 
+### Commit and push after fixing a shard
+
+When you finish fixing a bug or completing a task that has a shard — whether you created it this session or picked it up from the backlog — commit and push before moving on. Put the shard ID in the commit subject or body so the history ties back to the work item.
+
+One commit per shard is the default. Bundle only when the change genuinely spans shards and can't be split. Push after each commit so the fix is preserved off-machine and visible to anyone else watching the repo.
+
+Leaving shard fixes uncommitted is how we end up with 50-file working-tree dumps at end-of-day where the trail back to each bug is lost. If the working tree is already dirty with unrelated work when you start, commit your shard's files explicitly (`git add <files>`) rather than sweeping the whole tree.
+
 ## Terminology
 
 Two roles show up throughout CoBuild's docs, skills, and commit messages. Use these terms consistently:
