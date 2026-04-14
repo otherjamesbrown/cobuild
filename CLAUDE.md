@@ -90,13 +90,19 @@ EOF
 
 Bug shards must capture: what happened, where (file paths if relevant), how reproduced, suggested fix or files to investigate. The user can act on a well-written shard later; they cannot act on a forgotten Slack-style mention. Even if you fix the bug inline immediately, file the shard first so the fix has a paper trail.
 
-### Commit and push after fixing a shard
+### Commit, push, and close after fixing a shard
 
-When you finish fixing a bug or completing a task that has a shard — whether you created it this session or picked it up from the backlog — commit and push before moving on. Put the shard ID in the commit subject or body so the history ties back to the work item.
+When you finish fixing a bug or completing a task that has a shard — whether you created it this session or picked it up from the backlog — three steps, in order:
 
-One commit per shard is the default. Bundle only when the change genuinely spans shards and can't be split. Push after each commit so the fix is preserved off-machine and visible to anyone else watching the repo.
+1. **Commit** with the shard ID in the subject or body. One commit per shard is the default; bundle only when the change genuinely spans shards and can't be split.
+2. **Push** so the fix is preserved off-machine and visible to anyone else watching the repo.
+3. **Close the shard** with `cxp shard close <id> "Fixed in <commit-sha>"` (or a short reason pointing at the commit). An "open" bug in the backlog that's actually fixed is noise — it hides the real open work behind stale entries.
 
-Leaving shard fixes uncommitted is how we end up with 50-file working-tree dumps at end-of-day where the trail back to each bug is lost. If the working tree is already dirty with unrelated work when you start, commit your shard's files explicitly (`git add <files>`) rather than sweeping the whole tree.
+Leaving shard fixes uncommitted is how we end up with 50-file working-tree dumps at end-of-day where the trail back to each bug is lost. Leaving shards open after fixing is how `cxp shard list --type bug --status open` stops being a reliable signal — at one point we had six open bug shards and only one was actually open.
+
+If the working tree is already dirty with unrelated work when you start, commit your shard's files explicitly (`git add <files>`) rather than sweeping the whole tree.
+
+When closing a batch of already-fixed shards retroactively, reference the commit that shipped the fix so `git log <sha>` remains the record of what changed.
 
 ## Terminology
 
