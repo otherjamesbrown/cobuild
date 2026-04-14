@@ -77,6 +77,31 @@ Steps:
 		if err != nil {
 			return fmt.Errorf("detect completion mode: %w", err)
 		}
+
+		repoRoot, _ := config.RepoForProject(projectName)
+		pCfg, _ := config.LoadConfig(repoRoot)
+
+		// Agent failed to produce code in a code-producing phase. Record a
+		// failed gate so the orchestrator's retry loop re-dispatches, then
+		// exit non-zero. Previously this silently closed the task (cb-9d97c6).
+		if directDecision.agentFailed {
+			fmt.Fprintf(os.Stderr, "Task %s: %s. Recording failed gate.\n", taskID, directDecision.reason)
+			if cbStore != nil {
+				body := fmt.Sprintf("Agent exited without committing code in phase %q. Worktree was empty (excluding dispatch artifacts). "+
+					"The orchestrator will re-dispatch up to its retry cap, then block for human intervention.\n", directDecision.phase)
+				if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, directDecision.phase, "fail", body, 0, pCfg); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to record failed gate for %s: %v\n", taskID, err)
+				}
+			}
+			endTaskSession(ctx, taskID, worktreePath, store.SessionResult{
+				ExitCode:       1,
+				Status:         "failed",
+				Error:          directDecision.reason,
+				CompletionNote: directDecision.reason,
+			})
+			return fmt.Errorf("agent did not produce code for %s (phase=%s)", taskID, directDecision.phase)
+		}
+
 		if worktreePath == "" && !directDecision.direct {
 			if autoFlag {
 				fmt.Fprintf(os.Stderr, "Warning: --auto: no worktree_path for %s, skipping\n", taskID)
@@ -84,9 +109,6 @@ Steps:
 			}
 			return fmt.Errorf("no worktree_path in task metadata")
 		}
-
-		repoRoot, _ := config.RepoForProject(projectName)
-		pCfg, _ := config.LoadConfig(repoRoot)
 
 		// When triggered by Stop hook, verify the agent actually completed work before proceeding
 		if autoFlag && worktreePath != "" && !directDecision.direct {

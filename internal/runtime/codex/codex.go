@@ -133,6 +133,26 @@ codex exec %s -C "$PWD" \
 CODEX_EXIT=$?
 echo "[$(date)] codex exec exited: $CODEX_EXIT" >> "$LOGFILE"
 
+# Error capture (cb-1d8abc): if codex exited non-zero, write a
+# dispatch-error.log with context + tail of session logs for post-mortem.
+if [ "$CODEX_EXIT" != "0" ]; then
+    {
+        echo "=== dispatch-error $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) ==="
+        echo "codex exec exited with non-zero status: $CODEX_EXIT"
+        echo "phase=$COBUILD_PHASE session=$COBUILD_SESSION_ID task=$COBUILD_TASK_ID"
+        if [ -s .cobuild/session.err ]; then
+            echo
+            echo "--- session.err ---"
+            cat .cobuild/session.err
+        fi
+        if [ -s .cobuild/session.log ]; then
+            echo
+            echo "--- tail session.log ---"
+            tail -200 .cobuild/session.log
+        fi
+    } >> .cobuild/dispatch-error.log 2>/dev/null
+fi
+
 # Capture thread_id for later resumes. First event is always thread.started
 # with {"type":"thread.started","thread_id":"<uuid>"}.
 if command -v jq &>/dev/null && [ -s .cobuild/session.log ]; then
@@ -188,6 +208,9 @@ elif [ -f .cobuild/gate-verdict.json ]; then
             investigation)
                 cobuild investigate "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
+            review)
+                cobuild review "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
             retrospective)
                 cobuild retro "$SHARD_ID" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
@@ -200,6 +223,14 @@ elif [ -f .cobuild/gate-verdict.json ]; then
     fi
 else
     echo "[$(date)] Gate phase ($COBUILD_PHASE) — no gate-verdict.json found" >> "$LOGFILE"
+fi
+
+# Explicitly close this tmux window so it doesn't hang around as an orphan
+# that blocks the next dispatch (cb-699bf2). Works regardless of the user's
+# remain-on-exit setting. Fire-and-forget: kill-window terminates this pane
+# immediately, so any code after this won't run.
+if [ -n "$TMUX_PANE" ]; then
+    tmux kill-window -t "$TMUX_PANE" 2>/dev/null
 fi
 `,
 		shellQuote(in.WorktreePath),

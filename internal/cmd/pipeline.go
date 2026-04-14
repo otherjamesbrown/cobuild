@@ -369,13 +369,14 @@ var gateCmd = &cobra.Command{
 }
 
 var reviewCmd = &cobra.Command{
-	Use:     "review <shard-id>",
-	Short:   "Record Phase 1 readiness review verdict",
-	Args:    cobra.ExactArgs(1),
-	Example: `  cobuild review pf-design-123 --verdict pass --readiness 4 --body "All criteria met."`,
+	Use:   "review <shard-id>",
+	Short: "Record a review verdict (Phase 1 readiness-review or task PR-review)",
+	Args:  cobra.ExactArgs(1),
+	Example: `  cobuild review pf-design-123 --verdict pass --readiness 4 --body "All criteria met."
+  cobuild review pf-task-abc   --verdict pass --body "PR looks good."`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		designID := args[0]
+		shardID := args[0]
 
 		verdict, _ := cmd.Flags().GetString("verdict")
 		readiness, _ := cmd.Flags().GetInt("readiness")
@@ -388,8 +389,22 @@ var reviewCmd = &cobra.Command{
 		if verdict != "pass" && verdict != "fail" {
 			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
 		}
-		if readiness < 1 || readiness > 5 {
-			return fmt.Errorf("--readiness must be 1-5, got %d", readiness)
+
+		// Pick the gate from the pipeline phase. Design phase → readiness
+		// review (requires 1-5 score); review phase → PR review. This keeps
+		// `cobuild review` usable by both the design-gate runner scripts and
+		// the new dispatched-review runner-script arm (cb-3b091b). Falls
+		// back to "readiness-review" when the store lookup fails so the
+		// existing behaviour is preserved.
+		gateName := "readiness-review"
+		if cbStore != nil {
+			if run, err := cbStore.GetRun(ctx, shardID); err == nil && run != nil && run.CurrentPhase == "review" {
+				gateName = "review"
+			}
+		}
+
+		if gateName == "readiness-review" && (readiness < 1 || readiness > 5) {
+			return fmt.Errorf("--readiness must be 1-5 for readiness-review, got %d", readiness)
 		}
 
 		content, err := resolveBody(body, bodyFile)
@@ -403,12 +418,15 @@ var reviewCmd = &cobra.Command{
 			pCfg = config.DefaultConfig()
 		}
 
-		var result *GateVerdictResult
-		if cbStore != nil {
-			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, "readiness-review", verdict, content, readiness, pCfg)
-		} else {
+		if cbStore == nil {
 			return fmt.Errorf("no store configured")
 		}
+
+		recordedReadiness := 0
+		if gateName == "readiness-review" {
+			recordedReadiness = readiness
+		}
+		result, err := RecordGateVerdict(ctx, conn, cbStore, shardID, gateName, verdict, content, recordedReadiness, pCfg)
 		if err != nil {
 			return err
 		}
@@ -419,22 +437,30 @@ var reviewCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("Recorded Phase 1 review for %s\n", result.DesignID)
+		label := "Phase 1 review"
+		if gateName == "review" {
+			label = "PR review"
+		}
+		fmt.Printf("Recorded %s for %s\n", label, result.DesignID)
 		fmt.Printf("  Review shard: %s\n", result.ReviewShardID)
 		fmt.Printf("  Round:        %d\n", result.Round)
 		phaseTransition := result.Phase
 		if result.Verdict == "pass" {
 			phaseTransition = fmt.Sprintf("%s -> %s", result.Phase, result.NextPhase)
-			if result.NextPhase == "" {
+			if result.NextPhase == "" && gateName == "readiness-review" {
 				phaseTransition = "design -> decompose"
 			}
 		}
-		fmt.Printf("  Verdict:      %s (%d/5)\n", result.Verdict, readiness)
+		if gateName == "readiness-review" {
+			fmt.Printf("  Verdict:      %s (%d/5)\n", result.Verdict, readiness)
+		} else {
+			fmt.Printf("  Verdict:      %s\n", result.Verdict)
+		}
 		fmt.Printf("  Phase:        %s\n", phaseTransition)
 		if result.Verdict == "pass" {
-			printNextStep(designID, result.NextPhase, "gate-pass")
+			printNextStep(shardID, result.NextPhase, "gate-pass")
 		} else {
-			printNextStep(designID, "design", "gate-fail")
+			printNextStep(shardID, result.Phase, "gate-fail")
 		}
 		return nil
 	},
@@ -474,6 +500,16 @@ var decomposeCmd = &cobra.Command{
 		var overlapWarnings []fileOverlapWarning
 		if verdict == "pass" {
 			if err := validateSingleRepoChildTasks(ctx, conn, designID); err != nil {
+				return err
+			}
+			// Block the gate if any two new sibling tasks touch the same
+			// file. Parallel dispatch of overlapping tasks causes merge
+			// conflicts and duplicate code (cb-7cda32).
+			siblingOverlaps, err := collectSiblingFileOverlapProblems(ctx, conn, designID)
+			if err != nil {
+				return fmt.Errorf("collect sibling overlap: %w", err)
+			}
+			if err := renderSiblingFileOverlapError(siblingOverlaps); err != nil {
 				return err
 			}
 			overlapWarnings, err = collectDecomposeFileOverlapWarnings(ctx, conn, designID, repoRoot)
@@ -990,6 +1026,29 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 			continue
 		}
 		cancelled++
+	}
+	// Belt-and-braces: catch any running sessions whose design_id was
+	// misrecorded during dispatch (e.g. parent-edge lookup failed). This is
+	// the path that historically left stale sessions blocking re-dispatch,
+	// requiring multiple resets to clear (cb-f93173 #2). Also covers child
+	// tasks for a design reset and individual task rows for a task reset.
+	if extra, err := cbStore.CancelRunningSessionsForShard(ctx, id); err != nil {
+		fmt.Printf("Warning: failed to sweep stale sessions for %s: %v\n", id, err)
+	} else {
+		cancelled += extra
+	}
+	// Also sweep by each known child task ID in case their sessions carry
+	// a design_id that doesn't match this shard (e.g. tasks moved between
+	// designs, or dispatched with stale parent metadata).
+	for _, task := range tasks {
+		if task.TaskShardID == "" || task.TaskShardID == id {
+			continue
+		}
+		if extra, err := cbStore.CancelRunningSessionsForShard(ctx, task.TaskShardID); err != nil {
+			fmt.Printf("Warning: failed to sweep sessions for task %s: %v\n", task.TaskShardID, err)
+		} else {
+			cancelled += extra
+		}
 	}
 	if cancelled > 0 {
 		fmt.Printf("  Cancelled %d running session(s)\n", cancelled)

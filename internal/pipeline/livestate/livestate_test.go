@@ -249,17 +249,21 @@ func TestComputeHealthFlagsOrphansAndStale(t *testing.T) {
 		GeneratedAt: now,
 		Pipelines: []PipelineInfo{
 			{DesignID: "ok", Phase: "implement"},
+			{DesignID: "warn", Phase: "implement"},
 			{DesignID: "stale", Phase: "implement"},
 			{DesignID: "orphan-no-tmux", Phase: "design"},
 			{DesignID: "orphan-no-session", Phase: "design"},
 		},
 		Sessions: []SessionInfo{
 			{ID: "s-ok", DesignID: "ok", AgeSeconds: 60, TmuxSession: "cobuild-x", TmuxWindow: "ok"},
+			// Between WarnIdle (10m) and StaleIdle (30m) — should flag WARN.
+			{ID: "s-warn", DesignID: "warn", AgeSeconds: 15 * 60, TmuxSession: "cobuild-x", TmuxWindow: "warn"},
 			{ID: "s-stale", DesignID: "stale", AgeSeconds: 60 * 60, TmuxSession: "cobuild-x", TmuxWindow: "stale"},
 			{ID: "s-orphan", DesignID: "orphan-no-tmux", AgeSeconds: 60, TmuxSession: "cobuild-x", TmuxWindow: "orphan-no-tmux"},
 		},
 		Tmux: []TmuxWindow{
 			{SessionName: "cobuild-x", WindowName: "ok", TargetID: "ok"},
+			{SessionName: "cobuild-x", WindowName: "warn", TargetID: "warn"},
 			{SessionName: "cobuild-x", WindowName: "stale", TargetID: "stale"},
 			// orphan-no-tmux: no matching tmux window → should flag
 			{SessionName: "cobuild-x", WindowName: "orphan-no-session", TargetID: "orphan-no-session"},
@@ -273,6 +277,7 @@ func TestComputeHealthFlagsOrphansAndStale(t *testing.T) {
 	}
 	cases := map[string]Health{
 		"ok":                HealthOK,
+		"warn":              HealthWarn,
 		"stale":             HealthStale,
 		"orphan-no-tmux":    HealthOrphan,
 		"orphan-no-session": HealthOrphan,

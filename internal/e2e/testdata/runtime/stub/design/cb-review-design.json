@@ -1,0 +1,17 @@
+{
+  "phase": "design",
+  "task_id": "cb-review-design",
+  "gate_verdict": {
+    "gate": "readiness-review",
+    "shard_id": "cb-review-design",
+    "verdict": "pass",
+    "readiness": 5,
+    "body": "Dispatched-review e2e design is ready for decomposition."
+  },
+  "session": {
+    "input_tokens": 10,
+    "output_tokens": 3,
+    "turns": 1,
+    "last_message": "Readiness review recorded."
+  }
+}

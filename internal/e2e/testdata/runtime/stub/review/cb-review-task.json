@@ -1,0 +1,16 @@
+{
+  "phase": "review",
+  "task_id": "cb-review-task",
+  "gate_verdict": {
+    "gate": "review",
+    "shard_id": "cb-review-task",
+    "verdict": "pass",
+    "body": "Stub dispatched-review fixture: code compiles, patch applies cleanly, approve."
+  },
+  "session": {
+    "input_tokens": 15,
+    "output_tokens": 5,
+    "turns": 1,
+    "last_message": "Recorded dispatched review verdict from fixture."
+  }
+}

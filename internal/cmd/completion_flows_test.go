@@ -44,8 +44,9 @@ func TestCompleteDirectOutsideWorktreeClosesWithoutPRAndRecordsPipelineState(t *
 		Status:  "in_progress",
 		Content: "direct",
 		Metadata: map[string]any{
-			"worktree_path": wtPath,
-			"session_id":    "sess-direct",
+			"worktree_path":   wtPath,
+			"session_id":      "sess-direct",
+			"completion_mode": "direct",
 		},
 	})
 	connectorStub.addItem(&connector.WorkItem{
@@ -83,7 +84,7 @@ func TestCompleteDirectOutsideWorktreeClosesWithoutPRAndRecordsPipelineState(t *
 	if got, _ := connectorStub.GetMetadata(ctx, taskID, "pr_url"); got != "" {
 		t.Fatalf("pr_url = %q, want empty", got)
 	}
-	if !strings.Contains(task.Content, "Direct close: no repo changes detected in worktree") {
+	if !strings.Contains(task.Content, "Direct close: completion_mode=direct") {
 		t.Fatalf("expected direct-close evidence in task content, got: %s", task.Content)
 	}
 
@@ -203,7 +204,8 @@ func TestNextAndShowAdvanceAfterDirectChildClosesInMixedTaskSet(t *testing.T) {
 		Type:   "task",
 		Status: "in_progress",
 		Metadata: map[string]any{
-			"worktree_path": wtPath,
+			"worktree_path":   wtPath,
+			"completion_mode": "direct",
 		},
 	})
 	connectorStub.addItem(&connector.WorkItem{ID: codeTaskID, Title: "Closed code child", Type: "task", Status: "closed"})
@@ -578,6 +580,14 @@ func (f *completionFakeStore) UpdateRunPhase(_ context.Context, designID, phase 
 
 func (f *completionFakeStore) CancelRunningSessions(_ context.Context, _ string) (int, error) {
 	return 0, nil
+}
+
+func (f *completionFakeStore) CancelRunningSessionsForShard(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+func (f *completionFakeStore) MarkSessionEarlyDeath(_ context.Context, _, _ string) error {
+	return nil
 }
 
 func (f *completionFakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {

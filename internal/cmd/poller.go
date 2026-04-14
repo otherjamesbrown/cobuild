@@ -517,10 +517,9 @@ func registerTaskForDispatch(ctx context.Context, designID, taskID string, wave 
 		wavePtr = &wave
 	}
 	if err := cbStore.AddTask(ctx, run.ID, taskID, designID, wavePtr); err != nil {
-		// Likely a duplicate — ignore. The orchestrator will see it either way.
-		if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already") {
-			fmt.Fprintf(os.Stderr, "  [register] %s: %v\n", taskID, err)
-		}
+		// AddTask is idempotent via ON CONFLICT (cb-2d60c4) — any error here
+		// is a real failure (connection lost, store misconfigured, etc).
+		fmt.Fprintf(os.Stderr, "  [register] %s: %v\n", taskID, err)
 	}
 }
 

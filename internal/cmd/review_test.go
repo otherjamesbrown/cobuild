@@ -182,6 +182,14 @@ func (f *reviewFakeStore) CancelRunningSessions(_ context.Context, _ string) (in
 	return 0, nil
 }
 
+func (f *reviewFakeStore) CancelRunningSessionsForShard(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+func (f *reviewFakeStore) MarkSessionEarlyDeath(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (f *reviewFakeStore) AdvancePhase(_ context.Context, designID, expectedCurrent, nextPhase string) error {
 	run, ok := f.runs[designID]
 	if !ok {
@@ -738,5 +746,38 @@ func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
 	}
 	if got := fc.items["cb-task"].Status; got != "needs-review" {
 		t.Fatalf("task status = %q, want needs-review", got)
+	}
+}
+
+// Regression for cb-d5e1dd #2: when the LLM review fails (nil result) and
+// the repo has no CI checks, the old verdict logic approved silently.
+// It must now escalate to request-changes so the operator is forced to
+// configure a review path.
+func TestDetermineReviewVerdict_NoReviewCapabilityFailsLoud(t *testing.T) {
+	cases := []struct {
+		name string
+		ci   ciCheckResult
+		want string
+	}{
+		{"no checks configured", ciCheckResult{summary: "no CI checks configured"}, "request-changes"},
+		{"could not get commit", ciCheckResult{summary: "no checks (could not get commit)"}, "request-changes"},
+		{"api error", ciCheckResult{summary: "no checks (API error)"}, "request-changes"},
+		{"pending still signals", ciCheckResult{summary: "pending"}, "approve"},
+		{"passed checks approve", ciCheckResult{summary: "3 checks passed"}, "approve"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := determineReviewVerdict(nil, nil, tc.ci)
+			if got != tc.want {
+				t.Fatalf("verdict = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetermineReviewVerdict_CIFailuresAlwaysRequestChanges(t *testing.T) {
+	ci := ciCheckResult{summary: "1 check failed", newFailures: []string{"test"}}
+	if got := determineReviewVerdict(nil, nil, ci); got != "request-changes" {
+		t.Fatalf("verdict = %q, want request-changes", got)
 	}
 }

@@ -173,7 +173,11 @@ func TestNextMentionsRedispatchAfterLifecycleRecovery(t *testing.T) {
 	}
 }
 
-func TestDispatchRefusesZombieSessionConflictFromResolver(t *testing.T) {
+// Self-heal: a "running" session record with no live tmux window is stale
+// state from a prior orchestrator crash. Dispatch should recover it in
+// place instead of refusing (cb-d5e1dd #4). The zombie session row must be
+// cancelled and the task must be re-dispatched.
+func TestDispatchSelfHealsZombieSessionConflict(t *testing.T) {
 	taskID := "cb-task-zombie"
 	now := time.Now().UTC()
 
@@ -210,15 +214,22 @@ func TestDispatchRefusesZombieSessionConflictFromResolver(t *testing.T) {
 		_ = dispatchCmd.Flags().Set("dry-run", "false")
 	})
 
-	err := dispatchCmd.RunE(dispatchCmd, []string{taskID})
-	if err == nil {
-		t.Fatal("dispatch returned nil error, want resolver conflict refusal")
+	if err := dispatchCmd.RunE(dispatchCmd, []string{taskID}); err != nil {
+		t.Fatalf("dispatch returned error, want self-heal: %v", err)
 	}
-	if !strings.Contains(err.Error(), "conflict in pipeline session") {
-		t.Fatalf("error = %v, want pipeline session source", err)
+	// The zombie session row must be cancelled, not left as 'running'.
+	var zombie *store.SessionRecord
+	for i := range fs.sessions {
+		if fs.sessions[i].ID == "ps-zombie" {
+			zombie = &fs.sessions[i]
+			break
+		}
 	}
-	if !strings.Contains(err.Error(), "ps-zombie is still running") {
-		t.Fatalf("error = %v, want running session detail", err)
+	if zombie == nil {
+		t.Fatal("zombie session record disappeared")
+	}
+	if zombie.Status == "running" {
+		t.Fatalf("zombie session status still running; self-heal did not cancel it")
 	}
 }
 

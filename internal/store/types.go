@@ -114,6 +114,7 @@ type SessionRecord struct {
 	DurationSec    *int       `json:"duration_seconds,omitempty"`
 	Model          *string    `json:"model,omitempty"`
 	PromptChars    *int       `json:"prompt_chars,omitempty"`
+	DispatchContextChars *int `json:"dispatch_context_chars,omitempty"`
 	ExitCode       *int       `json:"exit_code,omitempty"`
 	FilesChanged   *int       `json:"files_changed,omitempty"`
 	LinesAdded     *int       `json:"lines_added,omitempty"`
@@ -126,6 +127,7 @@ type SessionRecord struct {
 	WorktreePath   *string    `json:"worktree_path,omitempty"`
 	TmuxSession    *string    `json:"tmux_session,omitempty"`
 	TmuxWindow     *string    `json:"tmux_window,omitempty"`
+	EarlyDeath     bool       `json:"early_death,omitempty"`
 }
 
 // GatePassRate holds first-try pass stats for a gate.

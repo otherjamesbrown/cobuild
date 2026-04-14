@@ -285,6 +285,100 @@ func addTaskOverlap(byMergedTask map[string]map[string]struct{}, mergedTaskID, p
 	byMergedTask[mergedTaskID][path] = struct{}{}
 }
 
+// siblingFileOverlap is two new tasks in the same decompose run whose
+// declared file paths collide. Unlike fileOverlapWarning (which compares
+// against already-merged work and is soft/warning-only), this is an error:
+// parallel dispatch of overlapping tasks causes merge conflicts and duplicate
+// code (cb-7cda32).
+type siblingFileOverlap struct {
+	TaskA string
+	TaskB string
+	Paths []string
+}
+
+// collectSiblingFileOverlapProblems scans open child tasks for pairs that
+// touch the same file and returns a deterministic list. An empty result
+// means no overlap was detected.
+func collectSiblingFileOverlapProblems(ctx context.Context, cn connector.Connector, designID string) ([]siblingFileOverlap, error) {
+	if cn == nil {
+		return nil, fmt.Errorf("no connector configured")
+	}
+
+	tasks, err := loadOpenChildTasks(ctx, cn, designID)
+	if err != nil {
+		return nil, err
+	}
+	if len(tasks) < 2 {
+		return nil, nil
+	}
+
+	// Precompute each task's normalized path set.
+	paths := make(map[string]map[string]struct{}, len(tasks))
+	for _, t := range tasks {
+		candidates := taskFileOverlapCandidates(t)
+		if len(candidates) == 0 {
+			continue
+		}
+		set := make(map[string]struct{}, len(candidates))
+		for _, p := range candidates {
+			set[p] = struct{}{}
+		}
+		paths[t.ID] = set
+	}
+
+	ids := make([]string, 0, len(paths))
+	for id := range paths {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var problems []siblingFileOverlap
+	for i := 0; i < len(ids); i++ {
+		for j := i + 1; j < len(ids); j++ {
+			a, b := ids[i], ids[j]
+			shared := intersectPathSets(paths[a], paths[b])
+			if len(shared) == 0 {
+				continue
+			}
+			problems = append(problems, siblingFileOverlap{
+				TaskA: a,
+				TaskB: b,
+				Paths: shared,
+			})
+		}
+	}
+	return problems, nil
+}
+
+func intersectPathSets(a, b map[string]struct{}) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	var shared []string
+	for p := range a {
+		if _, ok := b[p]; ok {
+			shared = append(shared, p)
+		}
+	}
+	sort.Strings(shared)
+	return shared
+}
+
+// renderSiblingFileOverlapError formats a sibling-overlap list as a single
+// error string suitable for blocking the decomposition gate.
+func renderSiblingFileOverlapError(problems []siblingFileOverlap) error {
+	if len(problems) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("decomposition pass blocked: sibling tasks touch the same files (cb-7cda32). ")
+	b.WriteString("Merge the overlapping tasks into one before re-recording the gate:\n")
+	for _, p := range problems {
+		b.WriteString(fmt.Sprintf("  - %s ↔ %s: %s\n", p.TaskA, p.TaskB, strings.Join(p.Paths, ", ")))
+	}
+	return fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
+}
+
 func renderFileOverlapWarnings(warnings []fileOverlapWarning) string {
 	if len(warnings) == 0 {
 		return ""

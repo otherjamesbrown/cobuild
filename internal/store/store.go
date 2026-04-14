@@ -69,6 +69,15 @@ type Store interface {
 	// cancelled. Called by reset to prevent stale sessions from blocking
 	// re-dispatch.
 	CancelRunningSessions(ctx context.Context, designID string) (int, error)
+	// CancelRunningSessionsForShard cancels running sessions that reference
+	// shardID as either design_id or task_id. Broader than the above — used
+	// by reset/recover to catch sessions whose design_id was misrecorded
+	// during dispatch.
+	CancelRunningSessionsForShard(ctx context.Context, shardID string) (int, error)
+	// MarkSessionEarlyDeath sets early_death=true on a session row. Used by
+	// the post-dispatch liveness probe when the tmux window disappears
+	// before the agent had time to produce meaningful output.
+	MarkSessionEarlyDeath(ctx context.Context, sessionID string, errorDetail string) error
 
 	// --- Insights (read-only aggregates) ---
 

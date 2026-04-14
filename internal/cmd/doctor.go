@@ -14,8 +14,15 @@ import (
 )
 
 var doctorCmd = &cobra.Command{
-	Use:   "doctor",
+	Use:   "doctor [shard-id]",
 	Short: "Check pipeline health and optionally reconcile stale state",
+	Long: `Without an argument, scans every pipeline in the project.
+
+With a shard-id argument, produces a deep per-design diagnostic: orchestrate
+processes, tmux windows, running sessions, PR state, review-auth config,
+gate history, and task status. Use this first when a pipeline is stuck
+(cb-d5e1dd #7).`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		if ctx == nil {
@@ -27,6 +34,19 @@ var doctorCmd = &cobra.Command{
 
 		pipelineID, _ := cmd.Flags().GetString("pipeline")
 		fix, _ := cmd.Flags().GetBool("fix")
+
+		// Positional arg wins over --pipeline flag.
+		if len(args) == 1 && pipelineID == "" {
+			pipelineID = args[0]
+		}
+
+		// Deep per-design diagnostic: only when a specific shard is named.
+		// It runs BEFORE the reconcile pass so operators see the problem
+		// state before any auto-fix, and is read-only itself.
+		if pipelineID != "" {
+			runDoctorDiagnose(ctx, cmd.OutOrStdout(), pipelineID)
+			fmt.Fprintln(cmd.OutOrStdout())
+		}
 
 		report, err := runDoctor(ctx, doctorOptions{
 			PipelineID: pipelineID,

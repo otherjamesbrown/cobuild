@@ -255,6 +255,60 @@ func TestRunImplementDispatchesReviewsAndLaterWavePickup(t *testing.T) {
 	assertMessages(t, logs.events, wantMessages)
 }
 
+// TestRunImplementRecoversDeadAgentAndRedispatches verifies that when a
+// task has been in_progress across two poll cycles and the recoverer reports
+// its agent dead, the runner re-dispatches the wave. Regression for
+// cb-f93173 #1 where the loop would poll forever on a silently-dead agent.
+func TestRunImplementRecoversDeadAgentAndRedispatches(t *testing.T) {
+	source := &fakePhaseSource{phases: []string{"implement", "implement", "implement", "done", "done"}}
+	dispatcher := &fakeDispatcher{}
+	waves := &fakeWaveDispatcher{}
+	reviewer := &fakeReviewer{}
+	tasks := &fakeTaskSource{
+		snapshots: [][]store.PipelineTaskRecord{
+			{{TaskShardID: "cb-dead", Status: "in_progress"}}, // initial poll
+			{{TaskShardID: "cb-dead", Status: "in_progress"}}, // still stuck → probe recoverer → reset → redispatch
+			{{TaskShardID: "cb-dead", Status: "closed"}},      // agent now done
+		},
+	}
+
+	// Report dead on first probe, then alive — models the real flow where
+	// the re-dispatched agent is live on subsequent polls.
+	recovered := map[string]int{}
+	recoverer := DeadAgentRecoverFunc(func(_ context.Context, taskID string) (bool, string, error) {
+		recovered[taskID]++
+		if recovered[taskID] == 1 {
+			return true, "test: no tmux/session", nil
+		}
+		return false, "", nil
+	})
+
+	logs := &capturedEvents{}
+	clock := &fakeClock{current: time.Date(2026, 4, 13, 18, 0, 0, 0, time.UTC)}
+	runner := NewRunner(source, dispatcher, Options{
+		PollInterval:       time.Second,
+		PhaseTimeout:       time.Minute,
+		Now:                clock.Now,
+		Sleep:              clock.Sleep,
+		OnEvent:            logs.append,
+		Tasks:              tasks,
+		WaveDispatcher:     waves,
+		Reviewer:           reviewer,
+		DeadAgentRecoverer: recoverer,
+	})
+
+	if err := runner.Run(context.Background(), "cb-design"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if recovered["cb-dead"] < 1 {
+		t.Fatalf("recoverer never called for cb-dead")
+	}
+	// Expect initial dispatch + one re-dispatch after recovery = 2.
+	if waves.calls != 2 {
+		t.Fatalf("wave dispatches = %d, want 2", waves.calls)
+	}
+}
+
 func TestRunImplementResumesMidFlightWithoutRepeatedDispatch(t *testing.T) {
 	source := &fakePhaseSource{phases: []string{"implement", "implement", "implement", "implement", "done", "done"}}
 	dispatcher := &fakeDispatcher{}

@@ -17,11 +17,21 @@ import (
 type directCompletionDecision struct {
 	direct bool
 	reason string
+	// agentFailed is true when the worktree is empty and the pipeline phase
+	// expects code (fix/implement/investigate) — i.e. the agent exited
+	// without producing anything. The caller must record a failed gate and
+	// return an error rather than silently closing the task (cb-9d97c6).
+	agentFailed bool
+	// phase is the resolved pipeline phase for this task (best-effort).
+	// Used by the caller when recording a failed gate.
+	phase string
 }
 
 type completionPathDecision struct {
-	Direct bool
-	Note   string
+	Direct      bool
+	Note        string
+	AgentFailed bool
+	Phase       string
 }
 
 func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, worktreePath string) (directCompletionDecision, error) {
@@ -53,9 +63,55 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 		return directCompletionDecision{}, err
 	}
 	if strings.TrimSpace(string(statusOut)) == "" {
+		// Empty worktree. For phases that are expected to produce code,
+		// this is an agent failure, not a legitimate direct completion.
+		// The caller (complete.go) records a failed gate and errors out
+		// so the orchestrator's retry logic re-dispatches (cb-9d97c6).
+		phase := resolvePhaseForTask(ctx, task)
+		if phaseProducesCode(phase) {
+			return directCompletionDecision{
+				agentFailed: true,
+				phase:       phase,
+				reason:      fmt.Sprintf("agent exited without committing code (phase=%s)", phase),
+			}, nil
+		}
 		return directCompletionDecision{direct: true, reason: "git worktree has no tracked changes"}, nil
 	}
 	return directCompletionDecision{}, nil
+}
+
+// phaseProducesCode reports whether the given pipeline phase is expected to
+// result in committed code. Used to distinguish a legitimate direct-close
+// (e.g. a no-op review pass) from an agent that silently failed to deliver.
+func phaseProducesCode(phase string) bool {
+	switch phase {
+	case "fix", "implement", "investigate":
+		return true
+	}
+	return false
+}
+
+// resolvePhaseForTask returns the pipeline phase governing this task's
+// completion, best-effort. Bug shards have their own pipeline_runs row;
+// implement-phase tasks inherit their parent design's phase.
+func resolvePhaseForTask(ctx context.Context, task *connector.WorkItem) string {
+	if cbStore == nil || task == nil {
+		return ""
+	}
+	if run, err := cbStore.GetRun(ctx, task.ID); err == nil && run != nil {
+		return run.CurrentPhase
+	}
+	if conn == nil {
+		return ""
+	}
+	edges, err := conn.GetEdges(ctx, task.ID, "outgoing", []string{"child-of"})
+	if err != nil || len(edges) == 0 {
+		return ""
+	}
+	if run, err := cbStore.GetRun(ctx, edges[0].ItemID); err == nil && run != nil {
+		return run.CurrentPhase
+	}
+	return ""
 }
 
 func determineCompletionPath(ctx context.Context, task *connector.WorkItem, _ string, worktreePath, _ string) (completionPathDecision, error) {
@@ -63,7 +119,12 @@ func determineCompletionPath(ctx context.Context, task *connector.WorkItem, _ st
 	if err != nil {
 		return completionPathDecision{}, err
 	}
-	return completionPathDecision{Direct: decision.direct, Note: decision.reason}, nil
+	return completionPathDecision{
+		Direct:      decision.direct,
+		Note:        decision.reason,
+		AgentFailed: decision.agentFailed,
+		Phase:       decision.phase,
+	}, nil
 }
 
 func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string, pCfg ...*config.Config) error {

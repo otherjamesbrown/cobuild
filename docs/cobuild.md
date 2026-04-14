@@ -306,6 +306,12 @@ A crash is detected when the tmux window for a task no longer exists. The action
 
 When `max_retries` is exceeded, the `on_max_retries` action fires (usually `escalate`).
 
+### Reconciliation
+
+The poller also reconciles stale `pipeline_runs` on every cycle. The common case is a run stuck at `status=active` while its work item is already `closed` — produced by old versions that didn't advance the run to `done` after the agent finished. The reconciler detects this and marks the run `done/completed` automatically.
+
+End-of-run maintenance after `cobuild orchestrate` and `cobuild doctor --fix` apply the same recovery. Users upgrading from a version that pre-dates the reconciler should run `cobuild doctor --fix` once to clean up any accumulated stuck-active pipelines.
+
 ---
 
 ## Review Process

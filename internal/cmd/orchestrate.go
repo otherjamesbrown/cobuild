@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +45,21 @@ var newOrchestrateRunner = func(opts orchestrator.Options) orchestrateCommandRun
 		}
 		return orchestrator.ReviewResult{Outcome: "waiting"}, nil
 	})
+	opts.DeadAgentRecoverer = orchestrator.DeadAgentRecoverFunc(recoverDeadAgent)
+	if conn != nil {
+		// ShardTypeSource lets the implement phase route task-type shards
+		// through direct dispatch instead of wave dispatch (cb-55f364).
+		opts.ShardTypeSource = orchestrator.ShardTypeFunc(func(ctx context.Context, shardID string) (string, error) {
+			item, err := conn.Get(ctx, shardID)
+			if err != nil {
+				return "", err
+			}
+			if item == nil {
+				return "", nil
+			}
+			return item.Type, nil
+		})
+	}
 
 	return orchestrator.NewRunner(
 		orchestrator.StorePhaseSource{Store: cbStore},
@@ -70,11 +86,40 @@ failures.`,
 		if cbStore == nil {
 			return fmt.Errorf("no store configured")
 		}
+		shardID := args[0]
+
+		// Auto-init: if no pipeline run exists yet for this shard, create
+		// one in manual mode. Previously required a separate `cobuild init`
+		// or `cobuild run` call; refusing here was pure friction for the
+		// common case (cb-d5e1dd #6).
+		if _, err := cbStore.GetRun(cmd.Context(), shardID); err != nil {
+			startPhase := "design"
+			if conn != nil {
+				if item, itemErr := conn.Get(cmd.Context(), shardID); itemErr == nil && item != nil {
+					repoRoot := findRepoRoot()
+					pCfg, _ := config.LoadConfig(repoRoot)
+					if pCfg != nil {
+						if sp := pCfg.StartPhaseForType(item.Type); sp != "" {
+							startPhase = sp
+						}
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "Auto-init: no pipeline run for %s (type=%s) — creating at phase %s (manual mode)\n",
+						shardID, item.Type, startPhase)
+				}
+			}
+			if _, createErr := cbStore.CreateRunWithMode(cmd.Context(), shardID, projectName, startPhase, "manual"); createErr != nil {
+				return fmt.Errorf("auto-init pipeline for %s: %w", shardID, createErr)
+			}
+		}
 
 		timeout, _ := cmd.Flags().GetDuration("timeout")
 		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
 		stepMode, _ := cmd.Flags().GetBool("step")
 		interactiveMode, _ := cmd.Flags().GetBool("interactive")
+		logLevelFlag, _ := cmd.Flags().GetString("log-level")
+		if env := os.Getenv("COBUILD_LOG_LEVEL"); env != "" && logLevelFlag == "" {
+			logLevelFlag = env
+		}
 
 		signalCh := make(chan os.Signal, 1)
 		signal.Notify(signalCh, os.Interrupt)
@@ -87,17 +132,21 @@ failures.`,
 			Output:       cmd.OutOrStdout(),
 			SignalCh:     signalCh,
 		}
+		if logLevelFlag != "" {
+			opts.OnEvent = orchestrator.LevelFilteredHandler(cmd.OutOrStdout(), orchestrator.ParseLevel(logLevelFlag))
+		}
 		if opts.StepMode {
 			opts.BeforeStep = newBeforeStepPrompt(cmd.InOrStdin(), cmd.OutOrStdout())
 		}
 
-		err := newOrchestrateRunner(opts).Run(cmd.Context(), args[0])
+		err := newOrchestrateRunner(opts).Run(cmd.Context(), shardID)
 
 		// End-of-run maintenance: reconcile any stale state this run created
 		// or surfaced (zombie sessions, orphan tmux windows, inconsistent
-		// state). Always runs, even on failure, so dead-ends don't leave
-		// behind garbage. Best-effort — failures don't change the exit code.
-		runEndOfRunMaintenance(cmd.Context(), cmd.OutOrStdout())
+		// state). Scoped to THIS design only — reconciling across every
+		// pipeline in the project would cancel sibling orchestrates' live
+		// sessions (cb-d5e1dd #3). Best-effort: failures don't change exit code.
+		runEndOfRunMaintenance(cmd.Context(), cmd.OutOrStdout(), shardID)
 
 		if err == nil {
 			return nil
@@ -110,26 +159,17 @@ failures.`,
 }
 
 // runEndOfRunMaintenance invokes the doctor's reconciliation pass after an
-// orchestrate run completes. It cleans up zombies/orphans this run may have
-// left behind, so the next dashboard view stays signal-rich (no accumulating
-// noise from prior runs).
-func runEndOfRunMaintenance(ctx context.Context, w io.Writer) {
+// orchestrate run completes, scoped to the design this run drove. It cleans
+// up zombies/orphans the run may have left behind — but only for its own
+// design, so parallel orchestrates don't cancel each other's live sessions
+// (cb-d5e1dd #3).
+func runEndOfRunMaintenance(ctx context.Context, w io.Writer, designID string) {
 	if cbStore == nil || conn == nil {
 		return
 	}
-	fmt.Fprintln(w, "\n[maintenance] Reconciling stale state...")
-	subCmd, _, err := rootCmd.Find([]string{"doctor"})
-	if err != nil || subCmd == nil {
-		fmt.Fprintln(w, "[maintenance] doctor command not found; skipping")
-		return
-	}
-	subCmd.SetOut(w)
-	if err := subCmd.Flags().Set("fix", "true"); err != nil {
-		fmt.Fprintf(w, "[maintenance] failed to set --fix: %v\n", err)
-		return
-	}
-	if err := subCmd.RunE(subCmd, nil); err != nil {
-		fmt.Fprintf(w, "[maintenance] doctor --fix returned: %v\n", err)
+	fmt.Fprintf(w, "\n[maintenance] Reconciling stale state for %s...\n", designID)
+	if _, err := runDoctor(ctx, doctorOptions{PipelineID: designID, Fix: true}); err != nil {
+		fmt.Fprintf(w, "[maintenance] doctor returned: %v\n", err)
 	}
 }
 
@@ -152,5 +192,6 @@ func init() {
 	orchestrateCmd.Flags().Bool("interactive", false, "Alias for --step")
 	orchestrateCmd.Flags().Duration("timeout", 2*time.Hour, "Maximum wait per phase before exiting")
 	orchestrateCmd.Flags().Duration("poll-interval", 30*time.Second, "Polling interval while waiting for phase changes")
+	orchestrateCmd.Flags().String("log-level", "", "Output level: debug|info|warn|error (default info; COBUILD_LOG_LEVEL env fallback)")
 	rootCmd.AddCommand(orchestrateCmd)
 }

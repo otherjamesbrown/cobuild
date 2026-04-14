@@ -28,6 +28,21 @@ type TaskSource interface {
 	ListTasksByDesign(ctx context.Context, designID string) ([]store.PipelineTaskRecord, error)
 }
 
+// ShardTypeSource resolves a shard's work-item type (design/bug/task). The
+// implement phase needs this to decide between wave dispatch (designs with
+// child tasks) and direct dispatch (task-type shards, which ARE the unit
+// of work) — see cb-55f364.
+type ShardTypeSource interface {
+	ShardType(ctx context.Context, shardID string) (string, error)
+}
+
+// ShardTypeFunc adapts a function into a ShardTypeSource.
+type ShardTypeFunc func(ctx context.Context, shardID string) (string, error)
+
+func (f ShardTypeFunc) ShardType(ctx context.Context, shardID string) (string, error) {
+	return f(ctx, shardID)
+}
+
 // TaskStore is the narrow store dependency needed for task polling.
 type TaskStore interface {
 	ListTasksByDesign(ctx context.Context, designID string) ([]store.PipelineTaskRecord, error)

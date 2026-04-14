@@ -302,6 +302,11 @@ func runDecomposeCommand(t *testing.T, designID, verdict, body string) (string, 
 func registerProjectRepos(t *testing.T, project string, repoNames ...string) {
 	t.Helper()
 
+	// Isolate HOME so SaveRepoRegistry writes to a tempdir, not the
+	// developer's real ~/.cobuild/repos.yaml (cb-3d611c). t.Setenv restores
+	// the original value at test cleanup.
+	t.Setenv("HOME", t.TempDir())
+
 	reg := &config.RepoRegistry{Repos: map[string]config.RepoEntry{}}
 	for _, repoName := range repoNames {
 		repoPath := filepath.Join(t.TempDir(), repoName)

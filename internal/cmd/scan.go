@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -18,13 +19,20 @@ containing a file-level index. Dispatched agents can use this to understand
 the codebase structure without reading every file.
 
 Each entry includes: file path, estimated token count, and auto-detected description.
-Excludes: .git, node_modules, vendor, .cobuild/sessions, binary files.`,
+Excludes: VCS dirs, deps, caches, build output, coverage, binaries. Large
+directories are collapsed to a one-line summary to keep anatomy.md small.
+
+Project-specific excludes: put one path per line in .cobuild/scan-exclude
+(supports comments with #). Paths are matched against the directory's
+relative path OR its basename.`,
 	Example: `  cobuild scan                     # generate anatomy
   cobuild scan --check              # check if anatomy is stale
-  cobuild scan --stdout             # print to stdout instead of writing`,
+  cobuild scan --stdout             # print to stdout instead of writing
+  cobuild scan --verbose            # do not collapse large directories`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		check, _ := cmd.Flags().GetBool("check")
 		stdout, _ := cmd.Flags().GetBool("stdout")
+		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		repoRoot := findRepoRoot()
 
@@ -33,7 +41,7 @@ Excludes: .git, node_modules, vendor, .cobuild/sessions, binary files.`,
 			return fmt.Errorf("scan: %w", err)
 		}
 
-		content := formatAnatomy(entries)
+		content := formatAnatomy(entries, verbose)
 
 		if check {
 			anatomyPath := filepath.Join(repoRoot, ".cobuild", "context", "always", "anatomy.md")
@@ -76,9 +84,22 @@ type fileEntry struct {
 	Description string
 }
 
+// skipDirs are directory names (or repo-relative paths) that scan never
+// descends into. Every entry is a well-known convention across Go/Python/
+// JS/Rust/Ruby — tool caches, language build output, dependency trees,
+// coverage reports. Project-specific dirs go in .cobuild/scan-exclude.
 var skipDirs = map[string]bool{
-	".git": true, "node_modules": true, "vendor": true, "__pycache__": true,
-	".venv": true, "venv": true, ".tox": true, "dist": true, "build": true,
+	// VCS + deps
+	".git": true, "node_modules": true, "vendor": true,
+	// Python caches/envs
+	"__pycache__": true, ".venv": true, "venv": true, ".tox": true,
+	".pytest_cache": true, ".ruff_cache": true, ".mypy_cache": true,
+	".eggs": true,
+	// Build / dist output
+	"dist": true, "build": true, "target": true, "out": true,
+	// Coverage / test artifacts
+	"coverage": true, "htmlcov": true, ".nyc_output": true,
+	// CoBuild / Claude / Beads internals
 	".cobuild/sessions": true, ".claude": true, ".beads": true,
 }
 
@@ -93,6 +114,22 @@ var skipExts = map[string]bool{
 func scanProject(repoRoot string) ([]fileEntry, error) {
 	var entries []fileEntry
 
+	projectSkips := loadProjectScanExcludes(repoRoot)
+
+	// Merge pipeline.yaml scan.skip_dirs into the project skip set. Config
+	// entries can be repo-relative paths or directory basenames; both
+	// forms are keyed into projectSkips for O(1) lookup during the walk.
+	if cfg, err := config.LoadConfig(repoRoot); err == nil && cfg != nil {
+		for _, entry := range cfg.Scan.SkipDirs {
+			entry = strings.TrimSpace(entry)
+			entry = strings.TrimRight(entry, "/")
+			if entry == "" {
+				continue
+			}
+			projectSkips[entry] = true
+		}
+	}
+
 	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -103,6 +140,9 @@ func scanProject(repoRoot string) ([]fileEntry, error) {
 		// Skip directories
 		if info.IsDir() {
 			if skipDirs[rel] || skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			if projectSkips[rel] || projectSkips[info.Name()] {
 				return filepath.SkipDir
 			}
 			// Skip nested .cobuild/sessions
@@ -152,6 +192,26 @@ func scanProject(repoRoot string) ([]fileEntry, error) {
 	})
 
 	return entries, err
+}
+
+// loadProjectScanExcludes reads .cobuild/scan-exclude (one path per line,
+// # for comments). Returned map keys can be matched against either the
+// directory's repo-relative path or its basename. Missing file → empty map.
+func loadProjectScanExcludes(repoRoot string) map[string]bool {
+	out := map[string]bool{}
+	path := filepath.Join(repoRoot, ".cobuild", "scan-exclude")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out[strings.TrimRight(line, "/")] = true
+	}
+	return out
 }
 
 func estimateTokens(content, ext string) int {
@@ -261,7 +321,15 @@ func autoDescribe(relPath, ext string, content string) string {
 	return name
 }
 
-func formatAnatomy(entries []fileEntry) string {
+// Directory collapse thresholds. Anatomy.md is supposed to be a short
+// index, not an exhaustive listing. Directories that cross either bound
+// get summarized to one line unless --verbose is set.
+const (
+	collapseDirTokens = 10_000
+	collapseDirFiles  = 30
+)
+
+func formatAnatomy(entries []fileEntry, verbose bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Project Anatomy\n\n")
@@ -289,6 +357,12 @@ func formatAnatomy(entries []fileEntry) string {
 			sb.WriteString(fmt.Sprintf("## Root (~%s tokens)\n\n", formatTokensShort(dirTokens)))
 		} else {
 			sb.WriteString(fmt.Sprintf("## %s/ (~%s tokens)\n\n", dir, formatTokensShort(dirTokens)))
+		}
+
+		if !verbose && (dirTokens >= collapseDirTokens || len(files) >= collapseDirFiles) {
+			sb.WriteString(fmt.Sprintf("%d files, ~%s tokens — large directory, listing suppressed. Use `cobuild scan --verbose` or read the directory directly to see individual files.\n\n",
+				len(files), formatTokensShort(dirTokens)))
+			continue
 		}
 
 		for _, f := range files {
@@ -328,5 +402,6 @@ func min(a, b int) int {
 func init() {
 	scanCmd.Flags().Bool("check", false, "Check if anatomy is stale")
 	scanCmd.Flags().Bool("stdout", false, "Print to stdout instead of writing file")
+	scanCmd.Flags().Bool("verbose", false, "Do not collapse large directories into one-line summaries")
 	rootCmd.AddCommand(scanCmd)
 }

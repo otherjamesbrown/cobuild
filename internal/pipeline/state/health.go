@@ -1,6 +1,15 @@
 package state
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+// staleReviewWindow is how long a pipeline may sit in review with no
+// activity before being flagged stale. The doctor doesn't auto-recover
+// these — they need a human decision (reset, close, or let it finish).
+// See cb-09c328.
+const staleReviewWindow = 24 * time.Hour
 
 func computeHealth(state *PipelineState) (Health, []string) {
 	if state == nil {
@@ -92,6 +101,14 @@ func isStale(state *PipelineState, runningSessions []SessionState) bool {
 		case "orphaned", "cancelled", "completed", "failed", "timeout":
 			return true
 		}
+	}
+	// Review-stuck (cb-09c328): a pipeline that's been in review for longer
+	// than staleReviewWindow with nothing running is waiting on a human
+	// decision (merge, fail, close). Flag it so live/status can filter these
+	// out of the "actually active" view. No auto-fix — operator decides.
+	if state.Run.Phase == "review" && !state.ResolvedAt.IsZero() &&
+		state.ResolvedAt.Sub(state.Run.UpdatedAt) > staleReviewWindow {
+		return true
 	}
 	return false
 }

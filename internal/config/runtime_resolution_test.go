@@ -64,9 +64,14 @@ func TestModelForPhaseRuntime(t *testing.T) {
 	if got := cfg.ModelForPhaseRuntime("design", "", "codex"); got != "opus" {
 		t.Errorf("design/codex: got %q, want opus (phase override)", got)
 	}
-	// review.Model still trumps runtime default for the review phase.
-	if got := cfg.ModelForPhaseRuntime("review", "", "codex"); got != "haiku" {
-		t.Errorf("review/codex: got %q, want haiku (review.model)", got)
+	// review.Model trumps runtime default for review phase WHEN compatible.
+	if got := cfg.ModelForPhaseRuntime("review", "", "claude-code"); got != "haiku" {
+		t.Errorf("review/claude-code: got %q, want haiku (review.model)", got)
+	}
+	// review.Model=haiku is Claude-only; skipped on codex so the runtime
+	// default wins (cb-b3356d). Without this, dispatch would 400 at runtime.
+	if got := cfg.ModelForPhaseRuntime("review", "", "codex"); got != "gpt-5.4" {
+		t.Errorf("review/codex: got %q, want gpt-5.4 (haiku incompatible with codex)", got)
 	}
 	// Legacy DefaultModel when runtime is unknown.
 	if got := cfg.ModelForPhaseRuntime("implement", "", "unknown-rt"); got != "legacy-fallback" {

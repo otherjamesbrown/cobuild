@@ -1,0 +1,28 @@
+{
+  "phase": "decompose",
+  "task_id": "cb-review-design",
+  "create_items": [
+    {
+      "id": "cb-review-task",
+      "title": "Single task for dispatched-review e2e",
+      "type": "task",
+      "parent_id": "cb-review-design",
+      "content": "Produce a commit so the review dispatch has something to evaluate.",
+      "metadata": {
+        "repo": "review-e2e"
+      }
+    }
+  ],
+  "gate_verdict": {
+    "gate": "decomposition-review",
+    "shard_id": "cb-review-design",
+    "verdict": "pass",
+    "body": "Single-task decomposition for the dispatched-review e2e."
+  },
+  "session": {
+    "input_tokens": 8,
+    "output_tokens": 2,
+    "turns": 1,
+    "last_message": "One-task decomposition recorded."
+  }
+}

@@ -188,8 +188,10 @@ rm -f "$PROMPT_FILE"
 # implement/fix use interactive mode for multi-turn work.
 if [ "$COBUILD_PHASE" = "implement" ] || [ "$COBUILD_PHASE" = "fix" ]; then
     claude %s "$PROMPT"
+    CLAUDE_EXIT=$?
 else
     claude %s "$PROMPT" > .cobuild/session-result.json 2>&1
+    CLAUDE_EXIT=$?
     if [ -f .cobuild/session-result.json ] && command -v jq &>/dev/null; then
         STOP=$(jq -r '.subtype // .stop_reason // "unknown"' .cobuild/session-result.json 2>/dev/null)
         TURNS=$(jq -r '.num_turns // "?"' .cobuild/session-result.json 2>/dev/null)
@@ -197,7 +199,22 @@ else
         echo "[$(date)] Headless session: stop=$STOP turns=$TURNS cost=$COST" >> "$LOGFILE"
     fi
 fi
-echo "[$(date)] Claude session ended" >> "$LOGFILE"
+echo "[$(date)] Claude session ended (exit=$CLAUDE_EXIT)" >> "$LOGFILE"
+
+# Error capture (cb-1d8abc): if the agent exited non-zero, drop a
+# dispatch-error.log alongside session.log so post-mortem is one file away.
+if [ "$CLAUDE_EXIT" != "0" ]; then
+    {
+        echo "=== dispatch-error $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) ==="
+        echo "claude exited with non-zero status: $CLAUDE_EXIT"
+        echo "phase=$COBUILD_PHASE session=$COBUILD_SESSION_ID task=$COBUILD_TASK_ID"
+        if [ -f .cobuild/session.log ]; then
+            echo
+            echo "--- tail session.log ---"
+            tail -200 .cobuild/session.log
+        fi
+    } >> .cobuild/dispatch-error.log 2>/dev/null
+fi
 
 # Parse transcript for token/cost data after session ends
 # The transcript JSONL has usage data in each API response
@@ -247,6 +264,9 @@ elif [ -f .cobuild/gate-verdict.json ]; then
             investigation)
                 cobuild investigate "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
+            review)
+                cobuild review "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                ;;
             retrospective)
                 cobuild retro "$SHARD_ID" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
@@ -259,6 +279,14 @@ elif [ -f .cobuild/gate-verdict.json ]; then
     fi
 else
     echo "[$(date)] Gate phase ($COBUILD_PHASE) — no gate-verdict.json found" >> "$LOGFILE"
+fi
+
+# Explicitly close this tmux window so it doesn't hang around as an orphan
+# that blocks the next dispatch (cb-699bf2). Works regardless of the user's
+# remain-on-exit setting. Fire-and-forget: kill-window terminates this pane
+# immediately, so any code after this won't run.
+if [ -n "$TMUX_PANE" ]; then
+    tmux kill-window -t "$TMUX_PANE" 2>/dev/null
 fi
 `,
 		shellQuote(in.WorktreePath),

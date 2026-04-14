@@ -151,6 +151,21 @@ What files to create/modify and what changes to make.
 Any context the implementing agent needs that isn't in the design.
 ```
 
+## Step 4a: Audit for overlap (mandatory)
+
+Before linking tasks, re-read every task you just created and check for overlap. Decompose agents consistently over-split: they think "9 tasks" is a more thorough decomposition than 5, but end up creating several tasks that touch the same files or cover the same scope.
+
+Run this check:
+
+1. **List every task** you created with its title and the files it says it will touch (`Code Locations` section).
+2. **Flag any pair** whose `Code Locations` share a file. Two tasks touching the same file will produce merge conflicts and race each other in parallel dispatch.
+3. **Flag any pair** whose titles describe substantively the same work (e.g., both "Add dispatched review skill" and "Add review dispatch plumbing" — same change described differently).
+4. **Merge flagged pairs into one task.** Close or delete the duplicate before recording the decomposition gate.
+
+**The decomposition gate will fail** if CoBuild detects two new tasks touching the same file path. Catch overlap here, not at the gate.
+
+A 5-task decomposition with no overlap is better than a 9-task decomposition with 4 duplicates.
+
 ## Step 5: Link tasks and set dependencies
 
 ```bash

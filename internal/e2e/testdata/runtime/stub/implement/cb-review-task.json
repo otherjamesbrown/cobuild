@@ -1,0 +1,14 @@
+{
+  "phase": "implement",
+  "task_id": "cb-review-task",
+  "implement": {
+    "patch_file": "../patches/review-task.patch",
+    "commit_message": "[cb-review-task] add dispatched-review e2e artifact"
+  },
+  "session": {
+    "input_tokens": 12,
+    "output_tokens": 3,
+    "turns": 1,
+    "last_message": "Applied the dispatched-review e2e patch."
+  }
+}

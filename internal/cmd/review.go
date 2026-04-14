@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -133,6 +134,20 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// as every other gate phase. Avoids the Anthropic API path entirely
 		// (cb-482378). The agent's verdict gets recorded by its runner script.
 		if pCfg.Review.EffectiveMode() == "dispatched" {
+			// Fallback verdict reader for cb-3b091b. If a prior dispatched
+			// agent already wrote .cobuild/gate-verdict.json but the runner
+			// script's review arm didn't run (or ran pre-fix), consume the
+			// verdict here: record the gate, merge or redispatch, and move
+			// on. Safe to run alongside the runner script: if `cobuild review`
+			// already recorded the gate, RecordGateVerdict below is skipped.
+			consumed, cErr := consumeDispatchedReviewVerdict(ctx, taskID, prURL, pCfg)
+			if cErr != nil {
+				return cErr
+			}
+			if consumed {
+				return nil
+			}
+
 			waiting, err := dispatchReviewAgent(ctx, cmd, taskID)
 			if err != nil {
 				return err
@@ -209,8 +224,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		// Step 4: Decide verdict
-		hasNewCIFailures := len(ciResult.newFailures) > 0
-		verdict := determineReviewVerdict(reviewResult, findings, hasNewCIFailures)
+		verdict := determineReviewVerdict(reviewResult, findings, ciResult)
 
 		// Build summary
 		summary := buildReviewSummary(reviewSource, reviewResult, findings, ciResult, reviewWarning)
@@ -543,7 +557,71 @@ func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
 	return reconciled, nil
 }
 
+// mergeMaxRetries caps how many times process-review may attempt `gh pr
+// merge` for the same task across polling cycles before escalating. Beyond
+// this, the orchestrator would spin forever on an unmergeable PR (cb-d5e1dd
+// #10). Override via the MERGE_MAX_RETRIES env var for power-user debugging.
+const mergeMaxRetries = 3
+
+// recordMergeFailure increments the persistent merge_retry_count metadata
+// and, once it crosses mergeMaxRetries, appends an operator-actionable note
+// to the task and applies a `merge-blocked` label. The caller should still
+// return the error — this function just persists the audit trail.
+func recordMergeFailure(ctx context.Context, taskID, prURL, detail string) {
+	if conn == nil {
+		return
+	}
+	existing, _ := conn.GetMetadata(ctx, taskID, "merge_retry_count")
+	count := 0
+	if existing != "" {
+		_, _ = fmt.Sscanf(existing, "%d", &count)
+	}
+	count++
+	_ = conn.SetMetadata(ctx, taskID, "merge_retry_count", fmt.Sprintf("%d", count))
+
+	if count < mergeMaxRetries {
+		return
+	}
+	// At or past the cap: append a persistent note so the user can see it
+	// via `cobuild show <task>` and apply a label so list views can filter.
+	note := fmt.Sprintf(
+		"\n\n## Merge blocked after %d attempts\n\nPR: %s\n\nLast error:\n```\n%s\n```\n\n"+
+			"Resolve the conflict manually, then either:\n"+
+			"  - clear `merge_retry_count` metadata and re-run `cobuild process-review %s`, or\n"+
+			"  - close the PR and let the orchestrator re-dispatch the task.",
+		count, prURL, strings.TrimSpace(detail), taskID,
+	)
+	_ = conn.AppendContent(ctx, taskID, note)
+	_ = conn.AddLabel(ctx, taskID, "merge-blocked")
+}
+
+// mergeIsBlocked reports whether the merge retry cap has already been hit
+// for this task. Callers use this to refuse further merge attempts and
+// surface the blocked state to the orchestrator.
+func mergeIsBlocked(ctx context.Context, taskID string) bool {
+	if conn == nil {
+		return false
+	}
+	v, _ := conn.GetMetadata(ctx, taskID, "merge_retry_count")
+	if v == "" {
+		return false
+	}
+	var count int
+	_, _ = fmt.Sscanf(v, "%d", &count)
+	return count >= mergeMaxRetries
+}
+
 func doMerge(ctx context.Context, taskID, prURL string) error {
+	// Refuse immediately if the retry cap is hit — prior attempts already
+	// appended diagnostics and applied the merge-blocked label. Spinning
+	// further wastes time and GitHub API calls (cb-d5e1dd #10).
+	if mergeIsBlocked(ctx, taskID) {
+		return fmt.Errorf(
+			"merge for %s blocked: retry cap %d reached; see task content for last error. "+
+				"Resolve manually, then clear merge_retry_count metadata or close the PR.",
+			taskID, mergeMaxRetries,
+		)
+	}
 	// Clean up the worktree FIRST, before calling `gh pr merge --delete-branch`.
 	// Otherwise the local branch deletion fails with "cannot delete branch X
 	// used by worktree at Y" (observed on cp-64af0f, 2026-04-11) because the
@@ -559,6 +637,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	//   2. stale base, clean rebase → rebase + force-push, retry merge
 	//   3. real content conflict → return error so caller stops; needs human
 	if err := tryAutoRebaseBeforeMerge(ctx, taskID, prURL); err != nil {
+		recordMergeFailure(ctx, taskID, prURL, err.Error())
 		return err
 	}
 
@@ -566,8 +645,11 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	mergeOut, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
 		"--squash", "--delete-branch")
 	if err != nil {
+		recordMergeFailure(ctx, taskID, prURL, string(mergeOut))
 		return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
 	}
+	// Clear retry counter on success so a re-merged/re-opened PR starts fresh.
+	_ = conn.SetMetadata(ctx, taskID, "merge_retry_count", "")
 	fmt.Println("  Merged.")
 
 	// Rebase sibling branches onto updated main to prevent merge conflicts
@@ -958,7 +1040,8 @@ func mapSeverityToPriority(severity string) string {
 	}
 }
 
-func determineReviewVerdict(reviewResult *llmreview.ReviewResult, findings []reviewFinding, hasNewCIFailures bool) string {
+func determineReviewVerdict(reviewResult *llmreview.ReviewResult, findings []reviewFinding, ci ciCheckResult) string {
+	hasNewCIFailures := len(ci.newFailures) > 0
 	if hasNewCIFailures {
 		return "request-changes"
 	}
@@ -973,7 +1056,32 @@ func determineReviewVerdict(reviewResult *llmreview.ReviewResult, findings []rev
 			return "request-changes"
 		}
 	}
+	// No LLM review result, no findings, no CI failures. Before approving,
+	// require that we had SOME meaningful signal. If both the LLM review
+	// failed AND there are no CI checks, a plain "approve" is silent
+	// rubber-stamping (cb-d5e1dd #2). Escalate to request-changes so the
+	// operator is forced to wire up at least one review path.
+	if ciProvidedNoSignal(ci) {
+		return "request-changes"
+	}
 	return "approve"
+}
+
+// ciProvidedNoSignal reports whether the CI check yielded no usable outcome:
+// either the repo has zero configured checks, or the GitHub API failed before
+// any check status could be parsed. "pending" and "N passed" both count as
+// signal. Used by determineReviewVerdict to fail-loud when the overall
+// review has no basis for approval.
+func ciProvidedNoSignal(ci ciCheckResult) bool {
+	s := strings.ToLower(strings.TrimSpace(ci.summary))
+	switch {
+	case strings.HasPrefix(s, "no ci checks configured"),
+		strings.HasPrefix(s, "no checks (could not get commit)"),
+		strings.HasPrefix(s, "no checks (api error)"),
+		strings.HasPrefix(s, "no checks (parse error)"):
+		return true
+	}
+	return false
 }
 
 func buildReviewSummary(reviewSource string, reviewResult *llmreview.ReviewResult, findings []reviewFinding, ci ciCheckResult, warning string) string {
@@ -1136,6 +1244,112 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 	}
 	fmt.Printf("  Rebased PR #%d onto origin/main.\n", prNumber)
 	return nil
+}
+
+// consumeDispatchedReviewVerdict consumes a dispatched review agent's verdict
+// from <worktree>/.cobuild/gate-verdict.json and completes the review flow
+// in-line. Returns consumed=true when a verdict was handled — the caller
+// should return immediately. Returns (false, nil) when no verdict file is
+// present (normal first-call path; caller should dispatch the agent).
+//
+// Defense-in-depth for cb-3b091b: the runner script's review arm already
+// calls `cobuild review` to record the gate and advance the phase. This
+// function kicks in when the runner script didn't run (pre-fix worktree)
+// or when the runner recorded the gate but never got a chance to merge.
+// RecordGateVerdict is skipped when the pipeline phase has already moved
+// past "review" (i.e. the runner script got there first), so we don't
+// double-record. doMerge / doRequestChanges are idempotent via their own
+// guards (PR state, retry caps).
+func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, pCfg *config.Config) (bool, error) {
+	if conn == nil {
+		return false, nil
+	}
+	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	if wtPath == "" {
+		return false, nil
+	}
+	verdictFile := filepath.Join(wtPath, ".cobuild", "gate-verdict.json")
+	data, err := os.ReadFile(verdictFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read gate-verdict.json: %w", err)
+	}
+
+	var v struct {
+		Gate    string `json:"gate"`
+		ShardID string `json:"shard_id"`
+		Verdict string `json:"verdict"`
+		Body    string `json:"body"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		// Park the corrupt file and log; don't loop on it forever.
+		_ = os.Rename(verdictFile, verdictFile+".corrupted")
+		return false, fmt.Errorf("parse gate-verdict.json: %w", err)
+	}
+	if v.Gate != "review" || v.ShardID != taskID {
+		// Not our verdict. Leave the file alone — a different caller owns it.
+		return false, nil
+	}
+	if v.Verdict != "pass" && v.Verdict != "fail" {
+		return false, fmt.Errorf("invalid verdict %q in %s", v.Verdict, verdictFile)
+	}
+
+	// Rename first so a crash between here and the merge/redispatch doesn't
+	// cause the same verdict to be consumed twice on the next poll.
+	processedFile := verdictFile + ".processed"
+	if err := os.Rename(verdictFile, processedFile); err != nil {
+		return false, fmt.Errorf("rename gate-verdict.json: %w", err)
+	}
+
+	// Mark any still-running review sessions complete. Without this, the
+	// next dispatchReviewAgent call would hit the "already running" guard
+	// even though the agent has exited.
+	if cbStore != nil {
+		if sessions, lerr := cbStore.ListSessions(ctx, taskID); lerr == nil {
+			for _, s := range sessions {
+				if s.Status == "running" && s.Phase == "review" {
+					_ = cbStore.EndSession(ctx, s.ID, store.SessionResult{
+						ExitCode:       0,
+						Status:         "completed",
+						CompletionNote: "dispatched review verdict consumed by process-review",
+					})
+				}
+			}
+		}
+	}
+
+	// Record the gate unless the pipeline has already advanced past review
+	// (runner script's `cobuild review` arm beat us to it).
+	if cbStore != nil {
+		run, runErr := cbStore.GetRun(ctx, taskID)
+		if runErr == nil && run != nil && run.CurrentPhase == "review" {
+			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", v.Verdict, v.Body, 0, pCfg); rerr != nil {
+				return true, fmt.Errorf("record review gate: %w", rerr)
+			}
+		}
+	}
+
+	if v.Verdict == "pass" {
+		if err := doMerge(ctx, taskID, prURL); err != nil {
+			return true, err
+		}
+		printNextStep(taskID, "merged", "process-review")
+		return true, nil
+	}
+
+	// verdict=fail — append the agent's findings as synthetic feedback and
+	// re-dispatch the implement agent.
+	findings := []reviewFinding{{
+		Priority: "high",
+		Body:     strings.TrimSpace(v.Body),
+	}}
+	if err := doRequestChanges(ctx, taskID, findings, ciCheckResult{}, "dispatched"); err != nil {
+		return true, err
+	}
+	printNextStep(taskID, "redispatched", "process-review")
+	return true, nil
 }
 
 // dispatchReviewAgent spawns a dispatched review agent for a needs-review task

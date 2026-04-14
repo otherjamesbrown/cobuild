@@ -37,10 +37,51 @@ func advancePipelinePhase(
 		return "", fmt.Errorf("no next phase after %q for %s", expectedCurrentPhase, designID)
 	}
 
+	// Empty-design guard. A design short-circuiting to done with zero child
+	// tasks is almost always a silent failure — the operator sees green
+	// gates and moves on while no code was produced (cb-d5e1dd #1). Fail
+	// loud instead. Bugs and tasks are allowed to advance without children.
+	if nextPhase == "done" {
+		if err := assertDesignHasChildTasks(ctx, cn, designID); err != nil {
+			return "", err
+		}
+	}
+
 	if err := st.AdvancePhase(ctx, designID, expectedCurrentPhase, nextPhase); err != nil {
 		return "", err
 	}
 	return nextPhase, nil
+}
+
+// assertDesignHasChildTasks blocks the advance-to-done for a design with
+// no child tasks. Bugs and tasks are allowed through; they're leaves by
+// definition. Returns nil if connector unavailable (we don't block on
+// connector errors — this is a guard, not a gate).
+func assertDesignHasChildTasks(ctx context.Context, cn connector.Connector, designID string) error {
+	if cn == nil {
+		return nil
+	}
+	item, err := cn.Get(ctx, designID)
+	if err != nil || item == nil {
+		return nil
+	}
+	if item.Type != "design" {
+		return nil
+	}
+	edges, err := cn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return nil
+	}
+	for _, e := range edges {
+		if e.Type == "" || e.Type == "task" {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"empty-design guard: %s has no child tasks — refusing to advance to done (cb-d5e1dd #1). "+
+			"Run decompose first, or close the shard manually if no code is needed.",
+		designID,
+	)
 }
 
 // advancePipelinePhaseTo advances to a specific target phase, still

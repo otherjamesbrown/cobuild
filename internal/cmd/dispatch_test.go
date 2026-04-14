@@ -690,7 +690,10 @@ func TestDispatchWaveParallelKeepsMultiWaveDispatch(t *testing.T) {
 }
 
 func TestDispatchWaveAppliesConcurrencyAfterWaveSelection(t *testing.T) {
-	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 1\n")
+	// Per-runtime cap (cb-0a0762): claude-code capped to 1 for this test.
+	// The tasks below have no dispatch_runtime metadata, so they default
+	// to claude-code via pCfg.ResolveRuntime.
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 1\n  runtimes:\n    claude-code:\n      max_concurrent: 1\n")
 
 	prevConn := conn
 	prevClient := cbClient
@@ -726,6 +729,52 @@ func TestDispatchWaveAppliesConcurrencyAfterWaveSelection(t *testing.T) {
 	assertContains(t, output, "[dry-run] task-1")
 	assertNotContains(t, output, "[dry-run] task-2")
 	assertNotContains(t, output, "[dry-run] task-3")
+}
+
+// cb-0a0762: mixed codex + claude-code ready set. With codex cap=1 and
+// claude-code cap=2, the single codex task should dispatch alongside two
+// of the three claude-code tasks, ignoring the lower codex limit for
+// claude-code candidates.
+func TestDispatchWaveAppliesPerRuntimeCaps(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: parallel\n  max_concurrent: 10\n  runtimes:\n    codex:\n      max_concurrent: 1\n    claude-code:\n      max_concurrent: 2\n")
+
+	prevConn := conn
+	prevClient := cbClient
+	prevProject := projectName
+	conn = newDispatchWaveTestConnector(
+		dispatchWaveTestItem("design-1", "design", "open", nil),
+		dispatchWaveTestItem("task-codex", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "codex"}),
+		dispatchWaveTestItem("task-cc-a", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "claude-code"}),
+		dispatchWaveTestItem("task-cc-b", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "claude-code"}),
+		dispatchWaveTestItem("task-cc-c", "task", "open", map[string]any{"wave": 1, "dispatch_runtime": "claude-code"}),
+	)
+	cbClient = &client.Client{}
+	projectName = "cb-test"
+	t.Cleanup(func() {
+		conn = prevConn
+		cbClient = prevClient
+		projectName = prevProject
+	})
+
+	testConn := conn.(*dispatchWaveTestConnector)
+	testConn.edgesByItem["design-1"] = []connector.Edge{
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-codex", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-cc-a", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-cc-b", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-cc-c", Status: "open"},
+	}
+
+	output := captureStdout(t, func() {
+		if err := dispatchWaveCmd.RunE(dispatchWaveCmd, []string{"design-1"}); err != nil {
+			t.Fatalf("dispatch-wave failed: %v", err)
+		}
+	})
+
+	// Expect 3 tasks dispatched: 1 codex + 2 claude-code.
+	assertContains(t, output, "Dispatching 3 tasks")
+	assertContains(t, output, "[dry-run] task-codex")
+	// The third claude-code task (first-seen order) should be deferred.
+	assertContains(t, output, "Deferred 1 task")
 }
 
 type dispatchWaveTestConnector struct {

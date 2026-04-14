@@ -45,13 +45,21 @@ func TestDetermineCompletionPathExplicitDirect(t *testing.T) {
 }
 
 func TestDirectCompletionFallbackForEmptyWorktree(t *testing.T) {
+	// A task that legitimately has no worktree output must opt in via
+	// completion_mode=direct. Without that flag in a code-producing phase
+	// (implement/fix/investigate), an empty worktree is treated as agent
+	// failure (cb-9d97c6) — covered separately in
+	// TestEmptyWorktreeInImplementPhaseIsAgentFailure.
 	ctx := context.Background()
 	taskID := "cb-empty"
 	designID := "cb-design"
 	wtPath := newTestWorktree(t, taskID)
 
 	fc := newFakeConnector()
-	fc.items[taskID] = &connector.WorkItem{ID: taskID, Title: "Non-code task", Type: "task", Status: "in_progress"}
+	fc.items[taskID] = &connector.WorkItem{
+		ID: taskID, Title: "Non-code task", Type: "task", Status: "in_progress",
+		Metadata: map[string]any{"completion_mode": "direct"},
+	}
 	fc.items[designID] = &connector.WorkItem{ID: designID, Title: "Design", Type: "design", Status: "review"}
 	fc.metadata[taskID] = map[string]string{
 		"worktree_path": wtPath,
@@ -98,14 +106,47 @@ func TestDirectCompletionFallbackForEmptyWorktree(t *testing.T) {
 	if session.PRURL != "" {
 		t.Fatalf("session PRURL = %q, want empty", session.PRURL)
 	}
-	if session.CompletionNote == "" || !strings.Contains(session.CompletionNote, "git worktree has no tracked changes") {
-		t.Fatalf("session completion note = %q, want fallback reason", session.CompletionNote)
+	if session.CompletionNote == "" || !strings.Contains(session.CompletionNote, "completion_mode=direct") {
+		t.Fatalf("session completion note = %q, want completion_mode reason", session.CompletionNote)
 	}
 	if fs.runs[taskID].CurrentPhase != "done" || fs.runs[taskID].Status != "completed" {
 		t.Fatalf("task run = %+v, want done/completed", fs.runs[taskID])
 	}
 	if fs.runs[designID].CurrentPhase != "done" || fs.runs[designID].Status != "completed" {
 		t.Fatalf("design run = %+v, want done/completed", fs.runs[designID])
+	}
+}
+
+// Regression test for cb-9d97c6: an empty worktree in a code-producing phase
+// must surface as agent failure so the orchestrator can retry — not silently
+// close the task.
+func TestEmptyWorktreeInImplementPhaseIsAgentFailure(t *testing.T) {
+	ctx := context.Background()
+	taskID := "cb-silent-failure"
+	wtPath := newTestWorktree(t, taskID)
+
+	fc := newFakeConnector()
+	fc.items[taskID] = &connector.WorkItem{ID: taskID, Title: "Code task", Type: "task", Status: "in_progress"}
+	fc.metadata[taskID] = map[string]string{"worktree_path": wtPath}
+
+	fs := newFakeStore()
+	fs.runs[taskID] = &store.PipelineRun{ID: "run-task", DesignID: taskID, CurrentPhase: "implement", Status: "active"}
+
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	decision, err := determineCompletionPath(ctx, fc.items[taskID], taskID, wtPath, "")
+	if err != nil {
+		t.Fatalf("determineCompletionPath() error = %v", err)
+	}
+	if decision.Direct {
+		t.Fatalf("direct=true, want false for empty worktree in implement phase")
+	}
+	if !decision.AgentFailed {
+		t.Fatalf("AgentFailed=false, want true")
+	}
+	if decision.Phase != "implement" {
+		t.Fatalf("phase = %q, want implement", decision.Phase)
 	}
 }
 
@@ -582,6 +623,31 @@ func (f *fakeStore) CancelRunningSessions(_ context.Context, designID string) (i
 	cancelled := 0
 	for i := range f.sessions {
 		if f.sessions[i].DesignID == designID && f.sessions[i].Status == "running" {
+			f.sessions[i].Status = "cancelled"
+			cancelled++
+		}
+	}
+	return cancelled, nil
+}
+
+func (f *fakeStore) MarkSessionEarlyDeath(_ context.Context, sessionID, _ string) error {
+	for i := range f.sessions {
+		if f.sessions[i].ID == sessionID {
+			f.sessions[i].EarlyDeath = true
+			f.sessions[i].Status = "cancelled"
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) CancelRunningSessionsForShard(_ context.Context, shardID string) (int, error) {
+	cancelled := 0
+	for i := range f.sessions {
+		if f.sessions[i].Status != "running" {
+			continue
+		}
+		if f.sessions[i].DesignID == shardID || f.sessions[i].TaskID == shardID {
 			f.sessions[i].Status = "cancelled"
 			cancelled++
 		}

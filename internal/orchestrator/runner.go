@@ -42,6 +42,16 @@ type Options struct {
 	Monitor        ProgressMonitor
 	GateHistory    GateHistorySource // optional — enables auto-retry on failed gates (cb-13744c)
 	MaxGateRetries int               // 0 = use default (3); cap on re-dispatches per phase after a failed gate
+	// DeadAgentRecoverer, when set, lets the implement loop detect and
+	// recover tasks whose dispatched agent has died silently (cb-f93173 #1).
+	// When nil, dead-agent recovery is skipped and stuck tasks run out the
+	// phase timeout as before.
+	DeadAgentRecoverer DeadAgentRecoverer
+	// ShardTypeSource, when set, lets the implement phase distinguish
+	// task-type shards (direct dispatch) from designs (wave dispatch). When
+	// nil, implement always assumes design-with-children, which loops forever
+	// on task-type shards (cb-55f364).
+	ShardTypeSource ShardTypeSource
 	SignalCh       <-chan os.Signal
 	Now            func() time.Time
 	Sleep          func(ctx context.Context, d time.Duration) error

@@ -93,6 +93,15 @@ type Config struct {
 	KBSync          KBSyncCfg                 `yaml:"kb_sync,omitempty"`
 	SkillsDir       string                    `yaml:"skills_dir,omitempty"`
 	Phases          map[string]PhaseConfig    `yaml:"phases,omitempty"`
+	Scan            ScanCfg                   `yaml:"scan,omitempty"`
+}
+
+// ScanCfg configures `cobuild scan`. Project-specific skip directories
+// layer on top of the built-in defaults and .cobuild/scan-exclude (cb-f93173 #5).
+type ScanCfg struct {
+	// SkipDirs lists directory names or repo-relative paths that scan
+	// should not descend into. Merged with scan's hardcoded defaults.
+	SkipDirs []string `yaml:"skip_dirs,omitempty"`
 }
 
 // KBSyncCfg controls automatic KB synchronisation after PR merges.
@@ -197,10 +206,19 @@ func (c *Config) ModelForPhaseRuntime(phaseName, gateName, runtime string) strin
 		return phase.Model
 	}
 	if c.Review.Model != "" && phaseName == "review" {
-		return c.Review.Model
+		// Skip the override when the model's family doesn't match the
+		// runtime's — e.g. default review.Model="haiku" (Claude) on a repo
+		// with default_runtime="codex" would otherwise 400 at dispatch
+		// time ("The 'haiku' model is not supported when using Codex with
+		// a ChatGPT account"), cb-b3356d.
+		if modelFitsRuntime(c.Review.Model, runtime) {
+			return c.Review.Model
+		}
 	}
 	if c.Monitoring.Model != "" && (phaseName == "monitoring" || gateName == "stall-check") {
-		return c.Monitoring.Model
+		if modelFitsRuntime(c.Monitoring.Model, runtime) {
+			return c.Monitoring.Model
+		}
 	}
 	if runtime != "" {
 		if rc, ok := c.Dispatch.Runtimes[runtime]; ok && rc.Model != "" {
@@ -245,6 +263,23 @@ func (c *Config) ResolveRuntime(flagOverride, metadataValue string) string {
 		return c.Dispatch.DefaultRuntime
 	}
 	return "claude-code"
+}
+
+// MaxConcurrentForRuntime returns the cap for a given runtime. Priority:
+// runtime-specific cap > global Dispatch.MaxConcurrent > hardcoded default
+// (3). This lets codex be pinned at 2 (its stable concurrency ceiling,
+// cb-bf9271) while claude-code can run higher — the global cap would
+// otherwise force the codex ceiling onto everyone (cb-0a0762).
+func (c *Config) MaxConcurrentForRuntime(runtime string) int {
+	if c != nil && runtime != "" {
+		if rt, ok := c.Dispatch.Runtimes[runtime]; ok && rt.MaxConcurrent > 0 {
+			return rt.MaxConcurrent
+		}
+	}
+	if c != nil && c.Dispatch.MaxConcurrent > 0 {
+		return c.Dispatch.MaxConcurrent
+	}
+	return 3
 }
 
 // ResolveWaveStrategy returns the normalized dispatch wave strategy.
@@ -511,6 +546,7 @@ func MergeConfig(base, override *Config) *Config {
 	out.SkillsDir = base.SkillsDir
 	out.Workflows = copyWorkflows(base.Workflows)
 	out.Phases = copyPhases(base.Phases)
+	out.Scan.SkipDirs = copyStrings(base.Scan.SkipDirs)
 
 	if override.Build != nil {
 		out.Build = copyStrings(override.Build)
@@ -581,6 +617,9 @@ func MergeConfig(base, override *Config) *Config {
 			}
 			if oc.Flags != "" {
 				base.Flags = oc.Flags
+			}
+			if oc.MaxConcurrent > 0 {
+				base.MaxConcurrent = oc.MaxConcurrent
 			}
 			out.Dispatch.Runtimes[name] = base
 		}
@@ -691,6 +730,11 @@ func MergeConfig(base, override *Config) *Config {
 		out.Context = base.Context
 	}
 
+	// Scan. Override appends to base so global defaults remain in effect.
+	if len(override.Scan.SkipDirs) > 0 {
+		out.Scan.SkipDirs = append(out.Scan.SkipDirs, copyStrings(override.Scan.SkipDirs)...)
+	}
+
 	return out
 }
 
@@ -703,6 +747,30 @@ func normalizeWaveStrategy(value string) string {
 	default:
 		return WaveStrategySerial
 	}
+}
+
+// modelFitsRuntime returns true when the model's family (Claude vs OpenAI)
+// is compatible with the runtime. Empty runtime means no check — assume
+// compatible so callers that don't pass a runtime keep their prior
+// behaviour. Unknown model/runtime pairs default to true so explicit
+// operator overrides are not silently dropped. See cb-b3356d.
+func modelFitsRuntime(model, runtime string) bool {
+	r := strings.ToLower(strings.TrimSpace(runtime))
+	if r == "" {
+		return true
+	}
+	m := strings.ToLower(strings.TrimSpace(model))
+	isClaudeModel := strings.HasPrefix(m, "claude") || m == "sonnet" || m == "haiku" || m == "opus"
+	isOpenAIModel := strings.HasPrefix(m, "gpt-")
+	isClaudeRuntime := strings.Contains(r, "claude")
+	isOpenAIRuntime := strings.Contains(r, "codex") || strings.Contains(r, "openai")
+	if isClaudeModel && isOpenAIRuntime {
+		return false
+	}
+	if isOpenAIModel && isClaudeRuntime {
+		return false
+	}
+	return true
 }
 
 func normalizeReviewMode(value string) string {

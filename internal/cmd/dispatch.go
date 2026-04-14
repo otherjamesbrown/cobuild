@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -27,6 +28,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// dispatchContextWarnBytes is the assembled-context size above which dispatch
+// emits a warning pointing the user at `cobuild context audit`. Large contexts
+// correlate with degraded agent output and wasted tokens; see cb-4cd9c6.
+const dispatchContextWarnBytes = 30 * 1024
+
 var dispatchCmd = &cobra.Command{
 	Use:   "dispatch <task-id>",
 	Short: "Dispatch a task to an agent via tmux",
@@ -43,6 +49,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		ctx := context.Background()
 		taskID := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		foreground, _ := cmd.Flags().GetBool("foreground")
 		agentOverride, _ := cmd.Flags().GetString("agent")
 
 		agent := agentFlag
@@ -64,7 +71,23 @@ config "dispatch.default_runtime" > "claude-code".`,
 			dispatchStatus = resolvedState.WorkItem.Status
 		}
 		if conflict := dispatchConflictFromResolvedState(taskID, resolvedState); conflict != nil {
-			return fmt.Errorf("task not dispatchable: conflict in %s: %s", conflict.Source, conflict.Detail)
+			// Self-heal: a conflict on a session that has no live tmux window
+			// and no heartbeat is stale state from a prior orchestrator that
+			// died. Recover it in place rather than forcing the operator to
+			// run `cobuild recover` manually (cb-d5e1dd #4).
+			recovered, reason, rerr := recoverDeadAgent(ctx, taskID)
+			if rerr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: self-heal probe for %s failed: %v\n", taskID, rerr)
+			}
+			if !recovered {
+				return fmt.Errorf("task not dispatchable: conflict in %s: %s", conflict.Source, conflict.Detail)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Self-healed stale conflict on %s: %s\n", taskID, reason)
+			// Re-resolve so the rest of dispatch sees the cleaned state.
+			resolvedState, _ = pipelinestate.Resolve(ctx, taskID)
+			if resolvedState != nil && resolvedState.WorkItem != nil && resolvedState.WorkItem.Status != "" {
+				dispatchStatus = resolvedState.WorkItem.Status
+			}
 		}
 
 		if dispatchStatus == "in_progress" {
@@ -299,6 +322,12 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// Skip entirely in dry-run mode: worktreePath is a literal "~/..." string
 		// in dry-run and MkdirAll would create a directory literally named "~".
 		assembledContext, _ := config.AssembleContext(pCfg, repoRoot, "dispatch", currentPhase, extras, workItemFetcher)
+		if len(assembledContext) > dispatchContextWarnBytes {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"Warning: dispatch context is %d KB (threshold %d KB). Run `cobuild context audit` for per-layer breakdown. See docs/guides/context-optimization.md for trimming guidance.\n",
+				len(assembledContext)/1024, dispatchContextWarnBytes/1024,
+			)
+		}
 		if !dryRun && assembledContext != "" {
 			contextDir := filepath.Join(worktreePath, ".cobuild")
 			if err := os.MkdirAll(contextDir, 0755); err != nil {
@@ -479,6 +508,34 @@ config "dispatch.default_runtime" > "claude-code".`,
 		}
 		syncPipelineTaskStatus(ctx, taskID, "in_progress")
 
+		// Foreground mode (cb-f1b0e9): run the runner script in the calling
+		// terminal with inherited stdio. Skips tmux + window cleanup path +
+		// early-death probe. Agent output streams live; Ctrl-C terminates it.
+		// Intended for debugging silent-death scenarios, not production.
+		if foreground {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Running %s in foreground (runtime=%s, model=%s). Ctrl-C to abort.\n",
+				taskID, rt.Name(), resolvedModel)
+			fgCmd := exec.CommandContext(ctx, "bash", scriptPath)
+			fgCmd.Stdin = os.Stdin
+			fgCmd.Stdout = cmd.OutOrStdout()
+			fgCmd.Stderr = cmd.ErrOrStderr()
+			if err := fgCmd.Run(); err != nil {
+				if cbStore != nil && sessionID != "" {
+					_ = cbStore.EndSession(ctx, sessionID, store.SessionResult{
+						ExitCode:       -1,
+						Status:         "failed",
+						Error:          fmt.Sprintf("foreground dispatch exited with error: %v", err),
+						CompletionNote: "Foreground dispatch exited non-zero",
+					})
+				}
+				return fmt.Errorf("foreground dispatch: %w", err)
+			}
+			// Script exited cleanly — runner scripts run `cobuild complete`
+			// or record the gate verdict at the end, so pipeline state is
+			// already up to date.
+			return nil
+		}
+
 		// Spawn tmux
 		tmuxOut, err := tmuxCombinedOutput(ctx, pCfg, tmuxArgs...)
 		if err != nil {
@@ -497,12 +554,51 @@ config "dispatch.default_runtime" > "claude-code".`,
 			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
 		}
 
+		// If anything after window creation fails, the window would be left
+		// behind and the next dispatch attempt would refuse on state-resolver
+		// grounds ("window still present"), causing a self-blocking loop
+		// (cb-699bf2). Guarantee cleanup on error by keying cleanup off a
+		// success flag set at the end of RunE.
+		//
+		// The session row is created later (line ~407) and also needs the
+		// same cleanup — without it, a dispatch failure between session
+		// insert and successful return leaves the session marked 'running'
+		// forever (cb-31ac56).
+		dispatchSucceeded := false
+		defer func() {
+			if dispatchSucceeded {
+				return
+			}
+			target := fmt.Sprintf("%s:%s", tmuxSession, tmuxWindow)
+			// Use a fresh background context: parent ctx may be the source of
+			// the error that got us here (e.g. cancellation).
+			cleanupCtx := context.Background()
+			_ = tmuxRun(cleanupCtx, pCfg, "kill-window", "-t", target)
+			if cbStore != nil && sessionID != "" {
+				_ = cbStore.EndSession(cleanupCtx, sessionID, store.SessionResult{
+					ExitCode:       -1,
+					Status:         "cancelled",
+					Error:          "dispatch failed after tmux window created",
+					CompletionNote: "Dispatch returned non-nil error after window spawn — auto-cancelled by defer",
+				})
+			}
+		}()
+
 		// Capture output
 		logDir := filepath.Join(worktreePath, ".cobuild")
 		os.MkdirAll(logDir, 0755)
 		logFile := filepath.Join(logDir, "session.log")
 		_ = tmuxRun(ctx, pCfg, "pipe-pane", "-t", fmt.Sprintf("%s:%s", tmuxSession, tmuxWindow),
 			fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(logFile, "'", "'\\''")))
+
+		// Post-dispatch liveness probe (cb-1d8abc). Async: sample the tmux
+		// window at 10s and 60s. If the window is gone before the agent had
+		// time to produce meaningful work, flag early_death on the session
+		// and capture session.log into .cobuild/dispatch-error.log so the
+		// operator can see what happened without hunting for the artefact.
+		if sessionID != "" {
+			startEarlyDeathProbe(pCfg, sessionID, tmuxSession, tmuxWindow, worktreePath)
+		}
 
 		// Record dispatch metadata
 		dispatchInfo := map[string]any{
@@ -529,6 +625,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 			s, _ := client.FormatJSON(out)
 			fmt.Println(s)
+			dispatchSucceeded = true
 			return nil
 		}
 
@@ -537,6 +634,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		fmt.Printf("  Worktree: %s\n", worktreePath)
 		fmt.Printf("  Window:   %s\n", tmuxWindow)
 		printNextStep(taskID, currentPhase, "dispatch")
+		dispatchSucceeded = true
 		return nil
 	},
 }
@@ -650,19 +748,44 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		}
 
 		ready = filterDispatchWaveCandidates(ready, pCfg.Dispatch.WaveStrategy)
-		maxConcurrent := 3
-		if pCfg.Dispatch.MaxConcurrent > 0 {
-			maxConcurrent = pCfg.Dispatch.MaxConcurrent
+
+		// Per-runtime concurrency: count in-progress tasks by their
+		// dispatched runtime, then cap each runtime independently
+		// (cb-0a0762). Codex is pinned at 2 by default; claude-code at 4.
+		// Using only the global cap would force codex's ceiling onto
+		// claude-code, throttling mixed workloads unnecessarily.
+		inProgressByRuntime := map[string]int{}
+		for _, inProgressID := range inProgress {
+			rt := resolveRuntimeForTask(ctx, pCfg, inProgressID)
+			inProgressByRuntime[rt]++
 		}
 
-		// Limit by max_concurrent minus currently running
-		available := maxConcurrent - len(inProgress)
-		if available <= 0 {
-			fmt.Printf("At capacity: %d tasks in progress (max %d).\n", len(inProgress), maxConcurrent)
-			return nil
+		// Filter ready candidates by per-runtime headroom.
+		selected := make([]dispatchWaveCandidate, 0, len(ready))
+		dispatchedByRuntime := map[string]int{}
+		var deferredByRuntime []string
+		for _, cand := range ready {
+			rt := resolveRuntimeForTask(ctx, pCfg, cand.TaskID)
+			cap := pCfg.MaxConcurrentForRuntime(rt)
+			running := inProgressByRuntime[rt] + dispatchedByRuntime[rt]
+			if running >= cap {
+				deferredByRuntime = append(deferredByRuntime, fmt.Sprintf("%s (%s at cap %d)", cand.TaskID, rt, cap))
+				continue
+			}
+			selected = append(selected, cand)
+			dispatchedByRuntime[rt]++
 		}
-		if len(ready) > available {
-			ready = ready[:available]
+		ready = selected
+
+		if len(deferredByRuntime) > 0 {
+			fmt.Printf("Deferred %d task(s) by per-runtime cap: %s\n",
+				len(deferredByRuntime), strings.Join(deferredByRuntime, ", "))
+		}
+
+		if len(ready) == 0 {
+			fmt.Printf("At capacity (per-runtime). In-progress by runtime: %s\n",
+				formatRuntimeCounts(inProgressByRuntime))
+			return nil
 		}
 
 		if resolveWaveStrategy(pCfg) == "serial" {
@@ -732,6 +855,35 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 type dispatchWaveCandidate struct {
 	TaskID string
 	Wave   int
+}
+
+// resolveRuntimeForTask returns the runtime name that will handle this task
+// using the same precedence as single-task dispatch (task metadata >
+// config default > "claude-code"). Used by dispatch-wave's per-runtime
+// concurrency check (cb-0a0762).
+func resolveRuntimeForTask(ctx context.Context, pCfg *config.Config, taskID string) string {
+	meta := ""
+	if conn != nil {
+		meta, _ = conn.GetMetadata(ctx, taskID, "dispatch_runtime")
+	}
+	return pCfg.ResolveRuntime("", meta)
+}
+
+// formatRuntimeCounts renders a "codex=2 claude-code=3" summary string.
+func formatRuntimeCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "(none)"
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, counts[k]))
+	}
+	return strings.Join(parts, " ")
 }
 
 func filterDispatchWaveCandidates(candidates []dispatchWaveCandidate, strategy string) []dispatchWaveCandidate {
@@ -1240,6 +1392,7 @@ func init() {
 	dispatchCmd.Flags().String("agent", "", "Override agent (default: from config)")
 	dispatchCmd.Flags().String("runtime", "", "Agent runtime to use (claude-code, codex). Defaults to task metadata, then pipeline.yaml dispatch.default_runtime, then claude-code.")
 	dispatchCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
+	dispatchCmd.Flags().Bool("foreground", false, "Run the agent in the current terminal instead of tmux (debug aid for silent-death scenarios)")
 	dispatchWaveCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
 	rootCmd.AddCommand(dispatchCmd)
 	rootCmd.AddCommand(dispatchWaveCmd)

@@ -98,8 +98,29 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'claude-code';
 	ALTER TABLE IF EXISTS pipeline_sessions
 		ADD COLUMN IF NOT EXISTS completion_note TEXT;
+	ALTER TABLE IF EXISTS pipeline_sessions
+		ADD COLUMN IF NOT EXISTS dispatch_context_chars INTEGER;
+	-- Early-death marker (cb-1d8abc): set when the post-dispatch liveness
+	-- probe finds the tmux window gone within the first 60 seconds. True
+	-- here flags a silent crash worth investigating; distinct from a
+	-- normal short session that exited cleanly via cobuild complete.
+	ALTER TABLE IF EXISTS pipeline_sessions
+		ADD COLUMN IF NOT EXISTS early_death BOOLEAN NOT NULL DEFAULT FALSE;
 	ALTER TABLE IF EXISTS pipeline_runs
 		ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
+	-- Dedupe and constrain pipeline_tasks. The poller's registerTaskForDispatch
+	-- previously inserted a fresh row every cycle when its error-string match
+	-- failed (cb-2d60c4) — accumulating dozens of duplicate rows for the same
+	-- (pipeline_id, task_shard_id) pair. Drop the older duplicates (keeping
+	-- the most recent id) then add a unique constraint so future inserts
+	-- can use ON CONFLICT DO NOTHING.
+	DELETE FROM pipeline_tasks a
+	USING pipeline_tasks b
+	WHERE a.pipeline_id = b.pipeline_id
+	  AND a.task_shard_id = b.task_shard_id
+	  AND a.id < b.id;
+	CREATE UNIQUE INDEX IF NOT EXISTS pipeline_tasks_pipeline_task_unique
+		ON pipeline_tasks(pipeline_id, task_shard_id);
 	`
 	_, err = conn.Exec(ctx, ddl)
 	return err
@@ -404,9 +425,13 @@ func (s *PostgresStore) GetLatestGateRound(ctx context.Context, pipelineID, gate
 // --- Pipeline Tasks ---
 
 func (s *PostgresStore) AddTask(ctx context.Context, pipelineID, taskShardID, designID string, wave *int) error {
+	// Idempotent insert: ON CONFLICT lets the poller call AddTask every
+	// cycle without accumulating duplicate rows (cb-2d60c4). The unique
+	// index on (pipeline_id, task_shard_id) is created in Migrate.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO pipeline_tasks (id, pipeline_id, task_shard_id, design_id, wave, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (pipeline_id, task_shard_id) DO NOTHING
 	`, newID("pt"), pipelineID, taskShardID, designID, wave, "pending")
 	if err != nil {
 		return fmt.Errorf("add pipeline task: %w", err)
@@ -577,18 +602,22 @@ func (s *PostgresStore) CreateSession(ctx context.Context, input SessionInput) (
 	}
 
 	var assembledCtx *string
+	var dispatchCtxChars *int
 	if input.AssembledContext != "" {
 		assembledCtx = &input.AssembledContext
+		n := len(input.AssembledContext)
+		dispatchCtxChars = &n
 	}
 
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO pipeline_sessions (
 			id, pipeline_id, design_id, task_id, phase, project, runtime,
-			model, prompt_chars, prompt, assembled_context, worktree_path, tmux_session, tmux_window
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			model, prompt_chars, prompt, assembled_context, dispatch_context_chars,
+			worktree_path, tmux_session, tmux_window
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING started_at
 	`, rec.ID, rec.PipelineID, rec.DesignID, rec.TaskID, rec.Phase, rec.Project, rec.Runtime,
-		model, promptChars, prompt, assembledCtx, wtPath, tmuxSess, tmuxWin,
+		model, promptChars, prompt, assembledCtx, dispatchCtxChars, wtPath, tmuxSess, tmuxWin,
 	).Scan(&rec.StartedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
@@ -641,16 +670,16 @@ func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*Session
 	var r SessionRecord
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
-			started_at, ended_at, duration_seconds, model, prompt_chars,
+			started_at, ended_at, duration_seconds, model, prompt_chars, dispatch_context_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
-			status, error, worktree_path, tmux_session, tmux_window
+			status, error, worktree_path, tmux_session, tmux_window, early_death
 		FROM pipeline_sessions WHERE task_id = $1
 		ORDER BY started_at DESC LIMIT 1
 	`, taskID).Scan(
 		&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
-		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+		&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars, &r.DispatchContextChars,
 		&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
-		&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
+		&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow, &r.EarlyDeath,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
@@ -661,9 +690,9 @@ func (s *PostgresStore) GetSession(ctx context.Context, taskID string) (*Session
 func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]SessionRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
-			started_at, ended_at, duration_seconds, model, prompt_chars,
+			started_at, ended_at, duration_seconds, model, prompt_chars, dispatch_context_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
-			status, error, worktree_path, tmux_session, tmux_window
+			status, error, worktree_path, tmux_session, tmux_window, early_death
 		FROM pipeline_sessions WHERE ($1 = '' OR design_id = $1)
 		ORDER BY started_at ASC
 	`, designID)
@@ -677,9 +706,9 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 		var r SessionRecord
 		if err := rows.Scan(
 			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
-			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars, &r.DispatchContextChars,
 			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
-			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
+			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow, &r.EarlyDeath,
 		); err != nil {
 			return nil, err
 		}
@@ -691,9 +720,9 @@ func (s *PostgresStore) ListSessions(ctx context.Context, designID string) ([]Se
 func (s *PostgresStore) ListRunningSessions(ctx context.Context, project string) ([]SessionRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, design_id, task_id, phase, project, runtime,
-			started_at, ended_at, duration_seconds, model, prompt_chars,
+			started_at, ended_at, duration_seconds, model, prompt_chars, dispatch_context_chars,
 			exit_code, files_changed, lines_added, lines_removed, commits, pr_url, completion_note,
-			status, error, worktree_path, tmux_session, tmux_window
+			status, error, worktree_path, tmux_session, tmux_window, early_death
 		FROM pipeline_sessions
 		WHERE status = 'running' AND ($1 = '' OR project = $1)
 		ORDER BY started_at ASC
@@ -708,9 +737,9 @@ func (s *PostgresStore) ListRunningSessions(ctx context.Context, project string)
 		var r SessionRecord
 		if err := rows.Scan(
 			&r.ID, &r.PipelineID, &r.DesignID, &r.TaskID, &r.Phase, &r.Project, &r.Runtime,
-			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars,
+			&r.StartedAt, &r.EndedAt, &r.DurationSec, &r.Model, &r.PromptChars, &r.DispatchContextChars,
 			&r.ExitCode, &r.FilesChanged, &r.LinesAdded, &r.LinesRemoved, &r.Commits, &r.PRURL, &r.CompletionNote,
-			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow,
+			&r.Status, &r.Error, &r.WorktreePath, &r.TmuxSession, &r.TmuxWindow, &r.EarlyDeath,
 		); err != nil {
 			return nil, err
 		}
@@ -727,6 +756,54 @@ func (s *PostgresStore) CancelRunningSessions(ctx context.Context, designID stri
 	`, designID)
 	if err != nil {
 		return 0, fmt.Errorf("cancel running sessions: %w", err)
+	}
+	return int(result.RowsAffected()), nil
+}
+
+// MarkSessionEarlyDeath records that a session's tmux window vanished
+// within the first 60 seconds of dispatch — a strong signal of a silent
+// crash (cb-1d8abc). errorDetail goes into the session's error column for
+// later inspection; the session's status is set to cancelled.
+func (s *PostgresStore) MarkSessionEarlyDeath(ctx context.Context, sessionID string, errorDetail string) error {
+	if sessionID == "" {
+		return fmt.Errorf("session id required")
+	}
+	var errPtr *string
+	if errorDetail != "" {
+		errPtr = &errorDetail
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_sessions
+		SET early_death = TRUE,
+		    status = 'cancelled',
+		    ended_at = COALESCE(ended_at, NOW()),
+		    error = COALESCE(error, $2),
+		    completion_note = COALESCE(completion_note, 'Early death — tmux window gone within 60s of dispatch')
+		WHERE id = $1
+	`, sessionID, errPtr)
+	if err != nil {
+		return fmt.Errorf("mark session early death: %w", err)
+	}
+	return nil
+}
+
+// CancelRunningSessionsForShard cancels every running session that references
+// shardID, whether as design_id (design reset catches task sessions) or as
+// task_id (task reset catches its own session rows). Returns the count.
+//
+// This is deliberately broader than CancelRunningSessions: in practice,
+// sessions sometimes get orphaned with mismatched design_id after dispatch
+// edge-lookup failures, and a single design-level cancel misses them.
+// Covering both columns in one UPDATE handles all accumulated stale state
+// in one call (cb-f93173 #2).
+func (s *PostgresStore) CancelRunningSessionsForShard(ctx context.Context, shardID string) (int, error) {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_sessions
+		SET status = 'cancelled', ended_at = NOW(), completion_note = 'Cancelled by cobuild reset/recover'
+		WHERE status = 'running' AND (design_id = $1 OR task_id = $1)
+	`, shardID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel stale sessions for shard: %w", err)
 	}
 	return int(result.RowsAffected()), nil
 }

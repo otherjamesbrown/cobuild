@@ -178,6 +178,37 @@ func TestResolveHealthStatesAndDegradedSources(t *testing.T) {
 	}
 }
 
+// Regression for cb-09c328: a pipeline sitting at phase=review with no
+// activity for longer than staleReviewWindow should be flagged stale so
+// it can be filtered out of the "actually active" live view.
+func TestComputeHealthFlagsReviewStuck(t *testing.T) {
+	now := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		phase      string
+		updatedAt  time.Time
+		wantHealth Health
+	}{
+		{"review stuck past window", "review", now.Add(-48 * time.Hour), HealthStale},
+		{"review fresh", "review", now.Add(-5 * time.Minute), HealthOK},
+		{"implement long-running NOT stale on phase alone", "implement", now.Add(-48 * time.Hour), HealthOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &PipelineState{
+				DesignID:   "cb-stuck",
+				Run:        &RunState{ID: "pr-1", Status: "active", Phase: tc.phase, UpdatedAt: tc.updatedAt},
+				WorkItem:   &WorkItemState{ID: "cb-stuck", Status: "open"},
+				ResolvedAt: now,
+			}
+			got, _ := computeHealth(state)
+			if got != tc.wantHealth {
+				t.Fatalf("health = %q, want %q", got, tc.wantHealth)
+			}
+		})
+	}
+}
+
 type fakeConnector struct {
 	item *connector.WorkItem
 	err  error

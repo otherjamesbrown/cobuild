@@ -18,9 +18,13 @@ var resolveDashboardPipelineState dashboardPipelineResolver = pipelinestate.Reso
 
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
-	Short: "Pipeline analytics dashboard",
+	Short: "Pipeline analytics dashboard (historical aggregates)",
 	Long: `Shows pipeline analytics across all projects: totals, per-project
 breakdowns, gate pass rates, session stats, and recent activity.
+
+For a snapshot of LIVE state (processes, tmux, sessions, PRs, per-pipeline
+health + suggestions), use ` + "`cobuild live`" + ` instead. dashboard is the
+historical/aggregates view; live is the in-flight view.
 
 Use --project to filter to one project. Use --json for structured output.`,
 	Example: `  cobuild dashboard                   # all projects
