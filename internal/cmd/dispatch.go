@@ -1418,7 +1418,7 @@ func autoRecoverDispatchConflict(ctx context.Context, taskID, taskProject string
 		return false, "", "", nil
 	}
 
-	workItemStatus, _, err := resetRecoveredDispatchState(ctx, taskID, true)
+	workItemStatus, _, err := resetRecoveredDispatchState(ctx, taskID, tmuxWindow)
 	if err != nil {
 		return false, "", "", err
 	}

@@ -263,10 +263,14 @@ func TestDispatchRejectsWhenTmuxWindowMetadataIsMissing(t *testing.T) {
 	}
 }
 
-func TestDispatchAutoRecoverPreservesNeedsReviewWhenPRExists(t *testing.T) {
+// A review-phase redispatch that dies should recover back to needs-review
+// so process-review can re-run against the PR. Signalled by the "review-"
+// prefix on the tmux window name (set by dispatchTmuxWindowName for review
+// phases).
+func TestDispatchAutoRecoverReviewDispatchRecoversToNeedsReview(t *testing.T) {
 	taskID := "cb-task-review"
 	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusNeedsReview, map[string]any{
-		domain.MetaTmuxWindow: taskID,
+		domain.MetaTmuxWindow: "review-" + taskID,
 		domain.MetaPRURL:      "https://github.com/acme/cobuild/pull/42",
 	})
 	fs.runs[taskID].CurrentPhase = domain.PhaseReview
@@ -293,6 +297,38 @@ func TestDispatchAutoRecoverPreservesNeedsReviewWhenPRExists(t *testing.T) {
 	}
 	if !strings.Contains(out, "Dispatching cb-task-review for review (status was needs-review).") {
 		t.Fatalf("output missing review redispatch notice:\n%s", out)
+	}
+}
+
+// A fix-cycle redispatch (task was in_progress with a PR already open after
+// review requested changes, per review.go:769-777) that dies should recover
+// to in_progress so the fix loop continues, NOT back to needs-review.
+func TestDispatchAutoRecoverFixDispatchRecoversToInProgress(t *testing.T) {
+	taskID := "cb-task-fix"
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusInProgress, map[string]any{
+		domain.MetaTmuxWindow: taskID, // implement-style window name, no "review-" prefix
+		domain.MetaPRURL:      "https://github.com/acme/cobuild/pull/42",
+	})
+	fs.runs[taskID].CurrentPhase = domain.PhaseReview
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	if _, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID}); err != nil {
+		t.Fatalf("dispatch returned error: %v", err)
+	}
+	if got := fc.items[taskID].Status; got != domain.StatusInProgress {
+		t.Fatalf("work item status = %q, want %q (fix cycle should not bounce back to needs-review)", got, domain.StatusInProgress)
+	}
+	if got := fs.tasks[0].Status; got != domain.StatusInProgress {
+		t.Fatalf("pipeline task status = %q, want %q", got, domain.StatusInProgress)
 	}
 }
 

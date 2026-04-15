@@ -58,29 +58,42 @@ func recoverDeadAgent(ctx context.Context, taskID string) (bool, string, error) 
 		return false, "", nil
 	}
 
-	if _, reason, err := resetRecoveredDispatchState(ctx, taskID, false); err != nil {
+	if _, reason, err := resetRecoveredDispatchState(ctx, taskID, ""); err != nil {
 		return false, "", err
 	} else {
 		return true, reason, nil
 	}
 }
 
-func resetRecoveredDispatchState(ctx context.Context, taskID string, preserveNeedsReview bool) (string, string, error) {
+// resetRecoveredDispatchState resets state for a dispatch whose agent is gone.
+// deadWindowName is the tmux window name of the dispatch that died — used to
+// infer whether the session was a review redispatch, a fix redispatch, or an
+// initial implement dispatch, so the reset lands in the correct pre-dispatch
+// state. Empty string means "unknown" (called from `cobuild recover`) and
+// falls back to the safe default of reopening the task.
+func resetRecoveredDispatchState(ctx context.Context, taskID, deadWindowName string) (string, string, error) {
 	if cbStore == nil || conn == nil {
 		return "", "", nil
 	}
 
 	workItemStatus := "open"
 	pipelineStatus := domain.StatusPending
-	if preserveNeedsReview {
-		if prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL); strings.TrimSpace(prURL) != "" {
+
+	// Distinguish review / fix / implement dispatches by the tmux window
+	// name pattern set in dispatchTmuxWindowName. Review dispatches prefix
+	// with "review-"; fix redispatches reuse the implement-style name but
+	// are identifiable by the presence of a pr_url (set by review.go at
+	// 769-777 after review requests changes).
+	if deadWindowName != "" {
+		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
+		hasPR := strings.TrimSpace(prURL) != ""
+		if strings.HasPrefix(deadWindowName, "review-") {
 			workItemStatus = domain.StatusNeedsReview
 			pipelineStatus = domain.StatusNeedsReview
+		} else if hasPR {
+			workItemStatus = domain.StatusInProgress
+			pipelineStatus = domain.StatusInProgress
 		}
-	}
-	if !preserveNeedsReview {
-		workItemStatus = "open"
-		pipelineStatus = domain.StatusPending
 	}
 
 	cancelled, err := cbStore.CancelRunningSessionsForShard(ctx, taskID)
