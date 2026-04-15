@@ -682,9 +682,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 
 		var ready []dispatchWaveCandidate
 		var inProgress []string
-		var blocked []string
-		readyWave := map[string]int{}
-		activeWave := 0
+		blockers := map[string]string{}
 
 		for _, e := range edges {
 			// Filter by work-item type: only dispatch tasks, not review
@@ -698,25 +696,18 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			if item.Type != "task" {
 				continue
 			}
-			wave := taskWave(item)
-
 			if e.Status == "closed" {
 				continue // fully merged/complete
 			}
 
-			if resolveWaveStrategy(pCfg) == "serial" {
-				if activeWave == 0 || (wave > 0 && wave < activeWave) {
-					activeWave = wave
-				}
-			}
-
 			if e.Status == domain.StatusInProgress {
 				inProgress = append(inProgress, e.ItemID)
+				recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusInProgress)
 				continue
 			}
 			if e.Status == domain.StatusNeedsReview {
 				// Serial mode must wait for closure/merge, not merely review-ready.
-				blocked = append(blocked, e.ItemID)
+				recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusNeedsReview)
 				continue
 			}
 
@@ -729,6 +720,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			for _, b := range blockerEdges {
 				if b.Status != "closed" {
 					allSatisfied = false
+					recordDispatchWaveBlocker(blockers, b.ItemID, b.Status)
 					break
 				}
 			}
@@ -737,9 +729,6 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 					TaskID: e.ItemID,
 					Wave:   dispatchWaveMetadata(item.Metadata),
 				})
-				readyWave[e.ItemID] = wave
-			} else {
-				blocked = append(blocked, e.ItemID)
 			}
 		}
 
@@ -748,8 +737,12 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		if len(ready) == 0 {
 			if len(inProgress) > 0 {
 				fmt.Printf("No new tasks to dispatch. %d still in progress.\n", len(inProgress))
-			} else if len(blocked) > 0 {
-				fmt.Printf("No tasks ready. %d blocked.\n", len(blocked))
+				if summary := formatDispatchWaveBlockers(blockers); summary != "" {
+					fmt.Printf("Blocking tasks: %s\n", summary)
+				}
+			} else if len(blockers) > 0 {
+				fmt.Printf("No tasks ready. %d blocked.\n", len(blockers))
+				fmt.Printf("Blocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
 			} else {
 				fmt.Println("All tasks complete.")
 			}
@@ -853,8 +846,8 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 			}
 		}
 
-		if len(blocked) > 0 {
-			fmt.Printf("\n%d tasks still blocked.\n", len(blocked))
+		if len(blockers) > 0 {
+			fmt.Printf("\nBlocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
 		}
 		printNextStep(designID, domain.PhaseImplement, domain.ActionDispatchWave)
 		return nil
@@ -939,6 +932,44 @@ func dispatchWaveMetadata(metadata map[string]any) int {
 	}
 
 	return 0
+}
+
+func recordDispatchWaveBlocker(blockers map[string]string, taskID, reason string) {
+	if blockers == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	if existing, ok := blockers[taskID]; ok && existing != "" {
+		return
+	}
+	blockers[taskID] = normalizeDispatchWaveBlockerReason(reason)
+}
+
+func normalizeDispatchWaveBlockerReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || reason == "open" {
+		return "open"
+	}
+	return strings.ReplaceAll(reason, "_", "-")
+}
+
+func formatDispatchWaveBlockers(blockers map[string]string) string {
+	if len(blockers) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(blockers))
+	for taskID, reason := range blockers {
+		if reason == "" {
+			reason = "open"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", taskID, reason))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 // writePhasePrompt writes phase-appropriate instructions into the dispatch prompt.
@@ -1129,10 +1160,13 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 	if reg, err := config.LoadRepoRegistry(); err == nil {
 		parentID, referencedRepos, refErr := parentDesignReferencedRepos(ctx, taskID, reg)
 		if refErr == nil && len(referencedRepos) > 1 {
-			return dispatchRepoTarget{}, fmt.Errorf(
-				"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
-				taskID, parentID, strings.Join(referencedRepos, ", "),
-			)
+			return dispatchRepoTarget{}, fmt.Errorf("%s", withTryHint(
+				fmt.Sprintf(
+					"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
+					taskID, parentID, strings.Join(referencedRepos, ", "),
+				),
+				repoMetadataHint(taskID, referencedRepos),
+			))
 		}
 
 		reposForProject := reposForProject(reg, project)

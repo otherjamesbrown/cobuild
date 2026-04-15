@@ -208,10 +208,10 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 			return "", err
 		}
 		if len(repos) != 1 {
-			return "", fmt.Errorf("repo metadata is ambiguous")
+			return "", fmt.Errorf("%s", withTryHint("repo metadata is ambiguous", repoMetadataHint(task.ID, nil)))
 		}
 		if _, err := config.RepoForProject(repos[0]); err != nil {
-			return "", fmt.Errorf("repo metadata references unknown repo %q", repos[0])
+			return "", fmt.Errorf("%s", withTryHint(fmt.Sprintf("repo metadata references unknown repo %q", repos[0]), repoMetadataHint(task.ID, nil)))
 		}
 		return repos[0], nil
 	}
@@ -228,10 +228,10 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 				return "", err
 			}
 			if len(repos) != 1 {
-				return "", fmt.Errorf("repo metadata is ambiguous")
+				return "", fmt.Errorf("%s", withTryHint("repo metadata is ambiguous", repoMetadataHint(task.ID, nil)))
 			}
 			if _, err := config.RepoForProject(repos[0]); err != nil {
-				return "", fmt.Errorf("repo metadata references unknown repo %q", repos[0])
+				return "", fmt.Errorf("%s", withTryHint(fmt.Sprintf("repo metadata references unknown repo %q", repos[0]), repoMetadataHint(task.ID, nil)))
 			}
 			return repos[0], nil
 		}
@@ -242,7 +242,7 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 		project = strings.TrimSpace(fallbackProject)
 	}
 	if project == "" {
-		return "", fmt.Errorf("missing repo metadata and no project fallback is available")
+		return "", fmt.Errorf("%s", withTryHint("missing repo metadata and no project fallback is available", repoMetadataHint(task.ID, nil)))
 	}
 
 	reg, err := config.LoadRepoRegistry()
@@ -252,11 +252,14 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 	repos := reposForProject(reg, project)
 	switch len(repos) {
 	case 0:
-		return "", fmt.Errorf("missing repo metadata and project %q has no registered repos", project)
+		return "", fmt.Errorf("%s", withTryHint(fmt.Sprintf("missing repo metadata and project %q has no registered repos", project), repoMetadataHint(task.ID, nil)))
 	case 1:
 		return repos[0], nil
 	default:
-		return "", fmt.Errorf("missing repo metadata and project %q maps to multiple repos (%s)", project, strings.Join(repos, ", "))
+		return "", fmt.Errorf("%s", withTryHint(
+			fmt.Sprintf("missing repo metadata and project %q maps to multiple repos (%s)", project, strings.Join(repos, ", ")),
+			repoMetadataHint(task.ID, repos),
+		))
 	}
 }
 

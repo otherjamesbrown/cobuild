@@ -50,9 +50,9 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 				}
 				continue
 			}
-			invalid = append(invalid, fmt.Sprintf("%s (missing `repo` metadata)", item.ID))
+			invalid = append(invalid, fmt.Sprintf("%s (missing `repo` metadata; Try: `%s`)", item.ID, repoMetadataHint(item.ID, nil)))
 		case repoMetadataLooksAmbiguous(repo):
-			invalid = append(invalid, fmt.Sprintf("%s (ambiguous `repo` metadata: %q)", item.ID, repo))
+			invalid = append(invalid, fmt.Sprintf("%s (ambiguous `repo` metadata: %q; Try: `%s`)", item.ID, repo, repoMetadataHint(item.ID, nil)))
 		}
 	}
 
@@ -110,12 +110,15 @@ func dispatchRepoTargetError(ctx context.Context, cn connector.Connector, taskID
 		return nil
 	}
 
-	return fmt.Errorf(
-		"task %s has no `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata on this task before dispatching",
-		taskID,
-		parentID,
-		strings.Join(repos, ", "),
-	)
+	return fmt.Errorf("%s", withTryHint(
+		fmt.Sprintf(
+			"task %s has no `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata on this task before dispatching",
+			taskID,
+			parentID,
+			strings.Join(repos, ", "),
+		),
+		repoMetadataHint(taskID, repos),
+	))
 }
 
 func referencedRepos(content string) ([]string, error) {

@@ -572,6 +572,7 @@ func TestDispatchRefusesMissingRepoMetadataWhenParentDesignReferencesMultipleRep
 		"parent design cb-design references multiple repos",
 		"context-palace, penfold",
 		"set `repo` metadata before dispatching",
+		"Try: `cxp shard metadata set cb-task-missing repo <context-palace|penfold>`",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q:\n%s", want, msg)
@@ -613,6 +614,44 @@ func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {
 	assertContains(t, output, "[dry-run] task-2")
 	assertNotContains(t, output, "[dry-run] task-3")
 	_ = testDir
+}
+
+func TestDispatchWaveNamesBlockingTasksAndReasons(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	prevConn := conn
+	prevProject := projectName
+	conn = newDispatchWaveTestConnector(
+		dispatchWaveTestItem("design-1", "design", "open", nil),
+		dispatchWaveTestItem("task-1", "task", "open", map[string]any{"wave": 1}),
+		dispatchWaveTestItem("task-2", "task", "open", map[string]any{"wave": 2}),
+		dispatchWaveTestItem("task-3", "task", "needs-review", map[string]any{"wave": 1}),
+	)
+	projectName = "cb-test"
+	t.Cleanup(func() {
+		conn = prevConn
+		projectName = prevProject
+	})
+
+	testConn := conn.(*dispatchWaveTestConnector)
+	testConn.edgesByItem["design-1"] = []connector.Edge{
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-1", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-2", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-3", Status: "needs-review"},
+	}
+	testConn.edgesByItem["task-2"] = []connector.Edge{
+		{Direction: "outgoing", EdgeType: "blocked-by", ItemID: "task-1", Status: "open"},
+	}
+
+	output := captureStdout(t, func() {
+		if err := dispatchWaveCmd.RunE(dispatchWaveCmd, []string{"design-1"}); err != nil {
+			t.Fatalf("dispatch-wave failed: %v", err)
+		}
+	})
+
+	assertContains(t, output, "Blocking tasks:")
+	assertContains(t, output, "task-1 (open)")
+	assertContains(t, output, "task-3 (needs-review)")
 }
 
 func setupDispatchRepoRegistry(t *testing.T) (string, string) {

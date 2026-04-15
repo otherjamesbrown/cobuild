@@ -133,8 +133,9 @@ func TestDecomposeCmdFailsWhenChildTaskRepoTargetingIsMissingOrAmbiguous(t *test
 	msg := err.Error()
 	for _, want := range []string{
 		"child tasks must target exactly one repo",
-		"cb-task-missing (missing `repo` metadata)",
+		"cb-task-missing (missing `repo` metadata; Try: `cxp shard metadata set cb-task-missing repo <repo-name>`)",
 		"cb-task-ambiguous (ambiguous `repo` metadata",
+		"Try: `cxp shard metadata set cb-task-ambiguous repo <repo-name>`",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q:\n%s", want, msg)
