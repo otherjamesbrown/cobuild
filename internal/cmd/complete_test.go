@@ -149,6 +149,37 @@ func TestEmptyWorktreeInImplementPhaseIsAgentFailure(t *testing.T) {
 	}
 }
 
+func TestEmptyWorktreeWithAheadCommitsUsesPRFlow(t *testing.T) {
+	ctx := context.Background()
+	taskID := "cb-pr-recovery"
+	wtPath := newTestWorktree(t, taskID)
+
+	writeFile(t, filepath.Join(wtPath, "README.md"), "recovered\n")
+	runGit(t, wtPath, "add", "README.md")
+	runGit(t, wtPath, "commit", "-m", "fix: recovered prior round")
+
+	fc := newFakeConnector()
+	fc.items[taskID] = &connector.WorkItem{ID: taskID, Title: "Code task", Type: "task", Status: "in_progress"}
+	fc.metadata[taskID] = map[string]string{"worktree_path": wtPath}
+
+	fs := newFakeStore()
+	fs.runs[taskID] = &store.PipelineRun{ID: "run-task", DesignID: taskID, CurrentPhase: "fix", Status: "active"}
+
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	decision, err := determineCompletionPath(ctx, fc.items[taskID], taskID, wtPath, "")
+	if err != nil {
+		t.Fatalf("determineCompletionPath() error = %v", err)
+	}
+	if decision.Direct {
+		t.Fatalf("direct=true, want false for clean worktree with ahead commits")
+	}
+	if decision.AgentFailed {
+		t.Fatalf("AgentFailed=true, want false for clean worktree with ahead commits")
+	}
+}
+
 func TestDetermineCompletionPathPrefersPRFlowForDirtyWorktree(t *testing.T) {
 	ctx := context.Background()
 	taskID := "cb-code"
@@ -166,6 +197,34 @@ func TestDetermineCompletionPathPrefersPRFlowForDirtyWorktree(t *testing.T) {
 	}
 	if decision.Direct {
 		t.Fatalf("determineCompletionPath() direct = true, want false for dirty worktree")
+	}
+}
+
+func TestTaskPRURLFindsOpenPRByBranchWhenMetadataMissing(t *testing.T) {
+	ctx := context.Background()
+	taskID := "cb-existing-pr"
+	wtPath := newTestWorktree(t, taskID)
+
+	runGit(t, wtPath, "remote", "add", "origin", "git@github.com:acme/cobuild.git")
+
+	fc := newFakeConnector()
+	fc.items[taskID] = &connector.WorkItem{ID: taskID, Title: "Code task", Type: "task", Status: "in_progress"}
+
+	restore := installTestGlobals(t, fc, newFakeStore(), "test-project")
+	defer restore()
+
+	origExec := execCommandOutput
+	defer func() { execCommandOutput = origExec }()
+	execCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "gh" && strings.Join(args, " ") == "pr list --repo acme/cobuild --head cb-existing-pr --state open --json url --jq .[0].url" {
+			return []byte("https://github.com/acme/cobuild/pull/42\n"), nil
+		}
+		return origExec(ctx, name, args...)
+	}
+
+	prURL := taskPRURL(ctx, fc.items[taskID], wtPath)
+	if prURL != "https://github.com/acme/cobuild/pull/42" {
+		t.Fatalf("taskPRURL() = %q, want recovered PR URL", prURL)
 	}
 }
 

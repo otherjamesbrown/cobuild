@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -42,10 +41,7 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 		}
 	}
 
-	prURL := ""
-	if conn != nil && task != nil {
-		prURL, _ = conn.GetMetadata(ctx, task.ID, domain.MetaPRURL)
-	}
+	prURL := taskPRURL(ctx, task, worktreePath)
 	if prURL != "" {
 		return directCompletionDecision{}, nil
 	}
@@ -59,11 +55,15 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 		return directCompletionDecision{}, nil
 	}
 
-	statusOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain", "--", ".", ":!.cobuild", ":!CLAUDE.md").Output()
+	statusOut, err := execCommandOutput(ctx, "git", "-C", worktreePath, "status", "--porcelain", "--", ".", ":!.cobuild", ":!CLAUDE.md")
 	if err != nil {
 		return directCompletionDecision{}, err
 	}
 	if strings.TrimSpace(string(statusOut)) == "" {
+		ahead, err := branchHasAheadCommits(ctx, worktreePath)
+		if err == nil && ahead {
+			return directCompletionDecision{}, nil
+		}
 		// Empty worktree. For phases that are expected to produce code,
 		// this is an agent failure, not a legitimate direct completion.
 		// The caller (complete.go) records a failed gate and errors out
@@ -79,6 +79,73 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 		return directCompletionDecision{direct: true, reason: "git worktree has no tracked changes"}, nil
 	}
 	return directCompletionDecision{}, nil
+}
+
+func taskPRURL(ctx context.Context, task *connector.WorkItem, worktreePath string) string {
+	if conn != nil && task != nil {
+		prURL, _ := conn.GetMetadata(ctx, task.ID, domain.MetaPRURL)
+		if strings.TrimSpace(prURL) != "" {
+			return strings.TrimSpace(prURL)
+		}
+	}
+	return lookupOpenPRForWorktree(ctx, worktreePath)
+}
+
+func lookupOpenPRForWorktree(ctx context.Context, worktreePath string) string {
+	if strings.TrimSpace(worktreePath) == "" {
+		return ""
+	}
+	repo := detectGitHubRepoFromWorktree(ctx, worktreePath)
+	if repo == "" {
+		repoRoot, _ := config.RepoForProject(projectName)
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg != nil {
+			repo = strings.TrimSpace(pCfg.GitHub.OwnerRepo)
+		}
+	}
+	if repo == "" {
+		return ""
+	}
+	branch, err := execCommandOutput(ctx, "git", "-C", worktreePath, "branch", "--show-current")
+	if err != nil {
+		return ""
+	}
+	branchName := strings.TrimSpace(string(branch))
+	if branchName == "" {
+		return ""
+	}
+	out, err := execCommandOutput(ctx, "gh", "pr", "list", "--repo", repo, "--head", branchName, "--state", "open", "--json", "url", "--jq", ".[0].url")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func branchHasAheadCommits(ctx context.Context, worktreePath string) (bool, error) {
+	if strings.TrimSpace(worktreePath) == "" {
+		return false, nil
+	}
+	baseBranch := defaultBaseBranch(ctx, worktreePath)
+	out, err := execCommandOutput(ctx, "git", "-C", worktreePath, "rev-list", "--count", baseBranch+"..HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "" && strings.TrimSpace(string(out)) != "0", nil
+}
+
+func defaultBaseBranch(ctx context.Context, worktreePath string) string {
+	if strings.TrimSpace(worktreePath) == "" {
+		return "main"
+	}
+	out, err := execCommandOutput(ctx, "git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "main"
+	}
+	ref := strings.TrimSpace(string(out))
+	if idx := strings.LastIndex(ref, "/"); idx >= 0 && idx+1 < len(ref) {
+		return ref[idx+1:]
+	}
+	return "main"
 }
 
 // phaseProducesCode reports whether the given pipeline phase is expected to
