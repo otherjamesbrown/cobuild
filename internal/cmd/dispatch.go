@@ -558,6 +558,7 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 			// Script exited cleanly — runner scripts run `cobuild complete`
 			// or record the gate verdict at the end, so pipeline state is
 			// already up to date.
+			maybeWriteBackResolvedRepo(ctx, conn, taskID, repoTarget, cmd.ErrOrStderr())
 			return nil
 		}
 
@@ -642,6 +643,7 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 		if err := conn.UpdateMetadataMap(ctx, taskID, dispatchInfo); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched but failed to update metadata: %v\n", err)
 		}
+		maybeWriteBackResolvedRepo(ctx, conn, taskID, repoTarget, cmd.ErrOrStderr())
 
 		if outputFormat == "json" {
 			out := map[string]any{
@@ -1210,8 +1212,10 @@ func renderMergedWorkSection(mergedTasks []MergedTask) string {
 }
 
 type dispatchRepoTarget struct {
-	Root   string
-	Source string
+	Repo     string
+	Root     string
+	Source   string
+	Inferred bool
 }
 
 func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, taskID, project string, stderr io.Writer) (dispatchRepoTarget, error) {
@@ -1227,6 +1231,7 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 			return dispatchRepoTarget{}, fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %w", targetRepo, err)
 		}
 		return dispatchRepoTarget{
+			Repo:   targetRepo,
 			Root:   repoRoot,
 			Source: fmt.Sprintf("task metadata: repo=%s", targetRepo),
 		}, nil
@@ -1234,17 +1239,43 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 
 	if reg, err := config.LoadRepoRegistry(); err == nil {
 		parentID, referencedRepos, refErr := parentDesignReferencedRepos(ctx, taskID, reg)
-		if refErr == nil && len(referencedRepos) > 1 {
-			return dispatchRepoTarget{}, fmt.Errorf("%s", withTryHint(
-				fmt.Sprintf(
-					"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
-					taskID, parentID, strings.Join(referencedRepos, ", "),
-				),
-				repoMetadataHint(taskID, referencedRepos),
-			))
+		if refErr == nil {
+			if len(referencedRepos) == 1 {
+				repoRoot, err := config.RepoForProject(referencedRepos[0])
+				if err != nil {
+					return dispatchRepoTarget{}, fmt.Errorf("parent design %s resolved repo %q, but it's not in the registry (~/.cobuild/repos.yaml): %w", parentID, referencedRepos[0], err)
+				}
+				return dispatchRepoTarget{
+					Repo:     referencedRepos[0],
+					Root:     repoRoot,
+					Source:   fmt.Sprintf("parent design %s: repo=%s", parentID, referencedRepos[0]),
+					Inferred: true,
+				}, nil
+			}
+			if len(referencedRepos) > 1 {
+				return dispatchRepoTarget{}, fmt.Errorf("%s", withTryHint(
+					fmt.Sprintf(
+						"task %s is missing `repo` metadata, and parent design %s references multiple repos (%s); set `repo` metadata before dispatching",
+						taskID, parentID, strings.Join(referencedRepos, ", "),
+					),
+					repoMetadataHint(taskID, referencedRepos),
+				))
+			}
 		}
 
 		reposForProject := reposForProject(reg, project)
+		if len(reposForProject) == 1 {
+			repoRoot, err := config.RepoForProject(reposForProject[0])
+			if err != nil {
+				return dispatchRepoTarget{}, fmt.Errorf("single-repo project %s resolved repo %q, but it's not in the registry (~/.cobuild/repos.yaml): %w", project, reposForProject[0], err)
+			}
+			return dispatchRepoTarget{
+				Repo:     reposForProject[0],
+				Root:     repoRoot,
+				Source:   fmt.Sprintf("single-repo project %s: repo=%s", project, reposForProject[0]),
+				Inferred: true,
+			}, nil
+		}
 		if len(reposForProject) > 1 {
 			fmt.Fprintf(stderr, "\nWARNING: Multi-repo project (%s) but task %s has no `repo` metadata.\n", project, taskID)
 			fmt.Fprintf(stderr, "Repos in this project: %s\n", strings.Join(reposForProject, ", "))
@@ -1258,9 +1289,25 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 		repoRoot = findRepoRoot()
 	}
 	return dispatchRepoTarget{
+		Repo:   project,
 		Root:   repoRoot,
 		Source: fmt.Sprintf("project: %s", project),
 	}, nil
+}
+
+func maybeWriteBackResolvedRepo(ctx context.Context, cn connector.Connector, taskID string, target dispatchRepoTarget, stderr io.Writer) {
+	if cn == nil || !target.Inferred || strings.TrimSpace(target.Repo) == "" {
+		return
+	}
+	existing, err := cn.GetMetadata(ctx, taskID, domain.MetaRepo)
+	if err == nil && strings.TrimSpace(existing) != "" {
+		return
+	}
+	if err := cn.SetMetadata(ctx, taskID, domain.MetaRepo, target.Repo); err != nil {
+		fmt.Fprintf(stderr, "Warning: dispatched but failed to write back repo=%s on %s: %v\n", target.Repo, taskID, err)
+		return
+	}
+	fmt.Fprintf(stderr, "Set repo=%s on %s after successful dispatch.\n", target.Repo, taskID)
 }
 
 func parentDesignReferencedRepos(ctx context.Context, taskID string, reg *config.RepoRegistry) (string, []string, error) {

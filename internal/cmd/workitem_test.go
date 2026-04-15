@@ -1,11 +1,122 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
+
+func TestWICreateAutoSetsRepoForSingleRepoProject(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	repoRoot := filepath.Join(tempDir, "penfold")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+	writeTestRepoConfig(t, repoRoot, "penfold")
+
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+	})
+
+	if err := config.SaveRepoRegistry(&config.RepoRegistry{
+		Repos: map[string]config.RepoEntry{
+			"penfold": {Path: repoRoot},
+		},
+	}); err != nil {
+		t.Fatalf("save repo registry: %v", err)
+	}
+
+	testConn := newFakeConnector()
+	restore := installTestGlobals(t, testConn, newFakeStore(), "penfold")
+	defer restore()
+
+	_ = wiCreateCmd.Flags().Set("title", "Penfold bug")
+	_ = wiCreateCmd.Flags().Set("type", "bug")
+	t.Cleanup(func() {
+		_ = wiCreateCmd.Flags().Set("title", "")
+		_ = wiCreateCmd.Flags().Set("type", "")
+	})
+
+	out, err := runCommandWithOutputs(t, wiCreateCmd, nil)
+	if err != nil {
+		t.Fatalf("wi create: %v", err)
+	}
+
+	if len(testConn.createRequests) != 1 {
+		t.Fatalf("created requests = %d, want 1", len(testConn.createRequests))
+	}
+	if got := testConn.createRequests[0].Metadata[domain.MetaRepo]; got != "penfold" {
+		t.Fatalf("repo metadata = %v, want penfold", got)
+	}
+	if !strings.Contains(out, "Auto-set repo=penfold from single-repo project penfold.") {
+		t.Fatalf("output missing auto-set log:\n%s", out)
+	}
+}
+
+func TestWICreateDoesNotAutoSetRepoForMultiRepoProject(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	apiRepo := filepath.Join(tempDir, "api")
+	webRepo := filepath.Join(tempDir, "web")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".cobuild"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+	writeTestRepoConfig(t, apiRepo, "multi")
+	writeTestRepoConfig(t, webRepo, "multi")
+
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", homeDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+	})
+
+	if err := config.SaveRepoRegistry(&config.RepoRegistry{
+		Repos: map[string]config.RepoEntry{
+			"api": {Path: apiRepo},
+			"web": {Path: webRepo},
+		},
+	}); err != nil {
+		t.Fatalf("save repo registry: %v", err)
+	}
+
+	testConn := newFakeConnector()
+	restore := installTestGlobals(t, testConn, newFakeStore(), "multi")
+	defer restore()
+
+	_ = wiCreateCmd.Flags().Set("title", "Multi bug")
+	_ = wiCreateCmd.Flags().Set("type", "bug")
+	t.Cleanup(func() {
+		_ = wiCreateCmd.Flags().Set("title", "")
+		_ = wiCreateCmd.Flags().Set("type", "")
+	})
+
+	out, err := runCommandWithOutputs(t, wiCreateCmd, nil)
+	if err != nil {
+		t.Fatalf("wi create: %v", err)
+	}
+
+	if len(testConn.createRequests) != 1 {
+		t.Fatalf("created requests = %d, want 1", len(testConn.createRequests))
+	}
+	if _, ok := testConn.createRequests[0].Metadata[domain.MetaRepo]; ok {
+		t.Fatalf("did not expect repo metadata, got %#v", testConn.createRequests[0].Metadata)
+	}
+	if strings.Contains(out, "Auto-set repo=") {
+		t.Fatalf("did not expect auto-set log:\n%s", out)
+	}
+}
 
 func TestWICreateInheritsParentRoutingMetadata(t *testing.T) {
 	testConn := newFakeConnector()

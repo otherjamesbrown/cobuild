@@ -66,15 +66,8 @@ func validateSingleRepoChildTasks(ctx context.Context, cn connector.Connector, d
 	)
 }
 
-// inferSingleRepoForTask returns the registered repo for a task's project
-// when the project maps to exactly one repo. Returns "" if the project is
-// unknown, empty, or maps to 0 or 2+ repos (in which case the agent must
-// set repo metadata explicitly).
-func inferSingleRepoForTask(task *connector.WorkItem) string {
-	if task == nil {
-		return ""
-	}
-	project := strings.TrimSpace(task.Project)
+func inferSingleRepoForProject(project string) string {
+	project = strings.TrimSpace(project)
 	if project == "" {
 		return ""
 	}
@@ -87,6 +80,17 @@ func inferSingleRepoForTask(task *connector.WorkItem) string {
 		return repos[0]
 	}
 	return ""
+}
+
+// inferSingleRepoForTask returns the registered repo for a task's project
+// when the project maps to exactly one repo. Returns "" if the project is
+// unknown, empty, or maps to 0 or 2+ repos (in which case the agent must
+// set repo metadata explicitly).
+func inferSingleRepoForTask(task *connector.WorkItem) string {
+	if task == nil {
+		return ""
+	}
+	return inferSingleRepoForProject(task.Project)
 }
 
 func dispatchRepoTargetError(ctx context.Context, cn connector.Connector, taskID string) error {

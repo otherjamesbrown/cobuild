@@ -251,6 +251,47 @@ func TestResolveDispatchTargetRepoRejectsUnknownRepoMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveDispatchTargetRepoUsesSingleParentDesignRepo(t *testing.T) {
+	_, pfRepo := setupDispatchRepoRegistry(t)
+
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{
+		ID:      "design-1",
+		Title:   "Penfold fix",
+		Type:    "design",
+		Status:  "open",
+		Content: "Change only penfold worker code.",
+	})
+	fc.addItem(&connector.WorkItem{
+		ID:      "task-1",
+		Title:   "Implement task",
+		Type:    "task",
+		Status:  "open",
+		Content: "Use the parent design repo inference.",
+	})
+	fc.parent["task-1"] = "design-1"
+
+	restore := installTestGlobals(t, fc, newFakeStore(), "context-palace")
+	defer restore()
+
+	target, err := resolveDispatchTargetRepo(context.Background(), fc.items["task-1"], "task-1", "context-palace", io.Discard)
+	if err != nil {
+		t.Fatalf("resolveDispatchTargetRepo: %v", err)
+	}
+	if target.Repo != "penfold" {
+		t.Fatalf("target repo = %q, want penfold", target.Repo)
+	}
+	if target.Root != pfRepo {
+		t.Fatalf("target root = %q, want %q", target.Root, pfRepo)
+	}
+	if !target.Inferred {
+		t.Fatal("expected target to be inferred")
+	}
+	if target.Source != "parent design design-1: repo=penfold" {
+		t.Fatalf("target source = %q, want parent design design-1: repo=penfold", target.Source)
+	}
+}
+
 func TestHasInvestigationContent(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -431,6 +472,54 @@ func TestDispatchDryRunUsesTaskRepoMetadataForWorktreeTargeting(t *testing.T) {
 	assertContains(t, out, "Target repo: "+pfRepo+" (from task metadata: repo=penfold)")
 	assertContains(t, out, "[dry-run] Would create worktree for cb-task-pf in "+pfRepo)
 	assertNotContains(t, out, cpRepo+" (from project: context-palace)")
+}
+
+func TestDispatchWritesBackInferredRepoMetadataOnce(t *testing.T) {
+	_, pfRepo := setupDispatchRepoRegistry(t)
+	fakeTmuxDir := t.TempDir()
+	fakeTmuxPath := filepath.Join(fakeTmuxDir, "tmux")
+	if err := os.WriteFile(fakeTmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	prevPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", fakeTmuxDir+string(os.PathListSeparator)+prevPath); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", prevPath)
+	})
+
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{
+		ID:      "cb-task-pf",
+		Title:   "Penfold-only task",
+		Type:    "task",
+		Status:  "open",
+		Project: "penfold",
+		Content: "Change only penfold files.",
+	})
+
+	restore := installTestGlobals(t, fc, nil, "penfold")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "runtime", "stub")
+
+	firstOut, err := runCommandWithOutputs(t, dispatchCmd, []string{"cb-task-pf"})
+	if err != nil {
+		t.Fatalf("first dispatch returned error: %v", err)
+	}
+	if got := fc.metadata["cb-task-pf"][domain.MetaRepo]; got != "penfold" {
+		t.Fatalf("repo metadata after first dispatch = %q, want penfold", got)
+	}
+	assertContains(t, firstOut, "Target repo: "+pfRepo+" (from single-repo project penfold: repo=penfold)")
+	assertContains(t, firstOut, "Set repo=penfold on cb-task-pf after successful dispatch.")
+
+	secondOut, err := runCommandWithOutputs(t, dispatchCmd, []string{"cb-task-pf"})
+	if err != nil {
+		t.Fatalf("second dispatch returned error: %v", err)
+	}
+	assertContains(t, secondOut, "Target repo: "+pfRepo+" (from task metadata: repo=penfold)")
+	assertNotContains(t, secondOut, "Set repo=penfold on cb-task-pf after successful dispatch.")
 }
 
 func TestDispatchDryRunReviewUsesReviewSkillAndWindowPrefix(t *testing.T) {
