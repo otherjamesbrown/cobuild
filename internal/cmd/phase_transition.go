@@ -136,8 +136,10 @@ func resolveNextPhase(
 	}
 	next := cfg.NextPhaseInWorkflow(bootstrap.Workflow, currentPhase)
 	if next == "" {
-		return "", fmt.Errorf("resolve next phase for %s: no phase after %q in workflow %q (check pipeline.yaml)",
-			designID, currentPhase, bootstrap.Workflow)
+		return "", fmt.Errorf(
+			"resolve next phase for %s: no phase after %q in workflow %q (check pipeline.yaml; Try: add the next phase under workflows.%s.phases)",
+			designID, currentPhase, bootstrap.Workflow, bootstrap.Workflow,
+		)
 	}
 	return next, nil
 }

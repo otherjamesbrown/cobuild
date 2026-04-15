@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -13,6 +12,8 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
+
+var mergeWorktreeRemove = worktree.Remove
 
 var mergeCmd = &cobra.Command{
 	Use:   "merge <task-id>",
@@ -46,7 +47,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		if prURL == "" {
 			// Try to find PR from branch name
 			branch := taskID // convention: branch name = task ID
-			out, err := exec.CommandContext(ctx, "gh", "pr", "list", "--head", branch, "--json", "url", "--jq", ".[0].url").Output()
+			out, err := execCommandOutput(ctx, "gh", "pr", "list", "--head", branch, "--json", "url", "--jq", ".[0].url")
 			if err == nil && len(strings.TrimSpace(string(out))) > 0 {
 				prURL = strings.TrimSpace(string(out))
 			}
@@ -63,7 +64,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		}
 
 		// Check PR status
-		out, err := exec.CommandContext(ctx, "gh", "pr", "view", prURL, "--json", "state,reviewDecision,mergeable", "--jq", "[.state, .reviewDecision, .mergeable] | join(\",\")").Output()
+		out, err := execCommandOutput(ctx, "gh", "pr", "view", prURL, "--json", "state,reviewDecision,mergeable", "--jq", "[.state, .reviewDecision, .mergeable] | join(\",\")")
 		if err != nil {
 			return fmt.Errorf("check PR status: %w", err)
 		}
@@ -72,11 +73,8 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			return fmt.Errorf("PR is not open (state: %s)", parts[0])
 		}
 
-		// Merge
-		fmt.Printf("Merging %s...\n", prURL)
-		mergeOut, err := exec.CommandContext(ctx, "gh", "pr", "merge", prURL, "--squash", "--delete-branch").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
+		if err := remoteMerge(ctx, prURL); err != nil {
+			return err
 		}
 		fmt.Printf("  Merged.\n")
 
@@ -88,17 +86,9 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		}
 		syncPipelineTaskStatus(ctx, taskID, "closed")
 
-		// Archive session logs before cleanup
-		wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
-		if wtPath != "" {
-			archiveSessionLogs(wtPath, taskID)
-
-			repoForCleanup, _ := config.RepoForProject(projectName)
-			if err := worktree.Remove(ctx, repoForCleanup, wtPath, taskID); err != nil {
-				fmt.Printf("  Warning: failed to remove worktree: %v\n", err)
-			} else {
-				fmt.Printf("  Worktree cleaned up.\n")
-			}
+		if err := localCleanup(ctx, taskID); err != nil {
+			fmt.Printf("  Warning: merge succeeded, but local cleanup failed: %v\n", err)
+			fmt.Printf("  Retry cleanup separately later if needed.\n")
 		}
 
 		if err := handlePostCloseProgress(ctx, taskID); err != nil {
@@ -108,6 +98,32 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		printNextStep(taskID, domain.PhaseReview, domain.ActionMerge)
 		return nil
 	},
+}
+
+func remoteMerge(ctx context.Context, prURL string) error {
+	fmt.Printf("Merging %s...\n", prURL)
+	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL, "--squash")
+	if err != nil {
+		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
+	}
+	return nil
+}
+
+func localCleanup(ctx context.Context, taskID string) error {
+	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
+	if wtPath == "" {
+		return nil
+	}
+
+	archiveSessionLogs(wtPath, taskID)
+
+	repoForCleanup, _ := config.RepoForProject(projectName)
+	if err := mergeWorktreeRemove(ctx, repoForCleanup, wtPath, taskID); err != nil {
+		return err
+	}
+
+	fmt.Printf("  Worktree cleaned up.\n")
+	return nil
 }
 
 // archiveSessionLogs copies session logs from a worktree to .cobuild/sessions/<task-id>/

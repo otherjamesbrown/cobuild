@@ -32,10 +32,10 @@ func ResolveBootstrap(item *connector.WorkItem, cfg *config.Config) (Bootstrap, 
 
 	wf, ok := cfg.Workflows[workflow]
 	if !ok {
-		return Bootstrap{}, fmt.Errorf("workflow %q not declared", workflow)
+		return Bootstrap{}, fmt.Errorf("workflow %q not declared (Try: add workflow %q to pipeline.yaml)", workflow, workflow)
 	}
 	if len(wf.Phases) == 0 {
-		return Bootstrap{}, fmt.Errorf("workflow %q has no phases", workflow)
+		return Bootstrap{}, fmt.Errorf("workflow %q has no phases (Try: add phases under workflows.%s in pipeline.yaml)", workflow, workflow)
 	}
 
 	return Bootstrap{

@@ -129,7 +129,36 @@ func TestResolveBootstrapMissingWorkflowReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("ResolveBootstrap() error = nil, want error")
 	}
-	if !strings.Contains(err.Error(), `workflow "bug-complex" not declared`) {
-		t.Fatalf("error = %v, want missing workflow error", err)
+	for _, want := range []string{
+		`workflow "bug-complex" not declared`,
+		`Try: add workflow "bug-complex" to pipeline.yaml`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	}
+}
+
+func TestResolveBootstrapWorkflowWithoutPhasesReturnsHint(t *testing.T) {
+	t.Parallel()
+
+	_, err := ResolveBootstrap(&connector.WorkItem{
+		ID:   "cb-task",
+		Type: "task",
+	}, &config.Config{
+		Workflows: map[string]config.WorkflowConfig{
+			"task": {},
+		},
+	})
+	if err == nil {
+		t.Fatal("ResolveBootstrap() error = nil, want error")
+	}
+	for _, want := range []string{
+		`workflow "task" has no phases`,
+		`Try: add phases under workflows.task in pipeline.yaml`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
 	}
 }
