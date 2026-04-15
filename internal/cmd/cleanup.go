@@ -263,11 +263,10 @@ func cleanupCandidateReason(ctx context.Context, taskID string, orphaned bool, c
 		if item.Status == "closed" {
 			return "task is already closed", true
 		}
-		if cbStore != nil {
-			if _, runErr := cbStore.GetRun(ctx, taskID); runErr != nil {
-				return "task has no pipeline run", true
-			}
-		}
+		// Deliberately do NOT treat a missing task-level pipeline_run as "orphaned":
+		// child tasks share their parent design's run and have no row of their own
+		// (see internal/cmd/task_completion_helpers.go). Using GetRun here would
+		// mark every live implement task as cleanup-eligible.
 		return "", false
 	}
 

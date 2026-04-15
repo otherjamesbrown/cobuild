@@ -99,7 +99,7 @@ func TestCleanupCommandOrphanedDryRunListsCandidates(t *testing.T) {
 		ID:     taskID,
 		Title:  taskID,
 		Type:   "task",
-		Status: "open",
+		Status: "closed",
 		Metadata: map[string]any{
 			domain.MetaWorktreePath: worktreePath,
 		},
@@ -119,7 +119,7 @@ func TestCleanupCommandOrphanedDryRunListsCandidates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("cleanup --orphaned --dry-run returned error: %v", err)
 		}
-		if !strings.Contains(out, "[dry-run] Would clean "+taskID+": task has no pipeline run") {
+		if !strings.Contains(out, "[dry-run] Would clean "+taskID+": task is already closed") {
 			t.Fatalf("dry-run output missing orphaned reason:\n%s", out)
 		}
 	})
