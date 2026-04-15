@@ -127,7 +127,7 @@ func fullMerge(ctx context.Context, repoRoot string, entry MergePlanEntry) error
 		if strings.Contains(string(out), "CONFLICT") {
 			return fmt.Errorf("rebase conflict — manual resolution needed:\n%s", string(out))
 		}
-		return fmt.Errorf("rebase failed: %s\n%s", err, string(out))
+		return fmt.Errorf("rebase failed: %w\n%s", err, string(out))
 	}
 
 	// Push the rebased branch
@@ -138,7 +138,7 @@ func fullMerge(ctx context.Context, repoRoot string, entry MergePlanEntry) error
 		fmt.Printf("  Merging PR %s...\n", entry.PR)
 		out, err := exec.CommandContext(ctx, "gh", "pr", "merge", entry.PR, "--squash", "--delete-branch").CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("gh pr merge failed: %s\n%s", err, string(out))
+			return fmt.Errorf("gh pr merge failed: %w\n%s", err, string(out))
 		}
 	} else {
 		// No PR — merge directly
@@ -146,7 +146,7 @@ func fullMerge(ctx context.Context, repoRoot string, entry MergePlanEntry) error
 		exec.CommandContext(ctx, "git", "-C", repoRoot, "checkout", "main").Run()
 		out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "merge", "--squash", entry.Branch).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("direct merge failed: %s\n%s", err, string(out))
+			return fmt.Errorf("direct merge failed: %w\n%s", err, string(out))
 		}
 		exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m",
 			fmt.Sprintf("Merge %s: %s", entry.TaskID, entry.Branch)).Run()
@@ -169,7 +169,7 @@ func partialMerge(ctx context.Context, repoRoot string, entry MergePlanEntry) er
 	for _, file := range entry.IncludeFiles {
 		out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "checkout", entry.Branch, "--", file).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("checkout %s from %s: %s\n%s", file, entry.Branch, err, string(out))
+			return fmt.Errorf("checkout %s from %s: %w\n%s", file, entry.Branch, err, string(out))
 		}
 	}
 
@@ -178,7 +178,7 @@ func partialMerge(ctx context.Context, repoRoot string, entry MergePlanEntry) er
 	msg := fmt.Sprintf("Partial merge from %s: %s", entry.TaskID, strings.Join(entry.IncludeFiles, ", "))
 	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", msg).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("commit partial merge: %s\n%s", err, string(out))
+		return fmt.Errorf("commit partial merge: %w\n%s", err, string(out))
 	}
 
 	// Push

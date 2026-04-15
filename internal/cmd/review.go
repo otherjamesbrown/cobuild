@@ -674,7 +674,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		"--squash", "--delete-branch")
 	if err != nil {
 		recordMergeFailure(ctx, taskID, prURL, string(mergeOut))
-		return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
+		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
 	}
 	// Clear retry counter on success so a re-merged/re-opened PR starts fresh.
 	if err := conn.SetMetadata(ctx, taskID, "merge_retry_count", ""); err != nil {
@@ -868,7 +868,7 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 	fmt.Printf("Re-dispatching %s for fixes...\n", taskID)
 	out, err := reviewCommandCombinedOutput(ctx, "cobuild", "dispatch", taskID)
 	if err != nil {
-		return fmt.Errorf("re-dispatch failed: %v\n%s", err, string(out))
+		return fmt.Errorf("re-dispatch failed: %w\n%s", err, string(out))
 	}
 	fmt.Printf("  %s\n", strings.TrimSpace(string(out)))
 	return nil
@@ -1185,7 +1185,7 @@ func postReviewComment(ctx context.Context, prURL string, result *llmreview.Revi
 	}
 	out, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "comment", prURL, "--body", body)
 	if err != nil {
-		return fmt.Errorf("gh pr comment failed: %v\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("gh pr comment failed: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -1243,7 +1243,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 
 	// Fetch latest main
 	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "fetch", "origin", "main"); err != nil {
-		return fmt.Errorf("rebase failed at fetch: %s\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("rebase failed at fetch: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
 	// Use a temp worktree so we don't mess with the main repo's HEAD
@@ -1255,7 +1255,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 	defer reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", tmpWT)
 
 	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "add", tmpWT, branch); err != nil {
-		return fmt.Errorf("rebase failed creating worktree: %s\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("rebase failed creating worktree: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
 	// Attempt rebase
@@ -1271,7 +1271,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 
 	// Force-push the rebased branch
 	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "push", "--force-with-lease"); err != nil {
-		return fmt.Errorf("rebase succeeded but push failed: %s\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("rebase succeeded but push failed: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	fmt.Printf("  Rebased PR #%d onto origin/main.\n", prNumber)
 	return nil

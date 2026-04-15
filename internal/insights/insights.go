@@ -82,7 +82,7 @@ func Get(ctx context.Context, conn *pgx.Conn, project string) (*Stats, error) {
 		if isTableMissing(err) {
 			tableExists = false
 		} else {
-			return nil, fmt.Errorf("query pipeline_runs: %v", err)
+			return nil, fmt.Errorf("query pipeline_runs: %w", err)
 		}
 	}
 	if tableExists && rows != nil {
@@ -115,7 +115,7 @@ func Get(ctx context.Context, conn *pgx.Conn, project string) (*Stats, error) {
 		`, project)
 		if err != nil {
 			if !isTableMissing(err) {
-				return nil, fmt.Errorf("query pipeline_tasks: %v", err)
+				return nil, fmt.Errorf("query pipeline_tasks: %w", err)
 			}
 		} else {
 			for taskRows.Next() {
@@ -157,7 +157,7 @@ func Get(ctx context.Context, conn *pgx.Conn, project string) (*Stats, error) {
 		`, project)
 		if err != nil {
 			if !isTableMissing(err) {
-				return nil, fmt.Errorf("query gate pass rates: %v", err)
+				return nil, fmt.Errorf("query gate pass rates: %w", err)
 			}
 		} else {
 			for gateRows.Next() {
@@ -184,7 +184,7 @@ func Get(ctx context.Context, conn *pgx.Conn, project string) (*Stats, error) {
 		`, project)
 		if err != nil {
 			if !isTableMissing(err) {
-				return nil, fmt.Errorf("query gate failures: %v", err)
+				return nil, fmt.Errorf("query gate failures: %w", err)
 			}
 		} else {
 			gateFailures := map[string]map[string]int{}

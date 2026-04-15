@@ -53,13 +53,13 @@ Run with --apply to auto-apply the changes.`,
 		}
 		dbConn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 		if err != nil {
-			return fmt.Errorf("connect: %v", err)
+			return fmt.Errorf("connect: %w", err)
 		}
 		defer dbConn.Close(ctx)
 
 		stats, err := insights.Get(ctx, dbConn, project)
 		if err != nil {
-			return fmt.Errorf("failed to get insights: %v", err)
+			return fmt.Errorf("failed to get insights: %w", err)
 		}
 
 		actions := generateImprovements(stats, pCfg, repoRoot)

@@ -31,7 +31,7 @@ task statuses, and agent performance to produce an insights report.`,
 		}
 		dbConn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 		if err != nil {
-			return fmt.Errorf("connect: %v", err)
+			return fmt.Errorf("connect: %w", err)
 		}
 		defer dbConn.Close(ctx)
 
