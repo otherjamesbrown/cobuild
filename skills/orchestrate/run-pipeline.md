@@ -106,6 +106,8 @@ cobuild dispatch <bug-id>
 
 Multiple task agents run in parallel by wave. This is where most of the work happens.
 
+`cobuild dispatch <design-id>` now follows the same default at this phase: if the design has child tasks, it dispatches waves rather than opening one design-level PR. The mono-PR path is explicit and risky: `cobuild dispatch --mono --force <design-id>`. Use that only when you intentionally want one PR and accept overlap with any existing child-task PRs.
+
 ```bash
 # Dispatch the first wave — cobuild dispatch-wave respects blocked-by edges and
 # max_concurrent from pipeline config. It only dispatches tasks whose blockers
