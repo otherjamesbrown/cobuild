@@ -60,12 +60,21 @@ Exit codes:
 				title = item.Title
 			}
 		}
-		gates, _ := cbStore.GetGateHistory(ctx, id)
+		gates, err := cbStore.GetGateHistory(ctx, id)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load gate history for %s: %v\n", id, err)
+		}
 		var tasks []store.PipelineTaskRecord
 		var sessions []store.SessionRecord
 		if run != nil {
-			tasks, _ = cbStore.ListTasks(ctx, run.ID)
-			sessions, _ = cbStore.ListSessions(ctx, id)
+			tasks, err = cbStore.ListTasks(ctx, run.ID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load tasks for %s: %v\n", id, err)
+			}
+			sessions, err = cbStore.ListSessions(ctx, id)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load sessions for %s: %v\n", id, err)
+			}
 		}
 		latestSessions := latestSessionByTask(sessions)
 

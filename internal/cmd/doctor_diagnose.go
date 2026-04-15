@@ -11,13 +11,14 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/pipeline/livestate"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
 // runDoctorDiagnose prints a deep, read-only diagnostic for a single design
 // or bug shard. Sections cover the "four places you'd otherwise look by
 // hand" per cb-d5e1dd #7: pipeline state, orchestrate processes, tmux
 // windows, sessions, PRs, review-auth config, gate history, task status.
-func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
+func runDoctorDiagnose(ctx context.Context, w io.Writer, errW io.Writer, shardID string) {
 	fmt.Fprintf(w, "=== doctor diagnose %s ===\n", shardID)
 
 	// 1. Pipeline run
@@ -101,9 +102,13 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 	}
 
 	// 4. Child tasks
+	var tasks []store.PipelineTaskRecord
+	tasksLoaded := false
 	if run != nil {
-		tasks, err := cbStore.ListTasks(ctx, run.ID)
-		if err == nil && len(tasks) > 0 {
+		records, err := cbStore.ListTasks(ctx, run.ID)
+		if err == nil && len(records) > 0 {
+			tasksLoaded = true
+			tasks = records
 			counts := map[string]int{}
 			for _, t := range tasks {
 				counts[t.Status]++
@@ -114,7 +119,11 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 			}
 			fmt.Fprintf(w, "Tasks: %d (%s)\n", len(tasks), strings.Join(parts, ", "))
 		} else if err == nil {
+			tasksLoaded = true
+			tasks = records
 			fmt.Fprintln(w, "Tasks: none tracked in pipeline_tasks")
+		} else {
+			fmt.Fprintf(errW, "Warning: failed to load tasks for %s: %v\n", shardID, err)
 		}
 	}
 
@@ -147,8 +156,7 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, shardID string) {
 	// 7. PR state — best-effort via gh pr list for task worktree branches.
 	// We don't have a direct shardID→PR mapping here, but we can at least
 	// surface the count via conn metadata if the tasks are known.
-	if conn != nil && run != nil {
-		tasks, _ := cbStore.ListTasks(ctx, run.ID)
+	if conn != nil && run != nil && tasksLoaded {
 		prCount := 0
 		for _, t := range tasks {
 			if pr, _ := conn.GetMetadata(ctx, t.TaskShardID, "pr_url"); pr != "" {

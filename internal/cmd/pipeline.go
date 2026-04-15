@@ -150,8 +150,15 @@ cobuild init, review, gate, and dispatch all write to.`,
 		var gates []store.PipelineGateRecord
 		var tasks []store.PipelineTaskRecord
 		if cbStore != nil {
-			gates, _ = cbStore.GetGateHistory(ctx, id)
-			tasks, _ = cbStore.ListTasks(ctx, run.ID)
+			var err error
+			gates, err = cbStore.GetGateHistory(ctx, id)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load gate history for %s: %v\n", id, err)
+			}
+			tasks, err = cbStore.ListTasks(ctx, run.ID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load tasks for %s: %v\n", id, err)
+			}
 		}
 
 		if outputFormat == "json" {
@@ -577,8 +584,15 @@ var auditCmd = &cobra.Command{
 		var gates []store.PipelineGateRecord
 		var sessions []store.SessionRecord
 		if cbStore != nil {
-			gates, _ = cbStore.GetGateHistory(ctx, designID)
-			sessions, _ = cbStore.ListSessions(ctx, designID)
+			var err error
+			gates, err = cbStore.GetGateHistory(ctx, designID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load gate history for %s: %v\n", designID, err)
+			}
+			sessions, err = cbStore.ListSessions(ctx, designID)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to load sessions for %s: %v\n", designID, err)
+			}
 		}
 		lifecycleEvents := sessionLifecycleEvents(sessions)
 

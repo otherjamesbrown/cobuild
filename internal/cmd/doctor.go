@@ -44,7 +44,7 @@ gate history, and task status. Use this first when a pipeline is stuck
 		// It runs BEFORE the reconcile pass so operators see the problem
 		// state before any auto-fix, and is read-only itself.
 		if pipelineID != "" {
-			runDoctorDiagnose(ctx, cmd.OutOrStdout(), pipelineID)
+			runDoctorDiagnose(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), pipelineID)
 			fmt.Fprintln(cmd.OutOrStdout())
 		}
 
