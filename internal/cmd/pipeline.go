@@ -347,6 +347,26 @@ var reviewCmd = &cobra.Command{
 		if gateName == domain.GateReadinessReview {
 			recordedReadiness = readiness
 		}
+
+		// cb-465d17 guard: `cobuild review` records the gate and advances the
+		// phase, but does NOT merge. For a task PR (gate=review with a PR URL),
+		// that combination means "phase=done with an unmerged PR" — exactly the
+		// failure mode observed on cb-b78c67. Route these callers to
+		// process-review, which handles the merge before advancing phase.
+		// Fail verdicts are allowed through because they don't advance phase.
+		if gateName == domain.GateReview && verdict == "pass" && conn != nil {
+			prURL, _ := conn.GetMetadata(ctx, shardID, domain.MetaPRURL)
+			if prURL != "" {
+				return fmt.Errorf(
+					"refusing to record PASS review for %s via `cobuild review`: task has PR %s — "+
+						"`cobuild review` advances phase without merging the PR. "+
+						"Use `cobuild process-review %s` instead; it consumes .cobuild/gate-verdict.json, "+
+						"records the gate, and runs `gh pr merge` before advancing phase (cb-465d17).",
+					shardID, prURL, shardID,
+				)
+			}
+		}
+
 		result, err := RecordGateVerdict(ctx, conn, cbStore, shardID, gateName, verdict, content, recordedReadiness, pCfg)
 		if err != nil {
 			return err

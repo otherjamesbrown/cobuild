@@ -95,6 +95,33 @@ func TestBuildRunnerScript_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildRunnerScript_ReviewGateRoutesToProcessReview verifies the cb-465d17
+// fix: the runner's gate-handling switch routes the `review` gate to
+// `cobuild process-review`, not `cobuild review`. `cobuild review` doesn't
+// merge the PR — using it on a task PR advances phase=done with the PR still
+// open (observed on cb-b78c67).
+func TestBuildRunnerScript_ReviewGateRoutesToProcessReview(t *testing.T) {
+	r := New()
+	script, err := r.BuildRunnerScript(runtime.RunnerInput{
+		WorktreePath: "/w",
+		RepoRoot:     "/r",
+		TaskID:       "cb-test",
+		PromptFile:   "/p",
+		Phase:        "review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, `cobuild process-review "$SHARD_ID"`) {
+		t.Errorf("review gate must route to `cobuild process-review`, got:\n%s", script)
+	}
+	// Guard against regression: the old `cobuild review $SHARD_ID --verdict ...`
+	// invocation must not appear in the review-gate case.
+	if strings.Contains(script, `cobuild review "$SHARD_ID" --verdict "$VERDICT" --body "$BODY"`) {
+		t.Errorf("cb-465d17 regression: review gate still uses `cobuild review` (doesn't merge PR)")
+	}
+}
+
 func TestBuildRunnerScript_ExtraFlagsOverrides(t *testing.T) {
 	r := New()
 	script, err := r.BuildRunnerScript(runtime.RunnerInput{
