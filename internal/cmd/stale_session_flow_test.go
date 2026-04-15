@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -116,7 +117,10 @@ func TestPollerMarksStaleKilledTaskPendingForRedispatch(t *testing.T) {
 	restore := installTestGlobals(t, fc, fs, "")
 	defer restore()
 
-	out := captureStdout(t, func() {
+	restoreLevel := setLogLevelForTest(slog.LevelInfo)
+	defer restoreLevel()
+
+	_, stderr := captureStdoutAndStderr(t, func() {
 		dispatchReadyTasks(ctx, "", &config.Config{
 			Dispatch: config.DispatchCfg{WaveStrategy: "parallel", MaxConcurrent: 3},
 		}, "cb-design", false)
@@ -128,8 +132,10 @@ func TestPollerMarksStaleKilledTaskPendingForRedispatch(t *testing.T) {
 	if got := fs.taskStatusUpdates["cb-task-stuck"]; got != "pending" {
 		t.Fatalf("pipeline task status = %q, want pending", got)
 	}
-	if !strings.Contains(out, "marked pending for redispatch after stale-killed") {
-		t.Fatalf("poller output missing redispatch note:\n%s", out)
+	// cb-e7edc9: redispatch note moved to slog.Info with structured attrs.
+	if !strings.Contains(stderr, `msg="marked pending for redispatch"`) ||
+		!strings.Contains(stderr, `prior_status=stale-killed`) {
+		t.Fatalf("poller output missing redispatch note:\n%s", stderr)
 	}
 }
 

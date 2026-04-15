@@ -18,6 +18,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// cb-e7edc9: the poller is a background daemon — its per-cycle output is
+// noise a human reader never wants to see unless they explicitly ask. The
+// startup banner stays on fmt.Printf so `cobuild poller` still prints one
+// line on launch at the default warn level. Everything else migrates to
+// slog: Debug for per-tick heartbeat ("Polling..."), Info for routine
+// status lines (dispatch events, state transitions), Warn/Error for
+// recovery failures. The "component" attribute names the subsystem so a
+// human running with COBUILD_LOG_LEVEL=info can still grep for the
+// familiar auto / reconcile / monitor / implement / dispatch / review
+// markers.
+
 var (
 	pollerNow  = time.Now
 	pollerStat = os.Stat
@@ -73,8 +84,7 @@ Also runs health checks for stalled agents.`,
 		fmt.Printf("[poller] Starting (project: %s, interval: %ds)\n", projectName, interval)
 
 		for {
-			ts := time.Now().Format("15:04:05")
-			fmt.Printf("\n[%s] Polling...\n", ts)
+			internalLogger().Debug("poll tick", "component", "poller", "ts", time.Now().Format("15:04:05"))
 
 			// Check for auto-labelled work items (Mode 1)
 			autoLabel := "cobuild"
@@ -141,15 +151,15 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 			}
 
 			if dryRun {
-				fmt.Printf("  [auto] %s (%s) — has label %q, would init autonomous pipeline\n", item.ID, item.Type, autoLabel)
+				internalLogger().Info("would init autonomous pipeline (dry run)", "component", "auto", "id", item.ID, "type", item.Type, "label", autoLabel)
 			} else {
-				fmt.Printf("  [auto] %s (%s) — initialising autonomous pipeline\n", item.ID, item.Type)
+				internalLogger().Info("initialising autonomous pipeline", "component", "auto", "id", item.ID, "type", item.Type)
 				startPhase := domain.PhaseDesign
 				repoRoot := findRepoRoot()
 				pCfg, _ := config.LoadConfig(repoRoot)
 				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(&item, pCfg)
 				if resolveErr != nil {
-					fmt.Fprintf(os.Stderr, "  [auto] resolve bootstrap for %s failed: %v\n", item.ID, resolveErr)
+					internalLogger().Warn("resolve bootstrap failed", "component", "auto", "id", item.ID, "err", resolveErr)
 					continue
 				}
 				startPhase = bootstrap.StartPhase
@@ -159,7 +169,7 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 				}
 				_, err := cbStore.CreateRunWithMode(ctx, item.ID, itemProject, startPhase, "autonomous")
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "  [auto] init %s failed: %v\n", item.ID, err)
+					internalLogger().Warn("init pipeline failed", "component", "auto", "id", item.ID, "err", err)
 				}
 			}
 		}
@@ -173,7 +183,7 @@ func reconcileStaleState(ctx context.Context, dryRun bool) {
 
 	runs, err := cbStore.ListRuns(ctx, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[reconcile] list-runs error: %v\n", err)
+		internalLogger().Error("list-runs failed", "component", "reconcile", "err", err)
 		return
 	}
 
@@ -187,18 +197,18 @@ func reconcileStaleState(ctx context.Context, dryRun bool) {
 			if errors.Is(err, pipelinestate.ErrNotFound) {
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "[reconcile] %s resolve error: %v\n", run.DesignID, err)
+			internalLogger().Warn("resolve failed", "component", "reconcile", "id", run.DesignID, "err", err)
 			continue
 		}
 
 		recommendations := pipelinestate.RecommendRecoveries(resolvedState)
 		for _, recommendation := range recommendations {
-			fmt.Printf("[reconcile] %s %s: %s\n", recommendation.DesignID, recommendation.Kind, recommendation.Reason)
+			internalLogger().Info("recovery", "component", "reconcile", "id", recommendation.DesignID, "kind", recommendation.Kind, "reason", recommendation.Reason)
 			if dryRun {
 				continue
 			}
 			if err := applyRecoveryRecommendation(ctx, resolvedState, recommendation); err != nil {
-				fmt.Fprintf(os.Stderr, "[reconcile] %s %s failed: %v\n", recommendation.DesignID, recommendation.Kind, err)
+				internalLogger().Warn("recovery failed", "component", "reconcile", "id", recommendation.DesignID, "kind", recommendation.Kind, "err", err)
 			}
 		}
 	}
@@ -246,7 +256,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 	stallTimeout := resolveStallTimeout(pCfg)
 	sessions, err := cbStore.ListRunningSessions(ctx, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [error] list running sessions: %v\n", err)
+		internalLogger().Error("list running sessions failed", "component", "monitor", "err", err)
 		return
 	}
 
@@ -254,7 +264,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 	for _, session := range sessions {
 		outcome, note, idle, err := inspectSessionHealth(session, stallTimeout, now)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  [monitor] %s — inspect failed: %v\n", session.TaskID, err)
+			internalLogger().Warn("inspect failed", "component", "monitor", "task", session.TaskID, "err", err)
 			continue
 		}
 		if outcome == "" {
@@ -263,7 +273,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 
 		if outcome == "orphaned" {
 			if dryRun {
-				fmt.Printf("  [monitor] %s — would mark orphaned (%s)\n", session.TaskID, note)
+				internalLogger().Info("would mark orphaned (dry run)", "component", "monitor", "task", session.TaskID, "note", note)
 				continue
 			}
 			if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
@@ -271,20 +281,20 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 				Status:         "orphaned",
 				CompletionNote: note,
 			}); err != nil {
-				fmt.Fprintf(os.Stderr, "  [monitor] %s — record orphaned failed: %v\n", session.TaskID, err)
+				internalLogger().Warn("record orphaned failed", "component", "monitor", "task", session.TaskID, "err", err)
 				continue
 			}
-			fmt.Printf("  [monitor] %s — marked orphaned\n", session.TaskID)
+			internalLogger().Info("marked orphaned", "component", "monitor", "task", session.TaskID)
 			continue
 		}
 
 		sessionName, windowName := sessionTarget(session)
 		if dryRun {
-			fmt.Printf("  [monitor] %s — would kill stale session after %s idle\n", session.TaskID, idle.Round(time.Second))
+			internalLogger().Info("would kill stale session (dry run)", "component", "monitor", "task", session.TaskID, "idle", idle.Round(time.Second))
 			continue
 		}
 		if err := pollerKillWindow(ctx, sessionName, windowName); err != nil {
-			fmt.Fprintf(os.Stderr, "  [monitor] %s — kill stale session failed: %v\n", session.TaskID, err)
+			internalLogger().Warn("kill stale session failed", "component", "monitor", "task", session.TaskID, "err", err)
 			continue
 		}
 		if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
@@ -292,10 +302,10 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 			Status:         "stale-killed",
 			CompletionNote: note,
 		}); err != nil {
-			fmt.Fprintf(os.Stderr, "  [monitor] %s — record stale kill failed: %v\n", session.TaskID, err)
+			internalLogger().Warn("record stale kill failed", "component", "monitor", "task", session.TaskID, "err", err)
 			continue
 		}
-		fmt.Printf("  [monitor] %s — killed stale session after %s idle\n", session.TaskID, idle.Round(time.Second))
+		internalLogger().Info("killed stale session", "component", "monitor", "task", session.TaskID, "idle", idle.Round(time.Second))
 	}
 }
 
@@ -363,7 +373,7 @@ func sessionTarget(session store.SessionRecord) (sessionName, windowName string)
 func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Config, dryRun bool) {
 	runs, err := cbStore.ListRuns(ctx, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [error] list runs: %v\n", err)
+		internalLogger().Error("list runs failed", "component", "poller", "err", err)
 		return
 	}
 
@@ -381,7 +391,7 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 
 		// Check if there's already an agent session running for this pipeline
 		if hasActiveSession(ctx, run.DesignID) {
-			fmt.Printf("  [%s] %s (%s) — agent running\n", run.Phase, run.DesignID, run.Project)
+			internalLogger().Debug("agent running", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
 			continue
 		}
 
@@ -402,9 +412,9 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 			} else {
 				// Standalone task — dispatch the item itself
 				if dryRun {
-					fmt.Printf("  [implement] %s (%s) — standalone task, would dispatch\n", run.DesignID, run.Project)
+					internalLogger().Info("would dispatch standalone task (dry run)", "component", "implement", "id", run.DesignID, "project", run.Project)
 				} else {
-					fmt.Printf("  [implement] %s (%s) — dispatching standalone task\n", run.DesignID, run.Project)
+					internalLogger().Info("dispatching standalone task", "component", "implement", "id", run.DesignID, "project", run.Project)
 					dispatchForPhase(ctx, run.DesignID)
 				}
 			}
@@ -412,14 +422,14 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 		case domain.PhaseDesign, domain.PhaseDecompose, domain.PhaseInvestigate, domain.PhaseReview, domain.PhaseDone:
 			// Design-level dispatch — spawn agent for this phase
 			if dryRun {
-				fmt.Printf("  [%s] %s (%s) — would dispatch\n", run.Phase, run.DesignID, run.Project)
+				internalLogger().Info("would dispatch (dry run)", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
 			} else {
-				fmt.Printf("  [%s] %s (%s) — dispatching...\n", run.Phase, run.DesignID, run.Project)
+				internalLogger().Info("dispatching", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
 				dispatchForPhase(ctx, run.DesignID)
 			}
 
 		default:
-			fmt.Printf("  [%s] %s — unknown phase, skipping\n", run.Phase, run.DesignID)
+			internalLogger().Warn("unknown phase, skipping", "component", "poller", "phase", run.Phase, "id", run.DesignID)
 		}
 	}
 }
@@ -461,21 +471,21 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 
 		if allDone {
 			if dryRun {
-				fmt.Printf("  [needs-review] %s — all tasks done, would advance %s to review\n", item.ID, designID)
+				internalLogger().Info("all tasks done, would advance (dry run)", "component", "needs-review", "task", item.ID, "design", designID)
 			} else {
-				fmt.Printf("  [needs-review] %s — all tasks done, advancing %s\n", item.ID, designID)
+				internalLogger().Info("all tasks done, advancing design", "component", "needs-review", "task", item.ID, "design", designID)
 				if run, err := cbStore.GetRun(ctx, designID); err == nil {
 					repoRoot, _ := config.RepoForProject(run.Project)
 					pCfg, _ := config.LoadConfig(repoRoot)
 					if _, err := advancePipelinePhase(ctx, cbStore, conn, pCfg, designID, run.CurrentPhase); err != nil {
-						fmt.Printf("  Warning: could not advance %s: %v\n", designID, err)
+						internalLogger().Warn("could not advance design", "component", "needs-review", "design", designID, "err", err)
 					}
 				}
 			}
 		} else {
 			// Check if this task's wave is complete — dispatch next wave
 			if dryRun {
-				fmt.Printf("  [needs-review] %s — checking if next wave is ready\n", item.ID)
+				internalLogger().Debug("checking if next wave is ready", "component", "needs-review", "task", item.ID)
 			}
 		}
 	}
@@ -524,7 +534,7 @@ func registerTaskForDispatch(ctx context.Context, designID, taskID string, wave 
 	if err := cbStore.AddTask(ctx, run.ID, taskID, designID, wavePtr); err != nil {
 		// AddTask is idempotent via ON CONFLICT (cb-2d60c4) — any error here
 		// is a real failure (connection lost, store misconfigured, etc).
-		fmt.Fprintf(os.Stderr, "  [register] %s: %v\n", taskID, err)
+		internalLogger().Warn("register task failed", "component", "register", "task", taskID, "err", err)
 	}
 }
 
@@ -532,10 +542,10 @@ func registerTaskForDispatch(ctx context.Context, designID, taskID string, wave 
 func dispatchForPhase(ctx context.Context, workItemID string) {
 	out, err := exec.CommandContext(ctx, "cobuild", "dispatch", workItemID).CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [dispatch] %s failed: %v\n%s\n", workItemID, err, string(out))
+		internalLogger().Warn("dispatch failed", "component", "dispatch", "id", workItemID, "err", err, "out", string(out))
 		return
 	}
-	fmt.Printf("  [dispatch] %s — %s\n", workItemID, strings.TrimSpace(string(out)))
+	internalLogger().Info("dispatched", "component", "dispatch", "id", workItemID, "out", strings.TrimSpace(string(out)))
 }
 
 // dispatchReadyTasks dispatches ready tasks for a design in the implement phase.
@@ -566,15 +576,12 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 			rec, _ := cbStore.GetSession(ctx, item.ID)
 			reason := redispatchReason(rec)
 			if dryRun {
-				fmt.Printf("  [implement] %s — %s left task stuck in progress, would mark pending for redispatch\n", item.ID, rec.Status)
+				internalLogger().Info("would mark pending for redispatch (dry run)", "component", "implement", "task", item.ID, "prior_status", rec.Status)
 			} else {
 				if err := markTaskPendingForRedispatch(ctx, item.ID, rec); err != nil {
-					fmt.Fprintf(os.Stderr, "  [implement] %s redispatch recovery failed: %v\n", item.ID, err)
+					internalLogger().Warn("redispatch recovery failed", "component", "implement", "task", item.ID, "err", err)
 				} else {
-					fmt.Printf("  [implement] %s — marked pending for redispatch after %s\n", item.ID, rec.Status)
-					if reason != "" {
-						fmt.Printf("    %s\n", reason)
-					}
+					internalLogger().Info("marked pending for redispatch", "component", "implement", "task", item.ID, "prior_status", rec.Status, "reason", reason)
 				}
 			}
 			continue
@@ -644,12 +651,11 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 
 	total := ready + inProgress + done
 	if total > 0 {
-		fmt.Printf("  [implement] %s — %d/%d done, %d in-progress, %d ready\n",
-			designID, done, total, inProgress, ready)
+		internalLogger().Info("wave status", "component", "implement", "design", designID, "done", done, "total", total, "in_progress", inProgress, "ready", ready)
 	}
 	if dryRun {
 		for _, taskID := range readyIDs {
-			fmt.Printf("  [implement] %s — ready to dispatch\n", taskID)
+			internalLogger().Info("ready to dispatch (dry run)", "component", "implement", "task", taskID)
 		}
 	}
 }
@@ -693,16 +699,16 @@ func pollTaskReviews(ctx context.Context, dryRun bool) {
 		}
 
 		if dryRun {
-			fmt.Printf("  [review] %s — Gemini review found, would process\n", item.ID)
+			internalLogger().Info("Gemini review found, would process (dry run)", "component", "review", "task", item.ID)
 			continue
 		}
 
-		fmt.Printf("  [review] %s — processing Gemini review...\n", item.ID)
+		internalLogger().Info("processing Gemini review", "component", "review", "task", item.ID)
 		out, err := exec.CommandContext(ctx, "cobuild", "process-review", item.ID).CombinedOutput()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  [review] %s failed: %v\n%s\n", item.ID, err, string(out))
+			internalLogger().Warn("process-review failed", "component", "review", "task", item.ID, "err", err, "out", string(out))
 		} else {
-			fmt.Printf("  [review] %s — %s\n", item.ID, strings.TrimSpace(string(out)))
+			internalLogger().Info("process-review done", "component", "review", "task", item.ID, "out", strings.TrimSpace(string(out)))
 		}
 	}
 }

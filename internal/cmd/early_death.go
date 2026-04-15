@@ -45,7 +45,7 @@ func startEarlyDeathProbe(pCfg *config.Config, sessionID, tmuxSessionName, tmuxW
 			if cbStore != nil {
 				detail := fmt.Sprintf("tmux window %s gone after %s", target, delay)
 				if err := cbStore.MarkSessionEarlyDeath(ctx, sessionID, detail); err != nil {
-					fmt.Fprintf(os.Stderr, "[probe] mark-early-death %s: %v\n", sessionID, err)
+					internalLogger().Warn("mark-early-death failed", "component", "probe", "session", sessionID, "err", err)
 				}
 			}
 			return
@@ -99,6 +99,6 @@ func captureDispatchError(worktreePath string, deathAfter time.Duration, tmuxSes
 
 	errLog := filepath.Join(cobuildDir, "dispatch-error.log")
 	if err := os.WriteFile(errLog, []byte(buf.String()), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "[probe] write dispatch-error.log: %v\n", err)
+		internalLogger().Warn("write dispatch-error.log failed", "component", "probe", "path", errLog, "err", err)
 	}
 }
