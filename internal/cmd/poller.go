@@ -202,6 +202,10 @@ func reconcileStaleState(ctx context.Context, dryRun bool) {
 			}
 		}
 	}
+
+	if !dryRun {
+		reconcileExitedSessionsRun(ctx)
+	}
 }
 
 func applyRecoveryRecommendation(ctx context.Context, resolvedState *pipelinestate.PipelineState, recommendation pipelinestate.RecoveryRecommendation) error {

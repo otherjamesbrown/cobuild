@@ -548,6 +548,8 @@ var auditCmd = &cobra.Command{
 		ctx := context.Background()
 		designID := args[0]
 
+		reconcileExitedSessionsRun(ctx)
+
 		// Try store first, fall back to legacy
 		var phase, status string
 		if cbStore != nil {
