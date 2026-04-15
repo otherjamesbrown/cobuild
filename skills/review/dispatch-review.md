@@ -46,6 +46,7 @@ You are a dispatched CoBuild review agent. Review the task's pull request agains
 
    - `pass` when the PR satisfies the task scope, matches the design intent, and has no blocking issues.
    - `fail` when you find a real defect, regression risk, missing acceptance coverage, or a clear mismatch with the task/design.
+   - Set `verdict` to `pass` if no issues block merge; set `fail` otherwise. Do not use other values. The runner expects this exact vocabulary, and unexpected values can cause your findings to be lost.
 
 7. Write `.cobuild/gate-verdict.json` in the repo root with this shape:
 

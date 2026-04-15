@@ -240,11 +240,9 @@ var gateCmd = &cobra.Command{
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 		readiness, _ := cmd.Flags().GetInt("readiness")
 
-		if verdict == "" {
-			return fmt.Errorf("--verdict is required")
-		}
-		if verdict != "pass" && verdict != "fail" {
-			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
+		verdict, err := normalizeGateVerdict(verdict)
+		if err != nil {
+			return err
 		}
 
 		content, err := resolveBody(body, bodyFile)
@@ -305,11 +303,9 @@ var reviewCmd = &cobra.Command{
 		body, _ := cmd.Flags().GetString("body")
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 
-		if verdict == "" {
-			return fmt.Errorf("--verdict is required")
-		}
-		if verdict != "pass" && verdict != "fail" {
-			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
+		verdict, err := normalizeGateVerdict(verdict)
+		if err != nil {
+			return err
 		}
 
 		// Pick the gate from the readiness flag, not the pipeline phase.
@@ -404,11 +400,9 @@ var decomposeCmd = &cobra.Command{
 		body, _ := cmd.Flags().GetString("body")
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 
-		if verdict == "" {
-			return fmt.Errorf("--verdict is required")
-		}
-		if verdict != "pass" && verdict != "fail" {
-			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
+		verdict, err := normalizeGateVerdict(verdict)
+		if err != nil {
+			return err
 		}
 
 		content, err := resolveBody(body, bodyFile)
@@ -497,11 +491,9 @@ var investigateCmd = &cobra.Command{
 		body, _ := cmd.Flags().GetString("body")
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 
-		if verdict == "" {
-			return fmt.Errorf("--verdict is required")
-		}
-		if verdict != "pass" && verdict != "fail" {
-			return fmt.Errorf("--verdict must be 'pass' or 'fail', got %q", verdict)
+		verdict, err := normalizeGateVerdict(verdict)
+		if err != nil {
+			return err
 		}
 
 		content, err := resolveBody(body, bodyFile)

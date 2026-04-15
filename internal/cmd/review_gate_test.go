@@ -3,7 +3,67 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
 )
+
+func resetReviewGateFlags(t *testing.T) {
+	t.Helper()
+	_ = reviewCmd.Flags().Set("verdict", "")
+	_ = reviewCmd.Flags().Set("readiness", "0")
+	_ = reviewCmd.Flags().Set("body", "")
+	_ = reviewCmd.Flags().Set("body-file", "")
+}
+
+func TestReviewCmdNormalizesNeedsFixVerdictToFail(t *testing.T) {
+	fc := newFakeConnector()
+	fs := newFakeStore()
+	fs.runs["cb-task"] = &store.PipelineRun{
+		ID:           "run-1",
+		DesignID:     "cb-task",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cobuild")
+	defer restore()
+
+	resetReviewGateFlags(t)
+	t.Cleanup(func() { resetReviewGateFlags(t) })
+
+	_ = reviewCmd.Flags().Set("verdict", "needs-fix")
+	_ = reviewCmd.Flags().Set("body", "Missing regression coverage.")
+
+	if err := reviewCmd.RunE(reviewCmd, []string{"cb-task"}); err != nil {
+		t.Fatalf("review returned error: %v", err)
+	}
+
+	if len(fs.gates) != 1 {
+		t.Fatalf("recorded %d gates, want 1", len(fs.gates))
+	}
+	if got := fs.gates[0].Verdict; got != "fail" {
+		t.Fatalf("stored verdict = %q, want fail", got)
+	}
+	if got := fs.runs["cb-task"].CurrentPhase; got != "review" {
+		t.Fatalf("phase = %q, want review after fail verdict", got)
+	}
+}
+
+func TestReviewCmdRejectsInvalidVerdictValue(t *testing.T) {
+	resetReviewGateFlags(t)
+	t.Cleanup(func() { resetReviewGateFlags(t) })
+
+	_ = reviewCmd.Flags().Set("verdict", "invalidvalue")
+	_ = reviewCmd.Flags().Set("body", "test")
+
+	err := reviewCmd.RunE(reviewCmd, []string{"cb-task"})
+	if err == nil {
+		t.Fatal("review with invalid verdict should fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "--verdict must be 'pass' or 'fail'") {
+		t.Fatalf("error = %q, want invalid-verdict error", err.Error())
+	}
+}
 
 // TestReviewCmdGateInferenceFromReadinessFlag verifies that `cobuild review`
 // chooses the gate name from the readiness flag rather than from
@@ -14,18 +74,11 @@ import (
 // readiness-review and rejected `--readiness 0`. cb-118954 (slice 2 of
 // cb-663873) is the regression marker.
 func TestReviewCmdGateInferenceFromReadinessFlag(t *testing.T) {
-	// Reset the flag set between subtests; cobra flags are sticky.
-	resetFlags := func() {
-		_ = reviewCmd.Flags().Set("verdict", "")
-		_ = reviewCmd.Flags().Set("readiness", "0")
-		_ = reviewCmd.Flags().Set("body", "")
-		_ = reviewCmd.Flags().Set("body-file", "")
-	}
-
 	t.Run("readiness omitted does not error on the readiness check", func(t *testing.T) {
-		resetFlags()
+		resetReviewGateFlags(t)
 		_ = reviewCmd.Flags().Set("verdict", "fail")
 		_ = reviewCmd.Flags().Set("body", "test")
+		t.Cleanup(func() { resetReviewGateFlags(t) })
 		// The store lookup will fail (no test setup), but the function should
 		// pass the readiness check (gate=review, no required score) and
 		// instead error later on "no store configured" or similar. Anything
@@ -37,10 +90,11 @@ func TestReviewCmdGateInferenceFromReadinessFlag(t *testing.T) {
 	})
 
 	t.Run("readiness=3 takes the readiness-review path", func(t *testing.T) {
-		resetFlags()
+		resetReviewGateFlags(t)
 		_ = reviewCmd.Flags().Set("verdict", "pass")
 		_ = reviewCmd.Flags().Set("readiness", "3")
 		_ = reviewCmd.Flags().Set("body", "test")
+		t.Cleanup(func() { resetReviewGateFlags(t) })
 		err := reviewCmd.RunE(reviewCmd, []string{"cb-test"})
 		// We don't expect success without a configured store; we just want to
 		// make sure the readiness check accepts a valid 1-5 value.
@@ -50,10 +104,11 @@ func TestReviewCmdGateInferenceFromReadinessFlag(t *testing.T) {
 	})
 
 	t.Run("readiness=7 fails validation explicitly", func(t *testing.T) {
-		resetFlags()
+		resetReviewGateFlags(t)
 		_ = reviewCmd.Flags().Set("verdict", "pass")
 		_ = reviewCmd.Flags().Set("readiness", "7")
 		_ = reviewCmd.Flags().Set("body", "test")
+		t.Cleanup(func() { resetReviewGateFlags(t) })
 		err := reviewCmd.RunE(reviewCmd, []string{"cb-test"})
 		if err == nil {
 			t.Fatalf("review with readiness=7 should fail validation, got nil")

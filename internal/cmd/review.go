@@ -1318,7 +1318,8 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		// Not our verdict. Leave the file alone — a different caller owns it.
 		return false, nil
 	}
-	if v.Verdict != "pass" && v.Verdict != "fail" {
+	verdict, err := normalizeGateVerdict(v.Verdict)
+	if err != nil {
 		return false, fmt.Errorf("invalid verdict %q in %s", v.Verdict, verdictFile)
 	}
 
@@ -1353,13 +1354,13 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	if cbStore != nil {
 		run, runErr := cbStore.GetRun(ctx, taskID)
 		if runErr == nil && run != nil && run.CurrentPhase == domain.PhaseReview {
-			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, v.Verdict, v.Body, 0, pCfg); rerr != nil {
+			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, verdict, v.Body, 0, pCfg); rerr != nil {
 				return true, fmt.Errorf("record review gate: %w", rerr)
 			}
 		}
 	}
 
-	if v.Verdict == "pass" {
+	if verdict == "pass" {
 		if err := doMerge(ctx, taskID, prURL); err != nil {
 			return true, err
 		}

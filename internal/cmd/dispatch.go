@@ -1059,6 +1059,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   ```json\n")
 		b.WriteString(fmt.Sprintf("   {\"gate\": \"review\", \"shard_id\": \"%s\", \"verdict\": \"pass\", \"body\": \"<findings>\"}\n", workItemID))
 		b.WriteString("   ```\n")
+		b.WriteString("   Set `verdict` to `pass` if no issues block merge; set `fail` otherwise. Do not use other values.\n")
 		b.WriteString("   **Do NOT run gate commands or merge PRs yourself** — the runner handles it.\n")
 
 	case domain.PhaseDone:
