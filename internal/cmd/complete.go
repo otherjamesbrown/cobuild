@@ -164,7 +164,7 @@ Steps:
 		// Get branch name
 		branchOut, err := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
 		if err != nil {
-			return fmt.Errorf("cannot get branch: %v", err)
+			return fmt.Errorf("cannot get branch: %w", err)
 		}
 		branch := strings.TrimSpace(string(branchOut))
 		if branch == "" {

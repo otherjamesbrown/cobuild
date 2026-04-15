@@ -330,7 +330,7 @@ func (c *CPConnector) exec(ctx context.Context, args ...string) (json.RawMessage
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr := strings.TrimSpace(string(exitErr.Stderr))
-			return nil, fmt.Errorf("%s (stderr: %s)", err, stderr)
+			return nil, fmt.Errorf("%w (stderr: %s)", err, stderr)
 		}
 		return nil, err
 	}

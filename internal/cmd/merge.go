@@ -75,7 +75,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		fmt.Printf("Merging %s...\n", prURL)
 		mergeOut, err := exec.CommandContext(ctx, "gh", "pr", "merge", prURL, "--squash", "--delete-branch").CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("merge failed: %s\n%s", err, string(mergeOut))
+			return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
 		}
 		fmt.Printf("  Merged.\n")
 

@@ -23,17 +23,17 @@ func Create(ctx context.Context, taskID, repoRoot, project string) (string, erro
 
 	// Verify repoRoot is a git repo
 	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--git-dir").CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s is not a git repository: %s\n%s", repoRoot, err, string(out))
+		return "", fmt.Errorf("%s is not a git repository: %w\n%s", repoRoot, err, string(out))
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %v", err)
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
 	worktreeBase := filepath.Join(home, "worktrees", project)
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
-		return "", fmt.Errorf("create worktree base dir %s: %v", worktreeBase, err)
+		return "", fmt.Errorf("create worktree base dir %s: %w", worktreeBase, err)
 	}
 
 	worktreePath := filepath.Join(worktreeBase, taskID)
@@ -64,14 +64,14 @@ func Create(ctx context.Context, taskID, repoRoot, project string) (string, erro
 	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "branch", branch, base).CombinedOutput()
 	if err != nil {
 		if !strings.Contains(string(out), "already exists") {
-			return "", fmt.Errorf("create branch %s in %s from %s: %s\n%s", branch, repoRoot, base, err, string(out))
+			return "", fmt.Errorf("create branch %s in %s from %s: %w\n%s", branch, repoRoot, base, err, string(out))
 		}
 	}
 
 	// Create worktree
 	out, err = exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "add", worktreePath, branch).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("create worktree at %s from %s: %s\n%s", worktreePath, repoRoot, err, string(out))
+		return "", fmt.Errorf("create worktree at %s from %s: %w\n%s", worktreePath, repoRoot, err, string(out))
 	}
 
 	// Verify the worktree is valid — it should have files from the repo
@@ -109,13 +109,13 @@ func Verify(ctx context.Context, worktreePath string) error {
 	// Check we can run git commands in it
 	out, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "--show-toplevel").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git commands fail in worktree: %s\n%s", err, string(out))
+		return fmt.Errorf("git commands fail in worktree: %w\n%s", err, string(out))
 	}
 
 	// Check it has actual files (not just .git and .cobuild)
 	entries, err := os.ReadDir(worktreePath)
 	if err != nil {
-		return fmt.Errorf("cannot read worktree directory: %v", err)
+		return fmt.Errorf("cannot read worktree directory: %w", err)
 	}
 	realFiles := 0
 	for _, e := range entries {
@@ -165,7 +165,7 @@ func cleanupStale(ctx context.Context, repoRoot, worktreePath, branch string) er
 		// If directory still exists, remove it
 		if _, err := os.Stat(worktreePath); err == nil {
 			if err := os.RemoveAll(worktreePath); err != nil {
-				return fmt.Errorf("cannot remove stale directory %s: %v", worktreePath, err)
+				return fmt.Errorf("cannot remove stale directory %s: %w", worktreePath, err)
 			}
 		}
 	}

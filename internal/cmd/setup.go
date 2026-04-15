@@ -72,7 +72,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("could not determine home directory: %v", err)
+		return fmt.Errorf("could not determine home directory: %w", err)
 	}
 	reposPath := filepath.Join(homeDir, ".cobuild", "repos.yaml")
 
@@ -87,7 +87,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 
 	reposData, err := yaml.Marshal(reg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal repos registry: %v", err)
+		return fmt.Errorf("failed to marshal repos registry: %w", err)
 	}
 
 	if dryRun {
@@ -102,10 +102,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
-		return fmt.Errorf("failed to create %s: %v", pipelineDir, err)
+		return fmt.Errorf("failed to create %s: %w", pipelineDir, err)
 	}
 	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %v", pipelinePath, err)
+		return fmt.Errorf("failed to write %s: %w", pipelinePath, err)
 	}
 
 	// Write .cobuild.yaml only if it doesn't already exist OR --force was
@@ -113,12 +113,12 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	// already; don't stomp it without an explicit opt-in.
 	if _, err := os.Stat(projectYAMLPath); os.IsNotExist(err) || force {
 		if err := os.WriteFile(projectYAMLPath, []byte(projectYAMLContent), 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %v", projectYAMLPath, err)
+			return fmt.Errorf("failed to write %s: %w", projectYAMLPath, err)
 		}
 	}
 
 	if err := config.SaveRepoRegistry(reg); err != nil {
-		return fmt.Errorf("failed to save repo registry: %v", err)
+		return fmt.Errorf("failed to save repo registry: %w", err)
 	}
 
 	fmt.Printf("Pipeline configured for %s\n", project)

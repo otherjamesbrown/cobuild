@@ -112,7 +112,7 @@ func CanMergeCleanly(ctx context.Context, repoRoot, branch string) (bool, error)
 		if strings.Contains(string(out), "CONFLICT") {
 			return false, nil
 		}
-		return false, fmt.Errorf("merge test failed: %s\n%s", err, string(out))
+		return false, fmt.Errorf("merge test failed: %w\n%s", err, string(out))
 	}
 	return true, nil
 }
@@ -120,7 +120,7 @@ func CanMergeCleanly(ctx context.Context, repoRoot, branch string) (bool, error)
 func getChangedFiles(ctx context.Context, repoRoot, branch string) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--name-only", "main.."+branch).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("git diff --name-only main..%s: %s\n%s", branch, err, string(out))
+		return nil, fmt.Errorf("git diff --name-only main..%s: %w\n%s", branch, err, string(out))
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var files []string

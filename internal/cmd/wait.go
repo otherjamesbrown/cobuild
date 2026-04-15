@@ -45,7 +45,7 @@ Exit codes:
 		if timeoutStr != "" {
 			parsed, err := time.ParseDuration(timeoutStr)
 			if err != nil {
-				return fmt.Errorf("invalid timeout %q: %v", timeoutStr, err)
+				return fmt.Errorf("invalid timeout %q: %w", timeoutStr, err)
 			}
 			timeout = parsed
 		}

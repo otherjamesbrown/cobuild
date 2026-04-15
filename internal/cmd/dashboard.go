@@ -40,7 +40,7 @@ Use --project to filter to one project. Use --json for structured output.`,
 
 		conn, err := cliutil.ConnectPostgres(ctx, storeDSN)
 		if err != nil {
-			return fmt.Errorf("connect: %v", err)
+			return fmt.Errorf("connect: %w", err)
 		}
 		defer conn.Close(ctx)
 

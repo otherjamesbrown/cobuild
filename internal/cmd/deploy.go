@@ -72,7 +72,7 @@ Only deploys services whose trigger_paths match the changed files.`,
 
 		pCfg, cfgErr := config.LoadConfig(repoRoot)
 		if cfgErr != nil {
-			return fmt.Errorf("load pipeline config from %s: %v", repoRoot, cfgErr)
+			return fmt.Errorf("load pipeline config from %s: %w", repoRoot, cfgErr)
 		}
 		if pCfg == nil {
 			return fmt.Errorf("no pipeline config found in %s", repoRoot)
@@ -92,7 +92,7 @@ Only deploys services whose trigger_paths match the changed files.`,
 				fmt.Printf("Running pre-deploy: %s\n", pCfg.Deploy.PreDeploy)
 				out, err := exec.CommandContext(ctx, "bash", "-c", pCfg.Deploy.PreDeploy).CombinedOutput()
 				if err != nil {
-					return fmt.Errorf("pre-deploy failed: %s\n%s", err, string(out))
+					return fmt.Errorf("pre-deploy failed: %w\n%s", err, string(out))
 				}
 				fmt.Printf("Pre-deploy complete.\n\n")
 			}

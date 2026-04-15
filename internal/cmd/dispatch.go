@@ -145,7 +145,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				var wtErr error
 				worktreePath, wtErr = worktree.Create(ctx, taskID, repoRootForWT, taskProject)
 				if wtErr != nil {
-					return fmt.Errorf("failed to create worktree: %v", wtErr)
+					return fmt.Errorf("failed to create worktree: %w", wtErr)
 				}
 				fmt.Printf("Worktree created: %s\n", worktreePath)
 				if err := conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath); err != nil {
@@ -199,7 +199,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		rtName := pCfg.ResolveRuntime(runtimeFlag, runtimeMeta)
 		rt, err := cobuildruntime.Get(rtName)
 		if err != nil {
-			return fmt.Errorf("invalid runtime %q: %v", rtName, err)
+			return fmt.Errorf("invalid runtime %q: %w", rtName, err)
 		}
 		fmt.Printf("Runtime: %s\n", rt.Name())
 
@@ -389,11 +389,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// Write prompt to temp file
 		promptFile, err := os.CreateTemp("", fmt.Sprintf("cobuild-dispatch-%s-*.md", taskID))
 		if err != nil {
-			return fmt.Errorf("failed to create prompt file: %v", err)
+			return fmt.Errorf("failed to create prompt file: %w", err)
 		}
 		if _, err := promptFile.WriteString(prompt); err != nil {
 			promptFile.Close()
-			return fmt.Errorf("failed to write prompt file: %v", err)
+			return fmt.Errorf("failed to write prompt file: %w", err)
 		}
 		promptFile.Close()
 		promptPath := promptFile.Name()
@@ -404,7 +404,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// Ensure tmux session exists, create if not
 		if err := tmuxRun(ctx, pCfg, "has-session", "-t", tmuxSession); err != nil {
 			if createErr := tmuxRun(ctx, pCfg, "new-session", "-d", "-s", tmuxSession); createErr != nil {
-				return fmt.Errorf("failed to create tmux session %q: %v", tmuxSession, createErr)
+				return fmt.Errorf("failed to create tmux session %q: %w", tmuxSession, createErr)
 			}
 		}
 		// Resolve the model for the current phase, runtime-aware. Phase/gate
@@ -472,7 +472,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 			Phase:        currentPhase,
 		})
 		if err != nil {
-			return fmt.Errorf("build runner script: %v", err)
+			return fmt.Errorf("build runner script: %w", err)
 		}
 
 		// Write the script to a temp file; the script self-deletes via $0
@@ -480,7 +480,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// for cleanup here.
 		scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("cobuild-run-%s.sh", taskID))
 		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0755); err != nil {
-			return fmt.Errorf("failed to write dispatch script: %v", err)
+			return fmt.Errorf("failed to write dispatch script: %w", err)
 		}
 		tmuxArgs := []string{"new-window", "-n", tmuxWindow, "-t", tmuxSession, "bash", scriptPath}
 
@@ -506,7 +506,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// Set task status
 		if conn != nil {
 			if err := conn.UpdateStatus(ctx, taskID, "in_progress"); err != nil {
-				return fmt.Errorf("failed to set status to in_progress: %v", err)
+				return fmt.Errorf("failed to set status to in_progress: %w", err)
 			}
 		}
 		syncPipelineTaskStatus(ctx, taskID, "in_progress")
@@ -560,7 +560,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to close cancelled session %s for %s: %v\n", sessionID, taskID, endErr)
 				}
 			}
-			return fmt.Errorf("failed to spawn tmux window: %s\n%s", err, string(tmuxOut))
+			return fmt.Errorf("failed to spawn tmux window: %w\n%s", err, string(tmuxOut))
 		}
 
 		// If anything after window creation fails, the window would be left
@@ -1117,7 +1117,7 @@ func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, ta
 	if targetRepo != "" {
 		repoRoot, err := config.RepoForProject(targetRepo)
 		if err != nil {
-			return dispatchRepoTarget{}, fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %v", targetRepo, err)
+			return dispatchRepoTarget{}, fmt.Errorf("task specifies repo %q but it's not in the registry (~/.cobuild/repos.yaml): %w", targetRepo, err)
 		}
 		return dispatchRepoTarget{
 			Root:   repoRoot,

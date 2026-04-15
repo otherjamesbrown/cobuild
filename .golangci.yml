@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errorlint
+  settings:
+    errorlint:
+      errorf: true
+      asserts: false
+      comparison: false
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errorlint
