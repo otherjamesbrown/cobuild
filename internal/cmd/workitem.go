@@ -247,6 +247,15 @@ var wiCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if metadataString(metadata, domain.MetaRepo) == "" {
+			if autoRepo := inferSingleRepoForProject(projectName); autoRepo != "" {
+				if metadata == nil {
+					metadata = map[string]any{}
+				}
+				metadata[domain.MetaRepo] = autoRepo
+				fmt.Fprintf(cmd.ErrOrStderr(), "Auto-set repo=%s from single-repo project %s.\n", autoRepo, projectName)
+			}
+		}
 
 		id, err := conn.Create(ctx, connector.CreateRequest{
 			Title:    title,
