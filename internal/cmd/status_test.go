@@ -33,6 +33,25 @@ func TestStatusHealthFor(t *testing.T) {
 	}
 }
 
+func TestStatusRebaseFor(t *testing.T) {
+	tests := []struct {
+		name      string
+		conflicts int
+		want      string
+	}{
+		{"none", 0, "-"},
+		{"one conflict", 1, "CONFLICT"},
+		{"many conflicts", 3, "CONFLICT"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statusRebaseFor(tc.conflicts); got != tc.want {
+				t.Fatalf("statusRebaseFor(%d) = %q, want %q", tc.conflicts, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStatusFilterAndSortRunsActiveFilter(t *testing.T) {
 	now := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
 	runs := []store.PipelineRunStatus{

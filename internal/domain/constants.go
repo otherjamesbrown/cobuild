@@ -68,6 +68,16 @@ const (
 	MetaWorktreePath = "worktree_path"
 )
 
+// Pipeline task rebase statuses stored in pipeline_tasks.rebase_status.
+const (
+	// RebaseStatusNone means no sibling rebase outcome has been recorded.
+	RebaseStatusNone = "none"
+	// RebaseStatusRebased means the sibling branch rebased and pushed cleanly.
+	RebaseStatusRebased = "rebased"
+	// RebaseStatusConflict means the sibling branch hit a rebase conflict.
+	RebaseStatusConflict = "conflict"
+)
+
 // Work-item types used by the connector layer.
 const (
 	// WorkItemTypeBug is the bug shard type.

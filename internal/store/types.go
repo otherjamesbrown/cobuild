@@ -33,14 +33,15 @@ type PipelineGateRecord struct {
 
 // PipelineTaskRecord represents a row in the pipeline_tasks table.
 type PipelineTaskRecord struct {
-	ID          string    `json:"id"`
-	PipelineID  string    `json:"pipeline_id"`
-	TaskShardID string    `json:"task_shard_id"`
-	DesignID    string    `json:"design_id"`
-	Wave        *int      `json:"wave,omitempty"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	PipelineID   string    `json:"pipeline_id"`
+	TaskShardID  string    `json:"task_shard_id"`
+	DesignID     string    `json:"design_id"`
+	Wave         *int      `json:"wave,omitempty"`
+	Status       string    `json:"status"`
+	RebaseStatus string    `json:"rebase_status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // PipelineGateInput captures the fields needed to record a gate verdict.
@@ -59,15 +60,16 @@ type PipelineGateInput struct {
 
 // PipelineRunStatus is an enriched view of a pipeline run for the status command.
 type PipelineRunStatus struct {
-	DesignID      string    `json:"design_id"`
-	Project       string    `json:"project"`
-	Phase         string    `json:"phase"`
-	Status        string    `json:"status"`
-	TaskTotal     int       `json:"task_total"`
-	TaskDone      int       `json:"task_done"`
-	TaskBlocked   int       `json:"task_blocked"`
-	LastProgress  time.Time `json:"last_progress"`
-	LastSessionAt time.Time `json:"last_session_at,omitempty"`
+	DesignID        string    `json:"design_id"`
+	Project         string    `json:"project"`
+	Phase           string    `json:"phase"`
+	Status          string    `json:"status"`
+	TaskTotal       int       `json:"task_total"`
+	TaskDone        int       `json:"task_done"`
+	TaskBlocked     int       `json:"task_blocked"`
+	RebaseConflicts int       `json:"rebase_conflicts"`
+	LastProgress    time.Time `json:"last_progress"`
+	LastSessionAt   time.Time `json:"last_session_at,omitempty"`
 }
 
 // SessionInput captures the fields needed to start a session record.

@@ -891,17 +891,39 @@ func (f *fakeStore) ListTasks(ctx context.Context, pipelineID string) ([]store.P
 }
 
 func (f *fakeStore) ListTasksByDesign(ctx context.Context, designID string) ([]store.PipelineTaskRecord, error) {
-	return nil, nil
+	var out []store.PipelineTaskRecord
+	for _, task := range f.tasks {
+		if task.DesignID == designID {
+			out = append(out, task)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) GetTaskByShardID(ctx context.Context, taskShardID string) (*store.PipelineTaskRecord, error) {
-	return nil, nil
+	for i := range f.tasks {
+		if f.tasks[i].TaskShardID == taskShardID {
+			task := f.tasks[i]
+			return &task, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }
 
 func (f *fakeStore) UpdateTaskStatus(ctx context.Context, taskShardID, status string) error {
 	for i := range f.tasks {
 		if f.tasks[i].TaskShardID == taskShardID {
 			f.tasks[i].Status = status
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) UpdateTaskRebaseStatus(ctx context.Context, taskShardID, rebaseStatus string) error {
+	for i := range f.tasks {
+		if f.tasks[i].TaskShardID == taskShardID {
+			f.tasks[i].RebaseStatus = rebaseStatus
 			return nil
 		}
 	}

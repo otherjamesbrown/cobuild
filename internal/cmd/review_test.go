@@ -262,6 +262,9 @@ func (f *reviewFakeStore) GetTaskByShardID(context.Context, string) (*store.Pipe
 	return nil, nil
 }
 func (f *reviewFakeStore) UpdateTaskStatus(context.Context, string, string) error { return nil }
+func (f *reviewFakeStore) UpdateTaskRebaseStatus(context.Context, string, string) error {
+	return nil
+}
 func (f *reviewFakeStore) CreateSession(context.Context, store.SessionInput) (*store.SessionRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
