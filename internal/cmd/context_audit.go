@@ -64,28 +64,14 @@ func printAuditText(w io.Writer, r *contextaudit.Report) {
 			flags = joinFlags(e.Flags)
 		}
 		fmt.Fprintf(w, "%-50s %10s  %s\n", e.RelPath, contextaudit.FormatKB(e.Bytes), flags)
+		if e.Annotation != nil {
+			printAuditAnnotation(w, e.Annotation)
+		}
 	}
 
 	fmt.Fprintf(w, "\nTotal on-disk layer bytes: %s across %d files\n",
 		contextaudit.FormatKB(r.TotalBytes), len(r.Entries))
 	fmt.Fprintf(w, "Flagged: %d file(s)\n", r.FlaggedCount)
-
-	// Recommendations for flagged entries.
-	first := true
-	for _, e := range r.Entries {
-		rec := contextaudit.Recommendation(e)
-		if rec == "" {
-			continue
-		}
-		if first {
-			fmt.Fprintln(w, "\nRecommendations:")
-			first = false
-		}
-		fmt.Fprintf(w, "  - %s: %s\n", e.RelPath, rec)
-	}
-	if !first {
-		fmt.Fprintln(w, "\nSee docs/guides/context-optimization.md for more guidance.")
-	}
 
 	// Assembled-total warning. On-disk total is a lower bound for the
 	// assembled context, since config-driven layers (skills-dir, work-item
@@ -97,6 +83,30 @@ func printAuditText(w io.Writer, r *contextaudit.Report) {
 	} else if r.TotalBytes >= contextaudit.AssembledWarnBytes {
 		fmt.Fprintf(w, "\nOn-disk layers exceed %s; the assembled total (what the agent sees) will be higher.\n",
 			contextaudit.FormatKB(contextaudit.AssembledWarnBytes))
+	}
+}
+
+func printAuditAnnotation(w io.Writer, a *contextaudit.Annotation) {
+	printAuditField(w, "Owner:", a.Owner)
+	printAuditField(w, "Why large:", a.WhyLarge)
+	printAuditListField(w, "Try here:", a.TryHere)
+	printAuditField(w, "File here:", a.FileHere)
+}
+
+func printAuditField(w io.Writer, label, value string) {
+	if value == "" {
+		return
+	}
+	fmt.Fprintf(w, "  %-10s %s\n", label, value)
+}
+
+func printAuditListField(w io.Writer, label string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "  %-10s %s\n", label, values[0])
+	for _, value := range values[1:] {
+		fmt.Fprintf(w, "  %-10s %s\n", "", value)
 	}
 }
 

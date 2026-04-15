@@ -102,6 +102,51 @@ func TestScanProject_RespectsPipelineYAMLSkipDirs(t *testing.T) {
 	}
 }
 
+func TestLoadProjectScanYAML(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".cobuild"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".cobuild", "scan.yaml"), []byte("skip:\n  - tmp/\nskip_dirs:\n  - data/raw\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadProjectScanYAML(dir)
+	for _, want := range []string{"tmp", "data/raw"} {
+		if !containsScanString(got, want) {
+			t.Fatalf("scan.yaml entries = %v, want %q", got, want)
+		}
+	}
+}
+
+func TestScanProject_RespectsScanYAMLSkipDirsAndCLIOverrides(t *testing.T) {
+	dir := t.TempDir()
+	must := func(path, content string) {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	must("src/a.go", "package src")
+	must("tmp/generated.txt", "temp")
+	must("reports/archive.md", "old")
+	must(".cobuild/scan.yaml", "skip_dirs:\n  - tmp\n")
+
+	entries, err := scanProject(dir, "reports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Path, "tmp") || strings.HasPrefix(e.Path, "reports") {
+			t.Fatalf("scan skip sources not honored; saw %s", e.Path)
+		}
+	}
+}
+
 func TestScanProject_DefaultSkipsPythonCaches(t *testing.T) {
 	dir := t.TempDir()
 	must := func(path string) {
@@ -225,4 +270,13 @@ func TestFormatAnatomy_CollapsesLargeDirs(t *testing.T) {
 	if strings.Contains(verbose, "summarized") {
 		t.Fatalf("--verbose should not collapse, got:\n%s", verbose)
 	}
+}
+
+func containsScanString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
