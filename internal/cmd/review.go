@@ -27,13 +27,7 @@ const directReviewPassBody = "Direct-mode task, no PR review required"
 
 var (
 	reviewWarningWriter io.Writer = os.Stderr
-	reviewCommandOutput           = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).Output()
-	}
-	reviewCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
-	}
-	reviewConfigLoader = func() *config.Config {
+	reviewConfigLoader            = func() *config.Config {
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
 		if pCfg == nil {
@@ -113,7 +107,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// phase if appropriate. Previously this branch silently returned
 		// nil, which left cp-64af0f wedged with status=needs-review even
 		// though PR #3 was already merged on GitHub.
-		stateOut, err := reviewCommandOutput(ctx, "gh", "pr", "view", prURL,
+		stateOut, err := execCommandOutput(ctx, "gh", "pr", "view", prURL,
 			"--json", "state", "--jq", ".state")
 		if err == nil {
 			// Validate against the known GitHub PR state set rather than
@@ -327,7 +321,7 @@ type ciCheckResult struct {
 }
 
 func getGeminiReviews(ctx context.Context, repo string, prNumber int) ([]ghReview, error) {
-	out, err := reviewCommandOutput(ctx, "gh", "api",
+	out, err := execCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, prNumber))
 	if err != nil {
 		return nil, err
@@ -361,7 +355,7 @@ type ghComment struct {
 var priorityRe = regexp.MustCompile(`(high|medium|low|critical)-priority\.svg`)
 
 func getGeminiFindings(ctx context.Context, repo string, prNumber int) []reviewFinding {
-	out, err := reviewCommandOutput(ctx, "gh", "api",
+	out, err := execCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/pulls/%d/comments", repo, prNumber))
 	if err != nil {
 		return nil
@@ -395,7 +389,7 @@ func getGeminiFindings(ctx context.Context, repo string, prNumber int) []reviewF
 
 func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	// Get check runs via API (gh pr checks doesn't support all fields)
-	headOut, err := reviewCommandOutput(ctx, "gh", "pr", "view",
+	headOut, err := execCommandOutput(ctx, "gh", "pr", "view",
 		strconv.Itoa(prNumber), "--repo", repo,
 		"--json", "headRefOid", "--jq", ".headRefOid")
 	if err != nil {
@@ -403,7 +397,7 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	}
 	commitSHA := strings.TrimSpace(string(headOut))
 
-	out, err := reviewCommandOutput(ctx, "gh", "api",
+	out, err := execCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/commits/%s/check-runs", repo, commitSHA),
 		"--jq", ".check_runs")
 	if err != nil {
@@ -444,7 +438,7 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	}
 
 	// Compare against main to find NEW failures only
-	mainOut, err := reviewCommandOutput(ctx, "gh", "api",
+	mainOut, err := execCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/actions/runs?branch=main&status=completed&per_page=1", repo),
 		"--jq", ".workflow_runs[0].id")
 
@@ -452,7 +446,7 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	if err == nil {
 		runID := strings.TrimSpace(string(mainOut))
 		if runID != "" {
-			jobsOut, err := reviewCommandOutput(ctx, "gh", "api",
+			jobsOut, err := execCommandOutput(ctx, "gh", "api",
 				fmt.Sprintf("repos/%s/actions/runs/%s/jobs", repo, runID),
 				"--jq", `.jobs[] | .name + ":" + .conclusion`)
 			if err == nil {
@@ -671,7 +665,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	}
 
 	fmt.Printf("Merging %s...\n", prURL)
-	mergeOut, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
+	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
 		"--squash", "--delete-branch")
 	if err != nil {
 		recordMergeFailure(ctx, taskID, prURL, string(mergeOut))
@@ -713,7 +707,7 @@ func maybeRunKBSync(ctx context.Context, taskID string) {
 	if cfg.KBSync.RootArticle != "" {
 		args = append(args, "--root", cfg.KBSync.RootArticle)
 	}
-	out, err := reviewCommandCombinedOutput(ctx, "cobuild", args...)
+	out, err := execCommandCombinedOutput(ctx, "cobuild", args...)
 	if err != nil {
 		fmt.Printf("  kb-sync warning: %v\n%s\n", err, string(out))
 		return
@@ -867,7 +861,7 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 
 	// Re-dispatch
 	fmt.Printf("Re-dispatching %s for fixes...\n", taskID)
-	out, err := reviewCommandCombinedOutput(ctx, "cobuild", "dispatch", taskID)
+	out, err := execCommandCombinedOutput(ctx, "cobuild", "dispatch", taskID)
 	if err != nil {
 		return fmt.Errorf("re-dispatch failed: %w\n%s", err, string(out))
 	}
@@ -912,7 +906,7 @@ func truncate(s string, n int) string {
 }
 
 func getPRAge(ctx context.Context, prURL string) time.Duration {
-	out, err := reviewCommandOutput(ctx, "gh", "pr", "view", prURL,
+	out, err := execCommandOutput(ctx, "gh", "pr", "view", prURL,
 		"--json", "createdAt", "--jq", ".createdAt")
 	if err != nil {
 		return 0
@@ -991,7 +985,7 @@ func runExternalReview(ctx context.Context, repo string, prNumber int, taskID, p
 }
 
 func buildReviewInput(ctx context.Context, taskID string, task *connector.WorkItem, repo string, prNumber int) (llmreview.ReviewInput, error) {
-	diffOut, err := reviewCommandOutput(ctx, "gh", "pr", "diff", strconv.Itoa(prNumber), "--repo", repo)
+	diffOut, err := execCommandOutput(ctx, "gh", "pr", "diff", strconv.Itoa(prNumber), "--repo", repo)
 	if err != nil {
 		return llmreview.ReviewInput{}, fmt.Errorf("gh pr diff %d: %w", prNumber, err)
 	}
@@ -1184,7 +1178,7 @@ func postReviewComment(ctx context.Context, prURL string, result *llmreview.Revi
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-	out, err := reviewCommandCombinedOutput(ctx, "gh", "pr", "comment", prURL, "--body", body)
+	out, err := execCommandCombinedOutput(ctx, "gh", "pr", "comment", prURL, "--body", body)
 	if err != nil {
 		return fmt.Errorf("gh pr comment failed: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
@@ -1215,7 +1209,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 	}
 
 	// Check current mergeable state
-	out, err := reviewCommandOutput(ctx, "gh", "api",
+	out, err := execCommandOutput(ctx, "gh", "api",
 		fmt.Sprintf("repos/%s/pulls/%d", repo, prNumber),
 		"--jq", ".mergeable_state + \"|\" + .head.ref")
 	if err != nil {
@@ -1243,7 +1237,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 	fmt.Printf("PR #%d is %s — attempting rebase onto origin/main...\n", prNumber, state)
 
 	// Fetch latest main
-	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "fetch", "origin", "main"); err != nil {
+	if out, err := execCommandCombinedOutput(ctx, "git", "-C", repoRoot, "fetch", "origin", "main"); err != nil {
 		return fmt.Errorf("rebase failed at fetch: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
@@ -1253,17 +1247,17 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 		return fmt.Errorf("rebase failed creating temp worktree: %w", err)
 	}
 	defer os.RemoveAll(tmpWT)
-	defer reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", tmpWT)
+	defer execCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "remove", "--force", tmpWT)
 
-	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "add", tmpWT, branch); err != nil {
+	if out, err := execCommandCombinedOutput(ctx, "git", "-C", repoRoot, "worktree", "add", tmpWT, branch); err != nil {
 		return fmt.Errorf("rebase failed creating worktree: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
 	// Attempt rebase
-	rebaseOut, rebaseErr := reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "origin/main")
+	rebaseOut, rebaseErr := execCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "origin/main")
 	if rebaseErr != nil {
 		// Conflict — abort and return a terminal error
-		reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "--abort")
+		execCommandCombinedOutput(ctx, "git", "-C", tmpWT, "rebase", "--abort")
 		return fmt.Errorf(
 			"PR #%d has merge conflicts that need human resolution:\n%s\nResolve manually: gh pr checkout %d && git rebase origin/main",
 			prNumber, strings.TrimSpace(string(rebaseOut)), prNumber,
@@ -1271,7 +1265,7 @@ func tryAutoRebaseBeforeMerge(ctx context.Context, taskID, prURL string) error {
 	}
 
 	// Force-push the rebased branch
-	if out, err := reviewCommandCombinedOutput(ctx, "git", "-C", tmpWT, "push", "--force-with-lease"); err != nil {
+	if out, err := execCommandCombinedOutput(ctx, "git", "-C", tmpWT, "push", "--force-with-lease"); err != nil {
 		return fmt.Errorf("rebase succeeded but push failed: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	fmt.Printf("  Rebased PR #%d onto origin/main.\n", prNumber)
