@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
@@ -10,6 +12,8 @@ import (
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
+
+var phaseTransitionWarningWriter io.Writer = os.Stderr
 
 // advancePipelinePhase is the single entry point for all normal phase
 // transitions. It resolves the next phase from the workflow config and
@@ -52,7 +56,19 @@ func advancePipelinePhase(
 	if err := st.AdvancePhase(ctx, designID, expectedCurrentPhase, nextPhase); err != nil {
 		return "", err
 	}
+	if nextPhase == domain.PhaseDone {
+		autoCloseDonePhaseWorkItem(ctx, cn, designID)
+	}
 	return nextPhase, nil
+}
+
+func autoCloseDonePhaseWorkItem(ctx context.Context, cn connector.Connector, workItemID string) {
+	if cn == nil {
+		return
+	}
+	if err := cn.UpdateStatus(ctx, workItemID, "closed"); err != nil {
+		fmt.Fprintf(phaseTransitionWarningWriter, "Warning: failed to auto-close %s: %v\n", workItemID, err)
+	}
 }
 
 // assertDesignHasChildTasks blocks the advance-to-done for a design with

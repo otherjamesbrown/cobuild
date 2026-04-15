@@ -454,8 +454,11 @@ func TestProcessReviewHandlesDirectNeedsReviewTaskWithoutPR(t *testing.T) {
 	if len(fc.created) != 1 || fc.created[0].Type != "review" {
 		t.Fatalf("created review items = %d, want 1 synthetic review shard", len(fc.created))
 	}
-	if len(fc.statusUpdates) != 1 || fc.statusUpdates[0].id != "cb-task" || fc.statusUpdates[0].status != "closed" {
-		t.Fatalf("status updates = %+v, want cb-task -> closed", fc.statusUpdates)
+	if len(fc.statusUpdates) != 3 ||
+		fc.statusUpdates[0].id != "cb-task" || fc.statusUpdates[0].status != "closed" ||
+		fc.statusUpdates[1].id != "cb-task" || fc.statusUpdates[1].status != "closed" ||
+		fc.statusUpdates[2].id != "cb-design" || fc.statusUpdates[2].status != "closed" {
+		t.Fatalf("status updates = %+v, want cb-task -> closed twice then cb-design -> closed", fc.statusUpdates)
 	}
 	foundDesignDone := false
 	for _, upd := range fs.updatePhases {
@@ -524,8 +527,8 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 	if len(fc.created) != 0 {
 		t.Fatalf("created %d review items, want 0 for idempotent closed task", len(fc.created))
 	}
-	if len(fc.statusUpdates) != 0 {
-		t.Fatalf("status updates = %+v, want none", fc.statusUpdates)
+	if len(fc.statusUpdates) != 1 || fc.statusUpdates[0].id != "cb-design" || fc.statusUpdates[0].status != "closed" {
+		t.Fatalf("status updates = %+v, want cb-design -> closed", fc.statusUpdates)
 	}
 	foundDesignDone := false
 	for _, upd := range fs.updatePhases {
