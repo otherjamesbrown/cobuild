@@ -80,6 +80,7 @@ type Config struct {
 	Test            []string                  `yaml:"test,omitempty"`
 	CompletionSteps []string                  `yaml:"completion_steps,omitempty"`
 	Agents          map[string]AgentCfg       `yaml:"agents,omitempty"`
+	Cleanup         CleanupCfg                `yaml:"cleanup,omitempty"`
 	Dispatch        DispatchCfg               `yaml:"dispatch,omitempty"`
 	Monitoring      MonitoringCfg             `yaml:"monitoring,omitempty"`
 	Review          ReviewCfg                 `yaml:"review,omitempty"`
@@ -145,6 +146,11 @@ type DispatchCfg struct {
 	// Legacy / back-compat fields ----------------------------------------
 	ClaudeFlags  string `yaml:"claude_flags,omitempty"`
 	DefaultModel string `yaml:"default_model,omitempty"`
+}
+
+// CleanupCfg controls best-effort local resource cleanup after merges.
+type CleanupCfg struct {
+	AutoOnMerge *bool `yaml:"auto_on_merge,omitempty"`
 }
 
 // RuntimeCfg holds per-runtime dispatch settings. Keyed by runtime name
@@ -406,6 +412,9 @@ func ValidatePipelinePhase(phase string) error {
 func DefaultConfig() *Config {
 	defaultTrue := true
 	return &Config{
+		Cleanup: CleanupCfg{
+			AutoOnMerge: boolPtr(true),
+		},
 		Dispatch: DispatchCfg{
 			// Default to 2 concurrent dispatches. Codex's local app-server
 			// can't sustain more than 2 simultaneous `codex exec` sessions
@@ -529,16 +538,16 @@ func LoadConfig(repoRoot string) (*Config, error) {
 // keep this list in sync when adding phases upstream.
 func (cfg *Config) validateReferentialIntegrity() error {
 	builtinPhases := map[string]struct{}{
-		"design":       {},
-		"decompose":    {},
-		"investigate":  {},
-		"fix":          {},
-		"implement":    {},
-		"review":       {},
-		"kb-sync":      {},
-		"monitoring":   {},
-		"done":         {},
-		"deploy":       {},
+		"design":        {},
+		"decompose":     {},
+		"investigate":   {},
+		"fix":           {},
+		"implement":     {},
+		"review":        {},
+		"kb-sync":       {},
+		"monitoring":    {},
+		"done":          {},
+		"deploy":        {},
 		"retrospective": {},
 	}
 	known := func(phase string) bool {
@@ -591,6 +600,7 @@ func MergeConfig(base, override *Config) *Config {
 	out.Test = copyStrings(base.Test)
 	out.CompletionSteps = copyStrings(base.CompletionSteps)
 	out.Agents = copyAgents(base.Agents)
+	out.Cleanup = base.Cleanup
 	out.Dispatch = base.Dispatch
 	out.Monitoring = base.Monitoring
 	out.Review = base.Review
@@ -639,6 +649,9 @@ func MergeConfig(base, override *Config) *Config {
 
 	if override.Dispatch.MaxConcurrent != 0 {
 		out.Dispatch.MaxConcurrent = override.Dispatch.MaxConcurrent
+	}
+	if override.Cleanup.AutoOnMerge != nil {
+		out.Cleanup.AutoOnMerge = boolPtr(*override.Cleanup.AutoOnMerge)
 	}
 	if override.Dispatch.WaveStrategy != "" {
 		out.Dispatch.WaveStrategy = normalizeWaveStrategy(override.Dispatch.WaveStrategy)
@@ -836,6 +849,15 @@ func normalizeReviewMode(value string) string {
 	default:
 		return "dispatched"
 	}
+}
+
+// AutoOnMergeEnabled returns whether successful merges should trigger
+// best-effort local cleanup of branches, worktrees, and tmux windows.
+func (c *Config) AutoOnMergeEnabled() bool {
+	if c == nil || c.Cleanup.AutoOnMerge == nil {
+		return true
+	}
+	return *c.Cleanup.AutoOnMerge
 }
 
 // EffectiveMode returns the configured review mode, defaulting to dispatched.
