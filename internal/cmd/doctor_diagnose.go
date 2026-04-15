@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/pipeline/livestate"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -159,7 +160,7 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, errW io.Writer, shardID
 	if conn != nil && run != nil && tasksLoaded {
 		prCount := 0
 		for _, t := range tasks {
-			if pr, _ := conn.GetMetadata(ctx, t.TaskShardID, "pr_url"); pr != "" {
+			if pr, _ := conn.GetMetadata(ctx, t.TaskShardID, domain.MetaPRURL); pr != "" {
 				prCount++
 			}
 		}

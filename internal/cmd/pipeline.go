@@ -456,7 +456,7 @@ var decomposeCmd = &cobra.Command{
 					return err
 				}
 			}
-			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, "decomposition-review", verdict, content, 0, pCfg)
+			result, err = RecordGateVerdict(ctx, conn, cbStore, designID, domain.GateDecompositionReview, verdict, content, 0, pCfg)
 		} else {
 			return fmt.Errorf("no store configured")
 		}
