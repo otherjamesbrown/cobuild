@@ -35,14 +35,19 @@ import (
 const dispatchContextWarnBytes = 30 * 1024
 
 var dispatchCmd = &cobra.Command{
-	Use:   "dispatch <task-id>",
-	Short: "Dispatch a task to an agent via tmux",
+	Use:   "dispatch <shard-id>",
+	Short: "Dispatch a shard to an agent via tmux",
 	Long: `Spawns an agent session (Claude Code or OpenAI Codex) in a tmux window
 with full context from the task and its parent design shard. The runtime
 is chosen by --runtime flag > task metadata "dispatch_runtime" > pipeline
-config "dispatch.default_runtime" > "claude-code".`,
+config "dispatch.default_runtime" > "claude-code".
+
+For designs in the implement phase, the default path is wave-based child-task
+dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 	Args: cobra.ExactArgs(1),
 	Example: `  cobuild dispatch pf-abc123
+  cobuild dispatch cp-abc123
+  cobuild dispatch cp-abc123 --mono --force
   cobuild dispatch pf-abc123 --agent mycroft
   cobuild dispatch pf-abc123 --runtime codex
   cobuild dispatch pf-abc123 --dry-run`,
@@ -119,6 +124,71 @@ config "dispatch.default_runtime" > "claude-code".`,
 		}
 
 		taskProject := resolveTaskProject(task)
+		repoRoot, _ := config.RepoForProject(taskProject)
+		if repoRoot == "" {
+			repoRoot = findRepoRoot()
+		}
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
+		}
+
+		// Detect current phase from pipeline state; auto-create run if missing.
+		// Phase detection must happen before prompt assembly because gate phases
+		// put instructions BEFORE content (so Codex reads them first).
+		currentPhase := ""
+		if cbStore != nil {
+			run, err := cbStore.GetRun(ctx, task.ID)
+			if err == nil && run != nil {
+				currentPhase = run.CurrentPhase
+			} else if errors.Is(err, store.ErrNotFound) {
+				// No pipeline run — create one on the fly
+				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(task, pCfg)
+				if resolveErr != nil {
+					return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, resolveErr)
+				}
+				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, taskProject, bootstrap.StartPhase, "manual")
+				if createErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to auto-create pipeline run: %v\n", createErr)
+				} else {
+					currentPhase = newRun.CurrentPhase
+					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, bootstrap.Workflow, currentPhase)
+				}
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to look up pipeline run: %v\n", err)
+			}
+		}
+		// Fallback if store unavailable or run creation failed
+		if currentPhase == "" {
+			bootstrap, err := pipelinestate.ResolveBootstrap(task, pCfg)
+			if err != nil {
+				return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, err)
+			}
+			currentPhase = bootstrap.StartPhase
+		}
+
+		// Belt-and-braces: if the bug body already contains investigation content,
+		// downgrade from investigate to fix regardless of phase inference.
+		// Also persist the override to pipeline_runs so `cobuild status` reflects
+		// the phase the agent actually ran (cb-eab697).
+		if currentPhase == domain.PhaseInvestigate && hasInvestigationContent(task.Content) {
+			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
+			currentPhase = domain.PhaseFix
+			if cbStore != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, domain.PhaseInvestigate, domain.PhaseFix); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
+				}
+			}
+		}
+
+		handled, err := maybeDispatchDesignImplementPhase(ctx, cmd, task, currentPhase, dryRun)
+		if err != nil {
+			return err
+		}
+		if handled {
+			return nil
+		}
+
 		repoTarget, err := resolveDispatchTargetRepo(ctx, task, taskID, taskProject, cmd.ErrOrStderr())
 		if err != nil {
 			return err
@@ -181,8 +251,6 @@ config "dispatch.default_runtime" > "claude-code".`,
 		promptBuilder.WriteString(fmt.Sprintf("**Task ID:** %s\n", task.ID))
 		promptBuilder.WriteString(fmt.Sprintf("**Agent:** %s\n\n", agent))
 
-		repoRoot, _ := config.RepoForProject(taskProject)
-		pCfg, _ := config.LoadConfig(repoRoot)
 		if pCfg == nil {
 			pCfg, _ = config.LoadConfig(worktreePath)
 		}
@@ -214,59 +282,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
-		// Detect current phase from pipeline state; auto-create run if missing.
-		// Phase detection must happen before prompt assembly because gate phases
-		// put instructions BEFORE content (so Codex reads them first).
-		currentPhase := ""
-		if cbStore != nil {
-			run, err := cbStore.GetRun(ctx, task.ID)
-			if err == nil && run != nil {
-				currentPhase = run.CurrentPhase
-			} else if errors.Is(err, store.ErrNotFound) {
-				// No pipeline run — create one on the fly
-				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(task, pCfg)
-				if resolveErr != nil {
-					return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, resolveErr)
-				}
-				newRun, createErr := cbStore.CreateRunWithMode(ctx, task.ID, taskProject, bootstrap.StartPhase, "manual")
-				if createErr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to auto-create pipeline run: %v\n", createErr)
-				} else {
-					currentPhase = newRun.CurrentPhase
-					fmt.Printf("Auto-created pipeline run for %s (workflow: %s, phase: %s)\n", task.ID, bootstrap.Workflow, currentPhase)
-				}
-			} else {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to look up pipeline run: %v\n", err)
-			}
-		}
-		// Fallback if store unavailable or run creation failed
-		if currentPhase == "" {
-			bootstrap, err := pipelinestate.ResolveBootstrap(task, pCfg)
-			if err != nil {
-				return fmt.Errorf("resolve pipeline bootstrap for %s: %w", task.ID, err)
-			}
-			currentPhase = bootstrap.StartPhase
-		}
-
 		var mergedTasks []MergedTask
 		if currentPhase == domain.PhaseDecompose {
 			mergedTasks, err = collectMergedTasks(ctx, conn, task.ID, repoRootForWT)
 			if err != nil {
 				return fmt.Errorf("load merged work for decompose prompt: %w", err)
-			}
-		}
-
-		// Belt-and-braces: if the bug body already contains investigation content,
-		// downgrade from investigate to fix regardless of phase inference.
-		// Also persist the override to pipeline_runs so `cobuild status` reflects
-		// the phase the agent actually ran (cb-eab697).
-		if currentPhase == domain.PhaseInvestigate && hasInvestigationContent(task.Content) {
-			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
-			currentPhase = domain.PhaseFix
-			if cbStore != nil {
-				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, domain.PhaseInvestigate, domain.PhaseFix); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
-				}
 			}
 		}
 
@@ -659,199 +679,254 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if conn == nil {
-			return fmt.Errorf("no connector configured")
-		}
-
 		designID := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		repoRoot := findRepoRoot()
-		pCfg, _ := config.LoadConfig(repoRoot)
-
-		// Get all children of the design — includes tasks AND gate review
-		// sub-shards (type=review) AND any other child types. We must filter
-		// to only tasks; dispatching a gate record as if it were
-		// implementation work wastes tokens at best and corrupts the gate
-		// audit trail at worst (observed during cp-c2ec47's wave 1 — a
-		// readiness-review gate record got dispatched as a task because the
-		// filter wasn't here).
-		edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
-		if err != nil {
-			return fmt.Errorf("get child tasks: %w", err)
-		}
-
-		var ready []dispatchWaveCandidate
-		var inProgress []string
-		blockers := map[string]string{}
-
-		for _, e := range edges {
-			// Filter by work-item type: only dispatch tasks, not review
-			// sub-shards, investigation reports, or anything else that might
-			// be child-of the design. Skip the edge on any lookup error
-			// rather than fail the whole wave.
-			item, err := conn.Get(ctx, e.ItemID)
-			if err != nil || item == nil {
-				continue
-			}
-			if item.Type != "task" {
-				continue
-			}
-			if e.Status == "closed" {
-				continue // fully merged/complete
-			}
-
-			if e.Status == domain.StatusInProgress {
-				inProgress = append(inProgress, e.ItemID)
-				recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusInProgress)
-				continue
-			}
-			if e.Status == domain.StatusNeedsReview {
-				// Serial mode must wait for closure/merge, not merely review-ready.
-				recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusNeedsReview)
-				continue
-			}
-
-			// Check if blockers are satisfied
-			blockerEdges, err := conn.GetEdges(ctx, e.ItemID, "outgoing", []string{"blocked-by"})
-			if err != nil {
-				continue
-			}
-			allSatisfied := true
-			for _, b := range blockerEdges {
-				if b.Status != "closed" {
-					allSatisfied = false
-					recordDispatchWaveBlocker(blockers, b.ItemID, b.Status)
-					break
-				}
-			}
-			if allSatisfied {
-				ready = append(ready, dispatchWaveCandidate{
-					TaskID: e.ItemID,
-					Wave:   dispatchWaveMetadata(item.Metadata),
-				})
-			}
-		}
-
-		// Wave filtering is handled below by filterDispatchWaveCandidates.
-
-		if len(ready) == 0 {
-			if len(inProgress) > 0 {
-				fmt.Printf("No new tasks to dispatch. %d still in progress.\n", len(inProgress))
-				if summary := formatDispatchWaveBlockers(blockers); summary != "" {
-					fmt.Printf("Blocking tasks: %s\n", summary)
-				}
-			} else if len(blockers) > 0 {
-				fmt.Printf("No tasks ready. %d blocked.\n", len(blockers))
-				fmt.Printf("Blocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
-			} else {
-				fmt.Println("All tasks complete.")
-			}
-			return nil
-		}
-
-		ready = filterDispatchWaveCandidates(ready, pCfg.Dispatch.WaveStrategy)
-
-		// Per-runtime concurrency: count in-progress tasks by their
-		// dispatched runtime, then cap each runtime independently
-		// (cb-0a0762). Codex is pinned at 2 by default; claude-code at 4.
-		// Using only the global cap would force codex's ceiling onto
-		// claude-code, throttling mixed workloads unnecessarily.
-		inProgressByRuntime := map[string]int{}
-		for _, inProgressID := range inProgress {
-			rt := resolveRuntimeForTask(ctx, pCfg, inProgressID)
-			inProgressByRuntime[rt]++
-		}
-
-		// Filter ready candidates by per-runtime headroom.
-		selected := make([]dispatchWaveCandidate, 0, len(ready))
-		dispatchedByRuntime := map[string]int{}
-		var deferredByRuntime []string
-		for _, cand := range ready {
-			rt := resolveRuntimeForTask(ctx, pCfg, cand.TaskID)
-			cap := pCfg.MaxConcurrentForRuntime(rt)
-			running := inProgressByRuntime[rt] + dispatchedByRuntime[rt]
-			if running >= cap {
-				deferredByRuntime = append(deferredByRuntime, fmt.Sprintf("%s (%s at cap %d)", cand.TaskID, rt, cap))
-				continue
-			}
-			selected = append(selected, cand)
-			dispatchedByRuntime[rt]++
-		}
-		ready = selected
-
-		if len(deferredByRuntime) > 0 {
-			fmt.Printf("Deferred %d task(s) by per-runtime cap: %s\n",
-				len(deferredByRuntime), strings.Join(deferredByRuntime, ", "))
-		}
-
-		if len(ready) == 0 {
-			fmt.Printf("At capacity (per-runtime). In-progress by runtime: %s\n",
-				formatRuntimeCounts(inProgressByRuntime))
-			return nil
-		}
-
-		if resolveWaveStrategy(pCfg) == "serial" {
-			fmt.Printf("Dispatching %d tasks (serial wave) for %s:\n", len(ready), designID)
-		} else {
-			fmt.Printf("Dispatching %d tasks (parallel ready set) for %s:\n", len(ready), designID)
-		}
-		// Look up the parent design's pipeline run so we can register tasks
-		var pipelineID string
-		if cbStore != nil {
-			if run, err := cbStore.GetRun(ctx, designID); err == nil {
-				pipelineID = run.ID
-			}
-		}
-
-		for i, candidate := range ready {
-			taskID := candidate.TaskID
-			if dryRun {
-				fmt.Printf("  [dry-run] %s\n", taskID)
-				continue
-			}
-
-			// Register the task in pipeline_tasks so the orchestrator's
-			// implement loop can track it via ListTasksByDesign.
-			if cbStore != nil && pipelineID != "" {
-				wave := candidate.Wave
-				var wavePtr *int
-				if wave > 0 {
-					wavePtr = &wave
-				}
-				if err := cbStore.AddTask(ctx, pipelineID, taskID, designID, wavePtr); err != nil {
-					// Ignore duplicates — task may already be registered from a prior run
-					if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already exists") {
-						fmt.Printf("  Warning: failed to register task %s: %v\n", taskID, err)
-					}
-				}
-			}
-
-			// Run dispatch for each task via the existing dispatch command logic.
-			// Stagger dispatches by 3 seconds to avoid overwhelming the Codex
-			// app-server — simultaneous codex exec processes contend for the
-			// local server and later ones silently fail to start (cb-357c42).
-			if i > 0 {
-				time.Sleep(3 * time.Second)
-			}
-			fmt.Printf("  %s ", taskID)
-			dispatchArgs := []string{"dispatch", taskID}
-			subCmd, _, err := rootCmd.Find(dispatchArgs)
-			if err != nil || subCmd == nil {
-				fmt.Printf("— failed to find dispatch command\n")
-				continue
-			}
-			subCmd.SetArgs([]string{taskID})
-			if err := subCmd.RunE(subCmd, []string{taskID}); err != nil {
-				fmt.Printf("— error: %v\n", err)
-			}
-		}
-
-		if len(blockers) > 0 {
-			fmt.Printf("\nBlocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
-		}
-		printNextStep(designID, domain.PhaseImplement, domain.ActionDispatchWave)
-		return nil
+		return runDispatchWave(ctx, designID, dryRun)
 	},
+}
+
+func maybeDispatchDesignImplementPhase(ctx context.Context, cmd *cobra.Command, item *connector.WorkItem, phase string, dryRun bool) (bool, error) {
+	if item == nil || item.Type != domain.WorkItemTypeDesign || phase != domain.PhaseImplement {
+		return false, nil
+	}
+
+	mono, _ := cmd.Flags().GetBool("mono")
+	force, _ := cmd.Flags().GetBool("force")
+	childTaskIDs, err := listDesignChildTaskIDs(ctx, item.ID)
+	if err != nil {
+		return true, fmt.Errorf("list child tasks for %s: %w", item.ID, err)
+	}
+
+	if !mono {
+		if len(childTaskIDs) == 0 {
+			return true, fmt.Errorf("design %s has no child tasks — run `cobuild decompose` first, or pass `--mono` to implement the entire design in one PR.", item.ID)
+		}
+		return true, runDispatchWave(ctx, item.ID, dryRun)
+	}
+
+	if len(childTaskIDs) > 0 {
+		warn := fmt.Sprintf("design %s has %d child tasks; `--mono` will implement in one PR but those tasks remain dispatchable via `dispatch-wave`.", item.ID, len(childTaskIDs))
+		if !force {
+			return true, fmt.Errorf("%s Pass `--force` to proceed.", warn)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s Proceeding because `--force` was set.\n", warn)
+	}
+
+	return false, nil
+}
+
+func listDesignChildTaskIDs(ctx context.Context, designID string) ([]string, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("no connector configured")
+	}
+
+	edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return nil, err
+	}
+
+	var taskIDs []string
+	for _, e := range edges {
+		item, err := conn.Get(ctx, e.ItemID)
+		if err != nil || item == nil || item.Type != domain.WorkItemTypeTask {
+			continue
+		}
+		taskIDs = append(taskIDs, e.ItemID)
+	}
+	return taskIDs, nil
+}
+
+func runDispatchWave(ctx context.Context, designID string, dryRun bool) error {
+	if conn == nil {
+		return fmt.Errorf("no connector configured")
+	}
+
+	repoRoot := findRepoRoot()
+	pCfg, _ := config.LoadConfig(repoRoot)
+
+	// Get all children of the design — includes tasks AND gate review
+	// sub-shards (type=review) AND any other child types. We must filter
+	// to only tasks; dispatching a gate record as if it were
+	// implementation work wastes tokens at best and corrupts the gate
+	// audit trail at worst (observed during cp-c2ec47's wave 1 — a
+	// readiness-review gate record got dispatched as a task because the
+	// filter wasn't here).
+	edges, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
+	if err != nil {
+		return fmt.Errorf("get child tasks: %w", err)
+	}
+
+	var ready []dispatchWaveCandidate
+	var inProgress []string
+	blockers := map[string]string{}
+
+	for _, e := range edges {
+		// Filter by work-item type: only dispatch tasks, not review
+		// sub-shards, investigation reports, or anything else that might
+		// be child-of the design. Skip the edge on any lookup error
+		// rather than fail the whole wave.
+		item, err := conn.Get(ctx, e.ItemID)
+		if err != nil || item == nil {
+			continue
+		}
+		if item.Type != "task" {
+			continue
+		}
+		if e.Status == "closed" {
+			continue // fully merged/complete
+		}
+
+		if e.Status == domain.StatusInProgress {
+			inProgress = append(inProgress, e.ItemID)
+			recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusInProgress)
+			continue
+		}
+		if e.Status == domain.StatusNeedsReview {
+			// Serial mode must wait for closure/merge, not merely review-ready.
+			recordDispatchWaveBlocker(blockers, e.ItemID, domain.StatusNeedsReview)
+			continue
+		}
+
+		// Check if blockers are satisfied
+		blockerEdges, err := conn.GetEdges(ctx, e.ItemID, "outgoing", []string{"blocked-by"})
+		if err != nil {
+			continue
+		}
+		allSatisfied := true
+		for _, b := range blockerEdges {
+			if b.Status != "closed" {
+				allSatisfied = false
+				recordDispatchWaveBlocker(blockers, b.ItemID, b.Status)
+				break
+			}
+		}
+		if allSatisfied {
+			ready = append(ready, dispatchWaveCandidate{
+				TaskID: e.ItemID,
+				Wave:   dispatchWaveMetadata(item.Metadata),
+			})
+		}
+	}
+
+	// Wave filtering is handled below by filterDispatchWaveCandidates.
+
+	if len(ready) == 0 {
+		if len(inProgress) > 0 {
+			fmt.Printf("No new tasks to dispatch. %d still in progress.\n", len(inProgress))
+			if summary := formatDispatchWaveBlockers(blockers); summary != "" {
+				fmt.Printf("Blocking tasks: %s\n", summary)
+			}
+		} else if len(blockers) > 0 {
+			fmt.Printf("No tasks ready. %d blocked.\n", len(blockers))
+			fmt.Printf("Blocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
+		} else {
+			fmt.Println("All tasks complete.")
+		}
+		return nil
+	}
+
+	ready = filterDispatchWaveCandidates(ready, pCfg.Dispatch.WaveStrategy)
+
+	// Per-runtime concurrency: count in-progress tasks by their
+	// dispatched runtime, then cap each runtime independently
+	// (cb-0a0762). Codex is pinned at 2 by default; claude-code at 4.
+	// Using only the global cap would force codex's ceiling onto
+	// claude-code, throttling mixed workloads unnecessarily.
+	inProgressByRuntime := map[string]int{}
+	for _, inProgressID := range inProgress {
+		rt := resolveRuntimeForTask(ctx, pCfg, inProgressID)
+		inProgressByRuntime[rt]++
+	}
+
+	// Filter ready candidates by per-runtime headroom.
+	selected := make([]dispatchWaveCandidate, 0, len(ready))
+	dispatchedByRuntime := map[string]int{}
+	var deferredByRuntime []string
+	for _, cand := range ready {
+		rt := resolveRuntimeForTask(ctx, pCfg, cand.TaskID)
+		cap := pCfg.MaxConcurrentForRuntime(rt)
+		running := inProgressByRuntime[rt] + dispatchedByRuntime[rt]
+		if running >= cap {
+			deferredByRuntime = append(deferredByRuntime, fmt.Sprintf("%s (%s at cap %d)", cand.TaskID, rt, cap))
+			continue
+		}
+		selected = append(selected, cand)
+		dispatchedByRuntime[rt]++
+	}
+	ready = selected
+
+	if len(deferredByRuntime) > 0 {
+		fmt.Printf("Deferred %d task(s) by per-runtime cap: %s\n",
+			len(deferredByRuntime), strings.Join(deferredByRuntime, ", "))
+	}
+
+	if len(ready) == 0 {
+		fmt.Printf("At capacity (per-runtime). In-progress by runtime: %s\n",
+			formatRuntimeCounts(inProgressByRuntime))
+		return nil
+	}
+
+	if resolveWaveStrategy(pCfg) == "serial" {
+		fmt.Printf("Dispatching %d tasks (serial wave) for %s:\n", len(ready), designID)
+	} else {
+		fmt.Printf("Dispatching %d tasks (parallel ready set) for %s:\n", len(ready), designID)
+	}
+	// Look up the parent design's pipeline run so we can register tasks
+	var pipelineID string
+	if cbStore != nil {
+		if run, err := cbStore.GetRun(ctx, designID); err == nil {
+			pipelineID = run.ID
+		}
+	}
+
+	for i, candidate := range ready {
+		taskID := candidate.TaskID
+		if dryRun {
+			fmt.Printf("  [dry-run] %s\n", taskID)
+			continue
+		}
+
+		// Register the task in pipeline_tasks so the orchestrator's
+		// implement loop can track it via ListTasksByDesign.
+		if cbStore != nil && pipelineID != "" {
+			wave := candidate.Wave
+			var wavePtr *int
+			if wave > 0 {
+				wavePtr = &wave
+			}
+			if err := cbStore.AddTask(ctx, pipelineID, taskID, designID, wavePtr); err != nil {
+				// Ignore duplicates — task may already be registered from a prior run
+				if !strings.Contains(err.Error(), "duplicate") && !strings.Contains(err.Error(), "already exists") {
+					fmt.Printf("  Warning: failed to register task %s: %v\n", taskID, err)
+				}
+			}
+		}
+
+		// Run dispatch for each task via the existing dispatch command logic.
+		// Stagger dispatches by 3 seconds to avoid overwhelming the Codex
+		// app-server — simultaneous codex exec processes contend for the
+		// local server and later ones silently fail to start (cb-357c42).
+		if i > 0 {
+			time.Sleep(3 * time.Second)
+		}
+		fmt.Printf("  %s ", taskID)
+		dispatchArgs := []string{"dispatch", taskID}
+		subCmd, _, err := rootCmd.Find(dispatchArgs)
+		if err != nil || subCmd == nil {
+			fmt.Printf("— failed to find dispatch command\n")
+			continue
+		}
+		subCmd.SetArgs([]string{taskID})
+		if err := subCmd.RunE(subCmd, []string{taskID}); err != nil {
+			fmt.Printf("— error: %v\n", err)
+		}
+	}
+
+	if len(blockers) > 0 {
+		fmt.Printf("\nBlocking tasks: %s\n", formatDispatchWaveBlockers(blockers))
+	}
+	printNextStep(designID, domain.PhaseImplement, domain.ActionDispatchWave)
+	return nil
 }
 
 type dispatchWaveCandidate struct {
@@ -1402,6 +1477,8 @@ func hasInvestigationContent(content string) bool {
 func init() {
 	dispatchCmd.Flags().String("agent", "", "Override agent (default: from config)")
 	dispatchCmd.Flags().String("runtime", "", "Agent runtime to use (claude-code, codex). Defaults to task metadata, then pipeline.yaml dispatch.default_runtime, then claude-code.")
+	dispatchCmd.Flags().Bool("mono", false, "For implement-phase designs, dispatch one design-level agent instead of child-task waves. This skips wave parallelism and can overlap with existing child-task PRs.")
+	dispatchCmd.Flags().Bool("force", false, "Proceed with a guarded action such as `dispatch --mono` on a design that already has child tasks.")
 	dispatchCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")
 	dispatchCmd.Flags().Bool("foreground", false, "Run the agent in the current terminal instead of tmux (debug aid for silent-death scenarios)")
 	dispatchWaveCmd.Flags().Bool("dry-run", false, "Show what would be done without executing")

@@ -13,6 +13,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -578,6 +579,168 @@ func TestDispatchRefusesMissingRepoMetadataWhenParentDesignReferencesMultipleRep
 			t.Fatalf("error missing %q:\n%s", want, msg)
 		}
 	}
+}
+
+func TestDispatchDesignImplementDefaultRoutesToWaveDispatch(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	fs := newFakeStore()
+	fs.runs["design-1"] = &store.PipelineRun{
+		ID:           "run-design-1",
+		DesignID:     "design-1",
+		CurrentPhase: domain.PhaseImplement,
+		Status:       "active",
+	}
+	fc := newDispatchWaveTestConnector(
+		dispatchTestItem("design-1", "design", "open", "Design", "Implement by child task.", nil),
+		dispatchTestItem("task-1", "task", "open", "Task 1", "", map[string]any{"wave": 1}),
+		dispatchTestItem("task-2", "task", "open", "Task 2", "", map[string]any{"wave": 1}),
+	)
+	fc.edgesByItem["design-1"] = []connector.Edge{
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-1", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-2", Status: "open"},
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cb-test")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	output := captureStdout(t, func() {
+		if err := dispatchCmd.RunE(dispatchCmd, []string{"design-1"}); err != nil {
+			t.Fatalf("dispatch returned error: %v", err)
+		}
+	})
+
+	assertContains(t, output, "Dispatching 2 tasks")
+	assertContains(t, output, "[dry-run] task-1")
+	assertContains(t, output, "[dry-run] task-2")
+	assertNotContains(t, output, "=== tmux Command ===")
+}
+
+func TestDispatchDesignImplementDefaultErrorsWithoutChildTasks(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	fs := newFakeStore()
+	fs.runs["design-1"] = &store.PipelineRun{
+		ID:           "run-design-1",
+		DesignID:     "design-1",
+		CurrentPhase: domain.PhaseImplement,
+		Status:       "active",
+	}
+	fc := newDispatchWaveTestConnector(
+		dispatchTestItem("design-1", "design", "open", "Design", "No child tasks yet.", nil),
+	)
+
+	restore := installTestGlobals(t, fc, fs, "cb-test")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	err := dispatchCmd.RunE(dispatchCmd, []string{"design-1"})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want no-child-tasks guard")
+	}
+	assertContains(t, err.Error(), "design design-1 has no child tasks — run `cobuild decompose` first, or pass `--mono` to implement the entire design in one PR.")
+}
+
+func TestDispatchDesignImplementMonoRequiresForceWhenChildTasksExist(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	fs := newFakeStore()
+	fs.runs["design-1"] = &store.PipelineRun{
+		ID:           "run-design-1",
+		DesignID:     "design-1",
+		CurrentPhase: domain.PhaseImplement,
+		Status:       "active",
+	}
+	fc := newDispatchWaveTestConnector(
+		dispatchTestItem("design-1", "design", "open", "Design", "Force mono path.", nil),
+		dispatchTestItem("task-1", "task", "open", "Task 1", "", map[string]any{"wave": 1}),
+		dispatchTestItem("task-2", "task", "open", "Task 2", "", map[string]any{"wave": 1}),
+	)
+	fc.edgesByItem["design-1"] = []connector.Edge{
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-1", Status: "open"},
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-2", Status: "open"},
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cb-test")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+	setCommandFlag(t, dispatchCmd, "mono", "true")
+
+	err := dispatchCmd.RunE(dispatchCmd, []string{"design-1"})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want --force guard")
+	}
+	assertContains(t, err.Error(), "design design-1 has 2 child tasks; `--mono` will implement in one PR but those tasks remain dispatchable via `dispatch-wave`. Pass `--force` to proceed.")
+}
+
+func TestDispatchDesignImplementMonoWithForceDispatchesDirect(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	fs := newFakeStore()
+	fs.runs["design-1"] = &store.PipelineRun{
+		ID:           "run-design-1",
+		DesignID:     "design-1",
+		CurrentPhase: domain.PhaseImplement,
+		Status:       "active",
+	}
+	fc := newDispatchWaveTestConnector(
+		dispatchTestItem("design-1", "design", "open", "Design", "Force mono path.", nil),
+		dispatchTestItem("task-1", "task", "open", "Task 1", "", map[string]any{"wave": 1}),
+	)
+	fc.edgesByItem["design-1"] = []connector.Edge{
+		{Direction: "incoming", EdgeType: "child-of", ItemID: "task-1", Status: "open"},
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cb-test")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+	setCommandFlag(t, dispatchCmd, "mono", "true")
+	setCommandFlag(t, dispatchCmd, "force", "true")
+
+	output := captureStdout(t, func() {
+		if err := dispatchCmd.RunE(dispatchCmd, []string{"design-1"}); err != nil {
+			t.Fatalf("dispatch returned error: %v", err)
+		}
+	})
+
+	assertContains(t, output, "=== tmux Command ===")
+	assertContains(t, output, "tmux new-window -n design-1")
+	assertNotContains(t, output, "[dry-run] task-1")
+}
+
+func TestDispatchDesignImplementMonoWithoutChildTasksDispatchesDirect(t *testing.T) {
+	setupDispatchWaveTestRepo(t, "dispatch:\n  wave_strategy: serial\n  max_concurrent: 3\n")
+
+	fs := newFakeStore()
+	fs.runs["design-1"] = &store.PipelineRun{
+		ID:           "run-design-1",
+		DesignID:     "design-1",
+		CurrentPhase: domain.PhaseImplement,
+		Status:       "active",
+	}
+	fc := newDispatchWaveTestConnector(
+		dispatchTestItem("design-1", "design", "open", "Design", "Mono path without decomposition.", nil),
+	)
+
+	restore := installTestGlobals(t, fc, fs, "cb-test")
+	defer restore()
+
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+	setCommandFlag(t, dispatchCmd, "mono", "true")
+
+	output := captureStdout(t, func() {
+		if err := dispatchCmd.RunE(dispatchCmd, []string{"design-1"}); err != nil {
+			t.Fatalf("dispatch returned error: %v", err)
+		}
+	})
+
+	assertContains(t, output, "=== tmux Command ===")
+	assertContains(t, output, "tmux new-window -n design-1")
 }
 
 func TestDispatchWaveSerialOnlyDispatchesLowestEligibleWave(t *testing.T) {

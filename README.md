@@ -120,7 +120,7 @@ For bugs where the root cause is unknown, the fix spans multiple systems, or the
 | decompose | Break into tasks, assign waves, set dependencies |
 | fix | Investigate cause and implement fix in one session (default for bugs) |
 | investigate | Read-only root cause analysis, create fix task (bugs with `needs-investigation`) |
-| implement | Write code, run tests, create PR |
+| implement | Task/bug shards: write code, run tests, create PR. Design shards: dispatch child-task waves by default; pass `--mono --force` to force one design-level PR |
 | review | Check PR against spec, evaluate CI, record verdict |
 | done | Run retrospective, suggest improvements |
 
@@ -144,6 +144,8 @@ cobuild dispatch <id>          # spawn agent for current phase
 cobuild wait <id>              # wait for completion (Stop hook handles `cobuild complete`)
 # repeat for each phase
 ```
+
+For designs that have reached `implement`, the default path is wave-based child-task dispatch. Use `cobuild dispatch-wave <design-id>` directly, or `cobuild dispatch <design-id>` if you want the phase-aware wrapper to choose that path for you. Use `cobuild dispatch --mono --force <design-id>` only when you intentionally want one design-level PR and accept overlap risk with child tasks.
 
 **Autonomous mode** — the poller handles everything:
 
