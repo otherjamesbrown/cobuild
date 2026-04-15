@@ -102,7 +102,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 
 func remoteMerge(ctx context.Context, prURL string) error {
 	fmt.Printf("Merging %s...\n", prURL)
-	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL, "--squash")
+	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
 	if err != nil {
 		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
 	}

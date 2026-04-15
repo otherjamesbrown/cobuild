@@ -51,7 +51,7 @@ func TestMergeSucceedsWhenLocalCleanupFails(t *testing.T) {
 			return nil, fmt.Errorf("unexpected command %q", name)
 		}
 		call := strings.Join(args, " ")
-		if call != "pr merge https://github.com/acme/cobuild/pull/123 --squash" {
+		if call != "pr merge https://github.com/acme/cobuild/pull/123 --squash --delete-branch" {
 			return nil, fmt.Errorf("unexpected gh merge call %q", call)
 		}
 		return []byte("merged"), nil
