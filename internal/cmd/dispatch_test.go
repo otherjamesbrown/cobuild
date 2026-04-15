@@ -1260,6 +1260,48 @@ func captureStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
+// captureStdoutAndStderr captures both fmt.Print-style output (stdout) and
+// slog-style output (stderr). Background subsystems migrated in cb-e7edc9
+// write progress/recovery events through internalLogger(), which is routed to
+// stderr. Tests that assert on those messages use this helper and call
+// setLogLevelForTest(slog.LevelDebug) so info/debug events aren't filtered.
+func captureStdoutAndStderr(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+
+	origStdout, origStderr := os.Stdout, os.Stderr
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe out: %v", err)
+	}
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe err: %v", err)
+	}
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	doneOut := make(chan string, 1)
+	doneErr := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, rOut)
+		doneOut <- buf.String()
+	}()
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, rErr)
+		doneErr <- buf.String()
+	}()
+
+	fn()
+
+	_ = wOut.Close()
+	_ = wErr.Close()
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+	return <-doneOut, <-doneErr
+}
+
 func assertContains(t *testing.T, output, want string) {
 	t.Helper()
 	if !strings.Contains(output, want) {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,7 +248,10 @@ func TestReconcileStaleStateAppliesSharedRecoveries(t *testing.T) {
 		return nil, nil
 	}
 
-	out := captureStdout(t, func() {
+	restoreLevel := setLogLevelForTest(slog.LevelInfo)
+	defer restoreLevel()
+
+	_, stderr := captureStdoutAndStderr(t, func() {
 		reconcileStaleState(ctx, false)
 	})
 
@@ -268,14 +272,20 @@ func TestReconcileStaleStateAppliesSharedRecoveries(t *testing.T) {
 	if got := strings.Join(killed[0], " "); got != "tmux kill-window -t @7" {
 		t.Fatalf("kill command = %q, want tmux kill-window -t @7", got)
 	}
-	if !strings.Contains(out, "[reconcile] cb-orphaned cancel_orphaned_session: session ps-1 is running but no tmux window exists") {
-		t.Fatalf("missing orphaned-session log:\n%s", out)
-	}
-	if !strings.Contains(out, "[reconcile] cb-inconsistent kill_orphan_tmux_window: tmux window cobuild-test-project:cb-inconsistent exists but no matching pipeline session exists") {
-		t.Fatalf("missing orphan-window log:\n%s", out)
-	}
-	if !strings.Contains(out, "[reconcile] cb-inconsistent complete_stale_run: pipeline cb-inconsistent run is active but work item is closed") {
-		t.Fatalf("missing stale-run log:\n%s", out)
+	// cb-e7edc9: reconcile events moved to slog.Info with structured attrs
+	// (component, id, kind, reason). Tests now assert on the attribute shape
+	// rather than the previous "[reconcile] id kind: reason" line.
+	for _, want := range []string{
+		`component=reconcile id=cb-orphaned kind=cancel_orphaned_session`,
+		`session ps-1 is running but no tmux window exists`,
+		`component=reconcile id=cb-inconsistent kind=kill_orphan_tmux_window`,
+		`tmux window cobuild-test-project:cb-inconsistent exists but no matching pipeline session exists`,
+		`component=reconcile id=cb-inconsistent kind=complete_stale_run`,
+		`pipeline cb-inconsistent run is active but work item is closed`,
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("missing reconcile log %q:\n%s", want, stderr)
+		}
 	}
 }
 
@@ -325,7 +335,10 @@ func TestReconcileStaleStateDryRunLogsWithoutMutating(t *testing.T) {
 		return nil, nil
 	}
 
-	out := captureStdout(t, func() {
+	restoreLevel := setLogLevelForTest(slog.LevelInfo)
+	defer restoreLevel()
+
+	_, stderr := captureStdoutAndStderr(t, func() {
 		reconcileStaleState(ctx, true)
 	})
 
@@ -335,8 +348,11 @@ func TestReconcileStaleStateDryRunLogsWithoutMutating(t *testing.T) {
 	if got := fs.runs["cb-orphaned"].Status; got != "active" {
 		t.Fatalf("status = %q, want active", got)
 	}
-	if !strings.Contains(out, "[reconcile] cb-orphaned cancel_orphaned_session: session ps-1 is running but no tmux window exists") {
-		t.Fatalf("missing dry-run reconcile log:\n%s", out)
+	if !strings.Contains(stderr, `component=reconcile id=cb-orphaned kind=cancel_orphaned_session`) {
+		t.Fatalf("missing dry-run reconcile log:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "session ps-1 is running but no tmux window exists") {
+		t.Fatalf("missing reason text:\n%s", stderr)
 	}
 }
 

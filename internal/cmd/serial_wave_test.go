@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -82,20 +83,26 @@ func TestPollerSerialKeepsLaterWaveBlockedUntilCurrentWaveCloses(t *testing.T) {
 	fc.setChildTasks("cb-design", "cb-wave1-closed", "cb-wave1-open", "cb-wave2-ready")
 	fc.setBlockedBy("cb-wave2-ready", connector.Edge{ItemID: "cb-wave1-closed", Status: "closed", EdgeType: "blocked-by"})
 
-	out := captureStdout(t, func() {
+	// cb-e7edc9: dispatchReadyTasks moved "ready to dispatch" and wave-status
+	// lines from fmt.Printf to slog.Info. Drive the logger to info level and
+	// capture stderr.
+	restoreLevel := setLogLevelForTest(slog.LevelInfo)
+	defer restoreLevel()
+
+	_, stderr := captureStdoutAndStderr(t, func() {
 		dispatchReadyTasks(context.Background(), "", &config.Config{
 			Dispatch: config.DispatchCfg{WaveStrategy: "serial", MaxConcurrent: 3},
 		}, "cb-design", true)
 	})
 
-	if !strings.Contains(out, "cb-wave1-open — ready to dispatch") {
-		t.Fatalf("serial poller output should keep current wave dispatchable:\n%s", out)
+	if !strings.Contains(stderr, `task=cb-wave1-open`) {
+		t.Fatalf("serial poller output should keep current wave dispatchable:\n%s", stderr)
 	}
-	if strings.Contains(out, "cb-wave2-ready — ready to dispatch") {
-		t.Fatalf("serial poller should block later waves until the current wave closes:\n%s", out)
+	if strings.Contains(stderr, `task=cb-wave2-ready`) {
+		t.Fatalf("serial poller should block later waves until the current wave closes:\n%s", stderr)
 	}
-	if !strings.Contains(out, "1 ready") {
-		t.Fatalf("serial poller summary should show only one ready task:\n%s", out)
+	if !strings.Contains(stderr, `ready=1`) {
+		t.Fatalf("serial poller summary should show only one ready task:\n%s", stderr)
 	}
 }
 
@@ -111,17 +118,20 @@ func TestPollerParallelStillDispatchesAllReadyTasks(t *testing.T) {
 	fc.setChildTasks("cb-design", "cb-wave1-closed", "cb-wave1-open", "cb-wave2-ready")
 	fc.setBlockedBy("cb-wave2-ready", connector.Edge{ItemID: "cb-wave1-closed", Status: "closed", EdgeType: "blocked-by"})
 
-	out := captureStdout(t, func() {
+	restoreLevel := setLogLevelForTest(slog.LevelInfo)
+	defer restoreLevel()
+
+	_, stderr := captureStdoutAndStderr(t, func() {
 		dispatchReadyTasks(context.Background(), "", &config.Config{
 			Dispatch: config.DispatchCfg{WaveStrategy: "parallel", MaxConcurrent: 3},
 		}, "cb-design", true)
 	})
 
-	if !strings.Contains(out, "cb-wave1-open — ready to dispatch") || !strings.Contains(out, "cb-wave2-ready — ready to dispatch") {
-		t.Fatalf("parallel poller should keep existing all-ready dispatch behavior:\n%s", out)
+	if !strings.Contains(stderr, `task=cb-wave1-open`) || !strings.Contains(stderr, `task=cb-wave2-ready`) {
+		t.Fatalf("parallel poller should keep existing all-ready dispatch behavior:\n%s", stderr)
 	}
-	if !strings.Contains(out, "2 ready") {
-		t.Fatalf("parallel poller summary should show both ready tasks:\n%s", out)
+	if !strings.Contains(stderr, `ready=2`) {
+		t.Fatalf("parallel poller summary should show both ready tasks:\n%s", stderr)
 	}
 }
 
