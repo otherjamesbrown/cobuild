@@ -336,10 +336,11 @@ func testResolverExec() pipelinestate.CommandRunner {
 }
 
 type fakeConnector struct {
-	items    map[string]*connector.WorkItem
-	metadata map[string]map[string]string
-	parent   map[string]string
-	edges    map[string]map[string][]connector.Edge
+	items          map[string]*connector.WorkItem
+	metadata       map[string]map[string]string
+	parent         map[string]string
+	edges          map[string]map[string][]connector.Edge
+	createRequests []connector.CreateRequest
 }
 
 func newFakeConnector() *fakeConnector {
@@ -415,6 +416,7 @@ func (f *fakeConnector) GetMetadata(ctx context.Context, id string, key string) 
 }
 
 func (f *fakeConnector) Create(ctx context.Context, req connector.CreateRequest) (string, error) {
+	f.createRequests = append(f.createRequests, req)
 	return "created", nil
 }
 
