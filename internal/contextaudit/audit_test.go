@@ -1,10 +1,12 @@
 package contextaudit
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInspect_EmptyRepo(t *testing.T) {
@@ -77,27 +79,105 @@ func TestInspect_SortedBySizeDesc(t *testing.T) {
 	}
 }
 
-func TestRecommendation(t *testing.T) {
-	tests := []struct {
-		flags   []string
-		wantSub string
-	}{
-		{[]string{"cache-pollution"}, "cobuild scan"},
-		{[]string{"very-large"}, "split by phase"},
-		{[]string{"oversize"}, "redundancy"},
-		{nil, ""},
+func TestInspect_AnnotatesCobuildOwnedAnatomy(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".cobuild.yaml"), "project: cobuild\n")
+	mustWrite(t, filepath.Join(dir, ".cobuild/context/always/anatomy.md"), anatomyFixture())
+
+	r, err := Inspect(dir)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
 	}
-	for _, tc := range tests {
-		got := Recommendation(LayerEntry{Flags: tc.flags})
-		if tc.wantSub == "" {
-			if got != "" {
-				t.Errorf("flags=%v want empty, got %q", tc.flags, got)
-			}
-			continue
-		}
-		if !strings.Contains(got, tc.wantSub) {
-			t.Errorf("flags=%v want contains %q, got %q", tc.flags, tc.wantSub, got)
-		}
+	if len(r.Entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(r.Entries))
+	}
+	entry := r.Entries[0]
+	if entry.Annotation == nil {
+		t.Fatalf("expected annotation for flagged anatomy entry")
+	}
+	if got := entry.Annotation.Owner; !strings.Contains(got, "cobuild") || !strings.Contains(got, "cobuild scan") {
+		t.Fatalf("Owner = %q, want cobuild scan attribution", got)
+	}
+	if got := entry.Annotation.WhyLarge; !strings.Contains(got, "scanner indexed") || !strings.Contains(got, "node_modules/") {
+		t.Fatalf("WhyLarge = %q, want scanner + skip hint", got)
+	}
+	if len(entry.Annotation.TryHere) != 2 || !strings.Contains(entry.Annotation.TryHere[0], "cobuild scan --skip") {
+		t.Fatalf("TryHere = %v, want scan --skip guidance", entry.Annotation.TryHere)
+	}
+	if got := entry.Annotation.FileHere; !strings.Contains(got, "cobuild") {
+		t.Fatalf("FileHere = %q, want cobuild filing hint", got)
+	}
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"annotation"`) || !strings.Contains(string(data), `"owner"`) {
+		t.Fatalf("json output missing annotation fields: %s", data)
+	}
+}
+
+func TestInspect_AnnotatesProjectOwnedMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".cobuild.yaml"), "project: penfold\n")
+	content := strings.Repeat("glossary line\n", 2200)
+	path := filepath.Join(dir, ".cobuild/context/always/project-glossary.md")
+	mustWrite(t, path, content)
+	modTime := time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	r, err := Inspect(dir)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	entry := r.Entries[0]
+	if entry.Annotation == nil {
+		t.Fatalf("expected annotation for project-authored markdown")
+	}
+	if got := entry.Annotation.Owner; got != "penfold (project-authored)" {
+		t.Fatalf("Owner = %q, want project-authored", got)
+	}
+	if got := entry.Annotation.WhyLarge; !strings.Contains(got, "2201 lines") || !strings.Contains(got, "2026-04-01") {
+		t.Fatalf("WhyLarge = %q, want line count + mod date", got)
+	}
+	if got := strings.Join(entry.Annotation.TryHere, "\n"); !strings.Contains(got, "Edit the file directly") && !strings.Contains(strings.ToLower(got), "edit the file directly") {
+		t.Fatalf("TryHere = %v, want direct-edit guidance", entry.Annotation.TryHere)
+	}
+	if got := entry.Annotation.FileHere; got != "(N/A — local fix)" {
+		t.Fatalf("FileHere = %q, want local fix", got)
+	}
+}
+
+func TestInspect_AnnotatesAmbiguousMixedFile(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".cobuild.yaml"), "project: penfold\n")
+	mustWrite(t, filepath.Join(dir, "skills/context-map.yaml"), strings.TrimSpace(`
+generated_files:
+  - path: .cobuild/context/always/mixed.md
+    generator: context sync
+    owner: ambiguous
+    file_here: local project or cobuild
+`))
+	mustWrite(t, filepath.Join(dir, ".cobuild/context/always/mixed.md"), strings.Repeat("mixed ownership\n", 1500))
+
+	r, err := Inspect(dir)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	entry := r.Entries[0]
+	if entry.Annotation == nil {
+		t.Fatalf("expected annotation for ambiguous file")
+	}
+	if got := entry.Annotation.Owner; !strings.Contains(got, "mixed ownership") || !strings.Contains(got, "context sync") {
+		t.Fatalf("Owner = %q, want mixed ownership hint", got)
+	}
+	if got := strings.Join(entry.Annotation.TryHere, "\n"); !strings.Contains(got, "skills/context-map.yaml") {
+		t.Fatalf("TryHere = %v, want context-map guidance", entry.Annotation.TryHere)
+	}
+	if got := entry.Annotation.FileHere; !strings.Contains(got, "local project") || !strings.Contains(got, "cobuild") {
+		t.Fatalf("FileHere = %q, want both filing paths", got)
 	}
 }
 
@@ -118,4 +198,15 @@ func hasFlag(flags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func anatomyFixture() string {
+	var sb strings.Builder
+	sb.WriteString("# Project Anatomy\n\n")
+	sb.WriteString(strings.Repeat("padding to trip size thresholds\n", 700))
+	sb.WriteString("## internal/cmd/ (~57.3K tokens)\n\n")
+	sb.WriteString("## node_modules/ (~41.0K tokens)\n\n")
+	sb.WriteString("## vendor/ (~25.0K tokens)\n\n")
+	sb.WriteString("## docs/ (~9.0K tokens)\n\n")
+	return sb.String()
 }

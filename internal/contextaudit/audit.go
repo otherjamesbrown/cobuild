@@ -28,6 +28,9 @@ type LayerEntry struct {
 	Bytes  int    `json:"bytes"`
 	// Flags are human-readable tags: "oversize", "very-large", "cache-pollution".
 	Flags []string `json:"flags,omitempty"`
+	// Annotation is present only for flagged files and explains ownership,
+	// likely causes, next fixes, and whether to file upstream.
+	Annotation *Annotation `json:"annotation,omitempty"`
 }
 
 // Report is the result of auditing a repo's context layers.
@@ -44,6 +47,7 @@ type Report struct {
 func Inspect(repoRoot string) (*Report, error) {
 	base := filepath.Join(repoRoot, ".cobuild", "context")
 	r := &Report{RepoRoot: repoRoot}
+	contextMap := loadContextMap(repoRoot)
 
 	buckets, err := os.ReadDir(base)
 	if err != nil {
@@ -78,6 +82,9 @@ func Inspect(repoRoot string) (*Report, error) {
 				Bytes:   int(info.Size()),
 			}
 			entry.Flags = flagsFor(entry, full)
+			if len(entry.Flags) > 0 {
+				entry.Annotation = annotateEntry(repoRoot, entry, full, info.ModTime(), contextMap)
+			}
 			r.Entries = append(r.Entries, entry)
 			r.TotalBytes += entry.Bytes
 			if len(entry.Flags) > 0 {
@@ -127,25 +134,4 @@ func FormatKB(bytes int) string {
 		bytes = 0
 	}
 	return fmt.Sprintf("%d KB", bytes/1024)
-}
-
-// Recommendation returns a short human-readable action for an entry, or "" if none.
-func Recommendation(e LayerEntry) string {
-	has := func(tag string) bool {
-		for _, f := range e.Flags {
-			if f == tag {
-				return true
-			}
-		}
-		return false
-	}
-	switch {
-	case has("cache-pollution"):
-		return "contains cache/build-dir references — re-run `cobuild scan` and add these paths to its skip list"
-	case has("very-large"):
-		return "≥30 KB — split by phase, move phase-specific content out of always/, or prune verbose sections"
-	case has("oversize"):
-		return "≥15 KB — review for redundancy with project CLAUDE.md or other layers"
-	}
-	return ""
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var scanCmd = &cobra.Command{
@@ -23,21 +24,24 @@ Excludes: VCS dirs, deps, caches, build output, coverage, binaries. Large
 directories are collapsed to a one-line summary to keep anatomy.md small. Scan
 also skips recursive context output and common generated protobuf stubs.
 
-Project-specific excludes: put one path per line in .cobuild/scan-exclude
-(supports comments with #). Paths are matched against the directory's
+Project-specific excludes: use --skip for one-off runs, put skip_dirs in
+.cobuild/scan.yaml, or maintain the legacy one-path-per-line
+.cobuild/scan-exclude file. Paths are matched against the directory's
 relative path OR its basename.`,
 	Example: `  cobuild scan                     # generate anatomy
+  cobuild scan --skip vendor,tmp   # skip extra directories for this run
   cobuild scan --check              # check if anatomy is stale
   cobuild scan --stdout             # print to stdout instead of writing
   cobuild scan --verbose            # do not collapse large directories`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		check, _ := cmd.Flags().GetBool("check")
+		skip, _ := cmd.Flags().GetString("skip")
 		stdout, _ := cmd.Flags().GetBool("stdout")
 		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		repoRoot := findRepoRoot()
 
-		entries, err := scanProject(repoRoot)
+		entries, err := scanProject(repoRoot, splitCSV(skip)...)
 		if err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
@@ -152,10 +156,20 @@ func removeLegacyAnatomy(repoRoot string) error {
 	return nil
 }
 
-func scanProject(repoRoot string) ([]fileEntry, error) {
+func scanProject(repoRoot string, extraSkips ...string) ([]fileEntry, error) {
 	var entries []fileEntry
 
 	projectSkips := loadProjectScanExcludes(repoRoot)
+	for _, entry := range loadProjectScanYAML(repoRoot) {
+		projectSkips[entry] = true
+	}
+	for _, entry := range extraSkips {
+		entry = strings.TrimSpace(strings.TrimRight(entry, "/"))
+		if entry == "" {
+			continue
+		}
+		projectSkips[entry] = true
+	}
 
 	// Merge pipeline.yaml scan.skip_dirs into the project skip set. Config
 	// entries can be repo-relative paths or directory basenames; both
@@ -261,6 +275,46 @@ func loadProjectScanExcludes(repoRoot string) map[string]bool {
 			continue
 		}
 		out[strings.TrimRight(line, "/")] = true
+	}
+	return out
+}
+
+func loadProjectScanYAML(repoRoot string) []string {
+	path := filepath.Join(repoRoot, ".cobuild", "scan.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var cfg struct {
+		Skip     []string `yaml:"skip,omitempty"`
+		SkipDirs []string `yaml:"skip_dirs,omitempty"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+
+	var out []string
+	for _, entry := range append(cfg.SkipDirs, cfg.Skip...) {
+		entry = strings.TrimSpace(strings.TrimRight(entry, "/"))
+		if entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
 	}
 	return out
 }
@@ -452,6 +506,7 @@ func min(a, b int) int {
 
 func init() {
 	scanCmd.Flags().Bool("check", false, "Check if anatomy is stale")
+	scanCmd.Flags().String("skip", "", "Comma-separated directories or repo-relative paths to skip for this run")
 	scanCmd.Flags().Bool("stdout", false, "Print to stdout instead of writing file")
 	scanCmd.Flags().Bool("verbose", false, "Do not collapse large directories into one-line summaries")
 	rootCmd.AddCommand(scanCmd)
