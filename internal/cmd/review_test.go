@@ -761,6 +761,61 @@ func TestRecordMergeFailureLogsAuditWriteErrors(t *testing.T) {
 	}
 }
 
+func TestDoMergeCleanupFailureDoesNotFailMerge(t *testing.T) {
+	fc, fs := newPRReviewFixture()
+	installReviewCommandTestGlobals(t, fc, fs)
+
+	prevCleanup := reviewCleanupTaskResources
+	prevConfigLoader := reviewConfigLoader
+	prevOutput := execCommandOutput
+	prevCombined := execCommandCombinedOutput
+	prevWarningWriter := reviewWarningWriter
+	t.Cleanup(func() {
+		reviewCleanupTaskResources = prevCleanup
+		reviewConfigLoader = prevConfigLoader
+		execCommandOutput = prevOutput
+		execCommandCombinedOutput = prevCombined
+		reviewWarningWriter = prevWarningWriter
+	})
+
+	cfg := config.DefaultConfig()
+	reviewConfigLoader = func() *config.Config { return cfg }
+	reviewCleanupTaskResources = func(_ context.Context, taskID string) error {
+		return fmt.Errorf("worktree busy")
+	}
+
+	var warnings bytes.Buffer
+	reviewWarningWriter = &warnings
+
+	execCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "gh api repos/acme/cobuild/pulls/42 --jq .mergeable_state + \"|\" + .head.ref":
+			return nil, fmt.Errorf("skip auto-rebase probe")
+		default:
+			t.Fatalf("unexpected Output command: %s", key)
+			return nil, nil
+		}
+	}
+	execCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		if key != "gh pr merge https://github.com/acme/cobuild/pull/42 --squash --delete-branch" {
+			t.Fatalf("unexpected CombinedOutput command: %s", key)
+		}
+		return []byte("merged\n"), nil
+	}
+
+	if err := doMerge(context.Background(), "cb-task", "https://github.com/acme/cobuild/pull/42"); err != nil {
+		t.Fatalf("doMerge returned error after successful merge: %v", err)
+	}
+	if got := fc.items["cb-task"].Status; got != "closed" {
+		t.Fatalf("task status = %q, want closed", got)
+	}
+	if !strings.Contains(warnings.String(), "merge succeeded, but local cleanup failed for cb-task: worktree busy") {
+		t.Fatalf("warnings = %q, want cleanup failure warning", warnings.String())
+	}
+}
+
 func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
 	fc, fs := newPRReviewFixture()
 	installReviewCommandTestGlobals(t, fc, fs)

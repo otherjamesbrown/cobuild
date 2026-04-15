@@ -137,3 +137,46 @@ func TestReviewCfg_EffectiveModeAcceptsSupportedValues(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanupCfg_DefaultsAndOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.AutoOnMergeEnabled() {
+		t.Fatalf("default auto_on_merge = false, want true")
+	}
+
+	override := &Config{
+		Cleanup: CleanupCfg{
+			AutoOnMerge: boolPtr(false),
+		},
+	}
+	merged := MergeConfig(cfg, override)
+	if merged.AutoOnMergeEnabled() {
+		t.Fatalf("merged auto_on_merge = true, want false")
+	}
+}
+
+func TestLoadConfig_CleanupAutoOnMerge(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := t.TempDir()
+	repoCfgDir := filepath.Join(repoRoot, ".cobuild")
+	if err := os.MkdirAll(repoCfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo config dir: %v", err)
+	}
+
+	repoPipeline := []byte("" +
+		"cleanup:\n" +
+		"  auto_on_merge: false\n")
+	if err := os.WriteFile(filepath.Join(repoCfgDir, "pipeline.yaml"), repoPipeline, 0o644); err != nil {
+		t.Fatalf("write repo pipeline: %v", err)
+	}
+
+	cfg, err := LoadConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.AutoOnMergeEnabled() {
+		t.Fatalf("loaded auto_on_merge = true, want false")
+	}
+}

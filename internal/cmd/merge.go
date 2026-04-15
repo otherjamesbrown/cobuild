@@ -7,13 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/domain"
-	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
-var mergeWorktreeRemove = worktree.Remove
+var mergeCleanupTaskResources = cleanupTaskResources
 
 var mergeCmd = &cobra.Command{
 	Use:   "merge <task-id>",
@@ -86,9 +84,13 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		}
 		syncPipelineTaskStatus(ctx, taskID, "closed")
 
-		if err := localCleanup(ctx, taskID); err != nil {
-			fmt.Printf("  Warning: merge succeeded, but local cleanup failed: %v\n", err)
-			fmt.Printf("  Retry cleanup separately later if needed.\n")
+		if cleanupAutoOnMergeEnabled() {
+			if err := mergeCleanupTaskResources(ctx, taskID); err != nil {
+				fmt.Printf("  Warning: merge succeeded, but local cleanup failed: %v\n", err)
+				fmt.Printf("  Retry cleanup separately later if needed.\n")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "cleanup auto_on_merge=false; skipping automatic local cleanup for %s\n", taskID)
 		}
 
 		if err := handlePostCloseProgress(ctx, taskID); err != nil {
@@ -102,28 +104,26 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 
 func remoteMerge(ctx context.Context, prURL string) error {
 	fmt.Printf("Merging %s...\n", prURL)
-	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
+	mergeOut, mergedWithWarning, err := ghMergePR(ctx, prURL)
 	if err != nil {
 		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
+	}
+	if mergedWithWarning {
+		fmt.Fprintf(os.Stderr, "Warning: GitHub merged %s but gh reported a local cleanup error:\n%s\n", prURL, strings.TrimSpace(string(mergeOut)))
 	}
 	return nil
 }
 
-func localCleanup(ctx context.Context, taskID string) error {
-	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
-	if wtPath == "" {
-		return nil
+func ghMergePR(ctx context.Context, prURL string) ([]byte, bool, error) {
+	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
+	if err == nil {
+		return mergeOut, false, nil
 	}
-
-	archiveSessionLogs(wtPath, taskID)
-
-	repoForCleanup, _ := config.RepoForProject(projectName)
-	if err := mergeWorktreeRemove(ctx, repoForCleanup, wtPath, taskID); err != nil {
-		return err
+	stateOut, stateErr := execCommandOutput(ctx, "gh", "pr", "view", prURL, "--json", "state", "--jq", ".state")
+	if stateErr == nil && strings.TrimSpace(string(stateOut)) == "MERGED" {
+		return mergeOut, true, nil
 	}
-
-	fmt.Printf("  Worktree cleaned up.\n")
-	return nil
+	return mergeOut, false, err
 }
 
 // archiveSessionLogs copies session logs from a worktree to .cobuild/sessions/<task-id>/

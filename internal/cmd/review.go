@@ -38,6 +38,7 @@ var (
 	reviewerFactory = func(provider string, cfg llmreview.ProviderConfig) (llmreview.Reviewer, error) {
 		return llmreview.NewReviewer(provider, cfg)
 	}
+	reviewCleanupTaskResources = cleanupTaskResources
 )
 
 func reviewWarnf(format string, args ...any) {
@@ -645,14 +646,6 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 			taskID, mergeMaxRetries,
 		)
 	}
-	// Clean up the worktree FIRST, before calling `gh pr merge --delete-branch`.
-	// Otherwise the local branch deletion fails with "cannot delete branch X
-	// used by worktree at Y" (observed on cp-64af0f, 2026-04-11) because the
-	// worktree still has the branch checked out at merge time. Remove the
-	// worktree, which frees the branch, then merge-and-delete succeeds.
-	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
-	cleanupTaskWorktree(ctx, taskID, wtPath)
-
 	// Auto-rebase before merge: if the PR is mergeable_state=behind/dirty
 	// (stale base, no real conflicts), rebase onto origin/main and force-push.
 	// Three outcomes (cb-c6091a):
@@ -665,8 +658,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	}
 
 	fmt.Printf("Merging %s...\n", prURL)
-	mergeOut, err := execCommandCombinedOutput(ctx, "gh", "pr", "merge", prURL,
-		"--squash", "--delete-branch")
+	mergeOut, mergedWithWarning, err := ghMergePR(ctx, prURL)
 	if err != nil {
 		recordMergeFailure(ctx, taskID, prURL, string(mergeOut))
 		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
@@ -677,6 +669,17 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		reviewWarnf("Warning: failed to clear merge retry count for %s: %v\n", taskID, err)
 	}
 	fmt.Println("  Merged.")
+	if mergedWithWarning {
+		reviewWarnf("Warning: GitHub merged %s but gh reported a local cleanup error:\n%s\n", prURL, strings.TrimSpace(string(mergeOut)))
+	}
+
+	if reviewConfigLoader().AutoOnMergeEnabled() {
+		if err := reviewCleanupTaskResources(ctx, taskID); err != nil {
+			reviewWarnf("Warning: merge succeeded, but local cleanup failed for %s: %v\n", taskID, err)
+		}
+	} else {
+		reviewWarnf("cleanup auto_on_merge=false; skipping automatic local cleanup for %s\n", taskID)
+	}
 
 	// Rebase sibling branches onto updated main to prevent merge conflicts
 	// on subsequent wave PRs (cb-7dd0d4).
