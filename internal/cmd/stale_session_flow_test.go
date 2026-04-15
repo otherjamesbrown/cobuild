@@ -8,6 +8,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -173,31 +174,191 @@ func TestNextMentionsRedispatchAfterLifecycleRecovery(t *testing.T) {
 	}
 }
 
-// Self-heal: a "running" session record with no live tmux window is stale
-// state from a prior orchestrator crash. Dispatch should recover it in
-// place instead of refusing (cb-d5e1dd #4). The zombie session row must be
-// cancelled and the task must be re-dispatched.
-func TestDispatchSelfHealsZombieSessionConflict(t *testing.T) {
+func TestDispatchAutoRecoversWhenRecordedTmuxWindowIsGone(t *testing.T) {
 	taskID := "cb-task-zombie"
-	now := time.Now().UTC()
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusInProgress, map[string]any{
+		domain.MetaTmuxWindow: taskID,
+	})
 
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	out, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID})
+	if err != nil {
+		t.Fatalf("dispatch returned error, want auto-recovery: %v", err)
+	}
+	if strings.Count(out, "Auto-recovered cb-task-zombie: tmux window cobuild-test-project:cb-task-zombie no longer present; resetting and re-dispatching.") != 1 {
+		t.Fatalf("auto-recovery log count != 1:\n%s", out)
+	}
+	if got := fc.items[taskID].Status; got != "open" {
+		t.Fatalf("work item status = %q, want open", got)
+	}
+	if got := fs.tasks[0].Status; got != domain.StatusPending {
+		t.Fatalf("pipeline task status = %q, want pending", got)
+	}
+	if got := fs.sessions[0].Status; got != domain.StatusCancelled {
+		t.Fatalf("session status = %q, want cancelled", got)
+	}
+}
+
+func TestDispatchRejectsWhenRecordedTmuxWindowStillExists(t *testing.T) {
+	taskID := "cb-task-live"
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusInProgress, map[string]any{
+		domain.MetaTmuxWindow: taskID,
+	})
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		return true, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	_, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want live-session rejection")
+	}
+	if !strings.Contains(err.Error(), "task not dispatchable: conflict in pipeline session: session ps-"+taskID+" is still running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fc.items[taskID].Status; got != domain.StatusInProgress {
+		t.Fatalf("work item status = %q, want %q", got, domain.StatusInProgress)
+	}
+	if got := fs.tasks[0].Status; got != domain.StatusInProgress {
+		t.Fatalf("pipeline task status = %q, want %q", got, domain.StatusInProgress)
+	}
+}
+
+func TestDispatchRejectsWhenTmuxWindowMetadataIsMissing(t *testing.T) {
+	taskID := "cb-task-no-window"
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusInProgress, nil)
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		t.Fatal("tmux probe should not run without tmux_window metadata")
+		return false, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	_, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID})
+	if err == nil {
+		t.Fatal("dispatch returned nil error, want missing-metadata rejection")
+	}
+	if !strings.Contains(err.Error(), "task not dispatchable: conflict in pipeline session: session ps-"+taskID+" is still running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// A review-phase redispatch that dies should recover back to needs-review
+// so process-review can re-run against the PR. Signalled by the "review-"
+// prefix on the tmux window name (set by dispatchTmuxWindowName for review
+// phases).
+func TestDispatchAutoRecoverReviewDispatchRecoversToNeedsReview(t *testing.T) {
+	taskID := "cb-task-review"
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusNeedsReview, map[string]any{
+		domain.MetaTmuxWindow: "review-" + taskID,
+		domain.MetaPRURL:      "https://github.com/acme/cobuild/pull/42",
+	})
+	fs.runs[taskID].CurrentPhase = domain.PhaseReview
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	out, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID})
+	if err != nil {
+		t.Fatalf("dispatch returned error, want review redispatch: %v", err)
+	}
+	if got := fc.items[taskID].Status; got != domain.StatusNeedsReview {
+		t.Fatalf("work item status = %q, want %q", got, domain.StatusNeedsReview)
+	}
+	if got := fs.tasks[0].Status; got != domain.StatusNeedsReview {
+		t.Fatalf("pipeline task status = %q, want %q", got, domain.StatusNeedsReview)
+	}
+	if !strings.Contains(out, "Dispatching cb-task-review for review (status was needs-review).") {
+		t.Fatalf("output missing review redispatch notice:\n%s", out)
+	}
+}
+
+// A fix-cycle redispatch (task was in_progress with a PR already open after
+// review requested changes, per review.go:769-777) that dies should recover
+// to in_progress so the fix loop continues, NOT back to needs-review.
+func TestDispatchAutoRecoverFixDispatchRecoversToInProgress(t *testing.T) {
+	taskID := "cb-task-fix"
+	fc, fs := setupDispatchConflictTask(t, taskID, domain.StatusInProgress, map[string]any{
+		domain.MetaTmuxWindow: taskID, // implement-style window name, no "review-" prefix
+		domain.MetaPRURL:      "https://github.com/acme/cobuild/pull/42",
+	})
+	fs.runs[taskID].CurrentPhase = domain.PhaseReview
+
+	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
+	defer restore()
+
+	prevProbe := dispatchTmuxWindowExists
+	dispatchTmuxWindowExists = func(context.Context, *config.Config, string, string) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { dispatchTmuxWindowExists = prevProbe })
+	setCommandFlag(t, dispatchCmd, "dry-run", "true")
+
+	if _, err := runCommandWithOutputs(t, dispatchCmd, []string{taskID}); err != nil {
+		t.Fatalf("dispatch returned error: %v", err)
+	}
+	if got := fc.items[taskID].Status; got != domain.StatusInProgress {
+		t.Fatalf("work item status = %q, want %q (fix cycle should not bounce back to needs-review)", got, domain.StatusInProgress)
+	}
+	if got := fs.tasks[0].Status; got != domain.StatusInProgress {
+		t.Fatalf("pipeline task status = %q, want %q", got, domain.StatusInProgress)
+	}
+}
+
+func setupDispatchConflictTask(t *testing.T, taskID, status string, metadata map[string]any) (*fakeConnector, *fakeStore) {
+	t.Helper()
+
+	now := time.Now().UTC()
 	fc := newFakeConnector()
-	fc.addItem(&connector.WorkItem{ID: taskID, Title: "Zombie task", Type: "task", Status: "in_progress"})
+	fc.addItem(&connector.WorkItem{
+		ID:       taskID,
+		Title:    "Dispatch conflict task",
+		Type:     "task",
+		Status:   status,
+		Metadata: metadata,
+	})
 
 	fs := newFakeStore()
 	fs.runs[taskID] = &store.PipelineRun{
-		ID:           "run-zombie",
+		ID:           "run-" + taskID,
 		DesignID:     taskID,
-		CurrentPhase: "implement",
+		CurrentPhase: domain.PhaseImplement,
 		Status:       "active",
 	}
 	fs.sessions = []store.SessionRecord{
 		{
-			ID:          "ps-zombie",
-			PipelineID:  "run-zombie",
+			ID:          "ps-" + taskID,
+			PipelineID:  "run-" + taskID,
 			DesignID:    taskID,
 			TaskID:      taskID,
-			Phase:       "implement",
+			Phase:       domain.PhaseImplement,
 			Project:     "test-project",
 			Status:      "running",
 			StartedAt:   now.Add(-10 * time.Minute),
@@ -205,32 +366,13 @@ func TestDispatchSelfHealsZombieSessionConflict(t *testing.T) {
 			TmuxWindow:  stringPtr(taskID),
 		},
 	}
-
-	restore := installTestGlobalsWithResolverExec(t, fc, fs, "test-project", testResolverExec())
-	defer restore()
-
-	_ = dispatchCmd.Flags().Set("dry-run", "true")
-	t.Cleanup(func() {
-		_ = dispatchCmd.Flags().Set("dry-run", "false")
-	})
-
-	if err := dispatchCmd.RunE(dispatchCmd, []string{taskID}); err != nil {
-		t.Fatalf("dispatch returned error, want self-heal: %v", err)
-	}
-	// The zombie session row must be cancelled, not left as 'running'.
-	var zombie *store.SessionRecord
-	for i := range fs.sessions {
-		if fs.sessions[i].ID == "ps-zombie" {
-			zombie = &fs.sessions[i]
-			break
-		}
-	}
-	if zombie == nil {
-		t.Fatal("zombie session record disappeared")
-	}
-	if zombie.Status == "running" {
-		t.Fatalf("zombie session status still running; self-heal did not cancel it")
-	}
+	fs.tasks = []store.PipelineTaskRecord{{
+		PipelineID:  "run-" + taskID,
+		TaskShardID: taskID,
+		DesignID:    taskID,
+		Status:      status,
+	}}
+	return fc, fs
 }
 
 func timePtr(t time.Time) *time.Time {

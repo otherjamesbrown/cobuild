@@ -67,6 +67,15 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 		if err != nil {
 			return fmt.Errorf("task not found: %s", taskID)
 		}
+		taskProject := resolveTaskProject(task)
+		repoRoot, _ := config.RepoForProject(taskProject)
+		if repoRoot == "" {
+			repoRoot = findRepoRoot()
+		}
+		pCfg, _ := config.LoadConfig(repoRoot)
+		if pCfg == nil {
+			pCfg = config.DefaultConfig()
+		}
 
 		resolvedState, err := pipelinestate.Resolve(ctx, taskID)
 		if err != nil && !errors.Is(err, pipelinestate.ErrNotFound) {
@@ -77,18 +86,18 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 			dispatchStatus = resolvedState.WorkItem.Status
 		}
 		if conflict := dispatchConflictFromResolvedState(taskID, resolvedState); conflict != nil {
-			// Self-heal: a conflict on a session that has no live tmux window
-			// and no heartbeat is stale state from a prior orchestrator that
-			// died. Recover it in place rather than forcing the operator to
-			// run `cobuild recover` manually (cb-d5e1dd #4).
-			recovered, reason, rerr := recoverDeadAgent(ctx, taskID)
+			if dispatchStatus != domain.StatusInProgress && dispatchStatus != domain.StatusNeedsReview {
+				return fmt.Errorf("task not dispatchable: conflict in %s: %s", conflict.Source, conflict.Detail)
+			}
+			recovered, recoveredStatus, target, rerr := autoRecoverDispatchConflict(ctx, taskID, taskProject, pCfg)
 			if rerr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: self-heal probe for %s failed: %v\n", taskID, rerr)
+				return rerr
 			}
 			if !recovered {
 				return fmt.Errorf("task not dispatchable: conflict in %s: %s", conflict.Source, conflict.Detail)
 			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "Self-healed stale conflict on %s: %s\n", taskID, reason)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Auto-recovered %s: tmux window %s no longer present; resetting and re-dispatching.\n", taskID, target)
+			dispatchStatus = recoveredStatus
 			// Re-resolve so the rest of dispatch sees the cleaned state.
 			resolvedState, _ = pipelinestate.Resolve(ctx, taskID)
 			if resolvedState != nil && resolvedState.WorkItem != nil && resolvedState.WorkItem.Status != "" {
@@ -121,16 +130,6 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 		}
 		if len(unsatisfied) > 0 {
 			return fmt.Errorf("blockers not satisfied:\n  %s", strings.Join(unsatisfied, "\n  "))
-		}
-
-		taskProject := resolveTaskProject(task)
-		repoRoot, _ := config.RepoForProject(taskProject)
-		if repoRoot == "" {
-			repoRoot = findRepoRoot()
-		}
-		pCfg, _ := config.LoadConfig(repoRoot)
-		if pCfg == nil {
-			pCfg = config.DefaultConfig()
 		}
 
 		// Detect current phase from pipeline state; auto-create run if missing.
@@ -1394,6 +1393,36 @@ func resolveTaskProject(task *connector.WorkItem) string {
 type dispatchConflict struct {
 	Source string
 	Detail string
+}
+
+func autoRecoverDispatchConflict(ctx context.Context, taskID, taskProject string, pCfg *config.Config) (bool, string, string, error) {
+	if cbStore == nil || conn == nil {
+		return false, "", "", nil
+	}
+
+	tmuxWindow, err := conn.GetMetadata(ctx, taskID, domain.MetaTmuxWindow)
+	if err != nil {
+		return false, "", "", fmt.Errorf("read tmux metadata for %s: %w", taskID, err)
+	}
+	tmuxWindow = strings.TrimSpace(tmuxWindow)
+	if tmuxWindow == "" {
+		return false, "", "", nil
+	}
+
+	tmuxSession := pCfg.ResolveTmuxSession(taskProject)
+	exists, err := dispatchTmuxWindowExists(ctx, pCfg, tmuxSession, tmuxWindow)
+	if err != nil {
+		return false, "", "", err
+	}
+	if exists {
+		return false, "", "", nil
+	}
+
+	workItemStatus, _, err := resetRecoveredDispatchState(ctx, taskID, tmuxWindow)
+	if err != nil {
+		return false, "", "", err
+	}
+	return true, workItemStatus, fmt.Sprintf("%s:%s", tmuxSession, tmuxWindow), nil
 }
 
 func dispatchConflictFromResolvedState(taskID string, state *pipelinestate.PipelineState) *dispatchConflict {

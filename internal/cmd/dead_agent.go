@@ -4,10 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 )
+
+var dispatchTmuxWindowExists = func(ctx context.Context, pCfg *config.Config, sessionName, windowName string) (bool, error) {
+	sessionName = strings.TrimSpace(sessionName)
+	windowName = strings.TrimSpace(windowName)
+	if sessionName == "" || windowName == "" {
+		return false, nil
+	}
+
+	target := fmt.Sprintf("%s:%s", sessionName, windowName)
+	out, err := execCommandCombinedOutput(ctx, "tmux", tmuxCommandArgs(pCfg, "has-session", "-t", target)...)
+	if err == nil {
+		return true, nil
+	}
+	if tmuxTargetMissing(err, out) {
+		return false, nil
+	}
+	return false, fmt.Errorf("probe tmux window %s: %w", target, err)
+}
 
 // recoverDeadAgent checks whether a task's dispatched agent is still alive.
 // If no tmux window and no running session can be found, it cancels any
@@ -38,17 +58,68 @@ func recoverDeadAgent(ctx context.Context, taskID string) (bool, string, error) 
 		return false, "", nil
 	}
 
-	// Reset.
-	reason := "no tmux window for task"
-	if cancelled, err := cbStore.CancelRunningSessionsForShard(ctx, taskID); err == nil && cancelled > 0 {
-		reason = fmt.Sprintf("%s (cancelled %d stale session record(s))", reason, cancelled)
+	if _, reason, err := resetRecoveredDispatchState(ctx, taskID, ""); err != nil {
+		return false, "", err
+	} else {
+		return true, reason, nil
+	}
+}
+
+// resetRecoveredDispatchState resets state for a dispatch whose agent is gone.
+// deadWindowName is the tmux window name of the dispatch that died — used to
+// infer whether the session was a review redispatch, a fix redispatch, or an
+// initial implement dispatch, so the reset lands in the correct pre-dispatch
+// state. Empty string means "unknown" (called from `cobuild recover`) and
+// falls back to the safe default of reopening the task.
+func resetRecoveredDispatchState(ctx context.Context, taskID, deadWindowName string) (string, string, error) {
+	if cbStore == nil || conn == nil {
+		return "", "", nil
 	}
 
-	if err := cbStore.UpdateTaskStatus(ctx, taskID, domain.StatusPending); err != nil {
-		return false, "", fmt.Errorf("reset pipeline task status: %w", err)
+	workItemStatus := "open"
+	pipelineStatus := domain.StatusPending
+
+	// Distinguish review / fix / implement dispatches by the tmux window
+	// name pattern set in dispatchTmuxWindowName. Review dispatches prefix
+	// with "review-"; fix redispatches reuse the implement-style name but
+	// are identifiable by the presence of a pr_url (set by review.go at
+	// 769-777 after review requests changes).
+	if deadWindowName != "" {
+		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
+		hasPR := strings.TrimSpace(prURL) != ""
+		if strings.HasPrefix(deadWindowName, "review-") {
+			workItemStatus = domain.StatusNeedsReview
+			pipelineStatus = domain.StatusNeedsReview
+		} else if hasPR {
+			workItemStatus = domain.StatusInProgress
+			pipelineStatus = domain.StatusInProgress
+		}
 	}
-	if err := conn.UpdateStatus(ctx, taskID, "open"); err != nil {
-		return false, "", fmt.Errorf("reopen work item: %w", err)
+
+	cancelled, err := cbStore.CancelRunningSessionsForShard(ctx, taskID)
+	if err != nil {
+		return "", "", fmt.Errorf("cancel stale sessions for %s: %w", taskID, err)
 	}
-	return true, reason, nil
+	if err := cbStore.UpdateTaskStatus(ctx, taskID, pipelineStatus); err != nil {
+		return "", "", fmt.Errorf("reset pipeline task status: %w", err)
+	}
+	if err := conn.UpdateStatus(ctx, taskID, workItemStatus); err != nil {
+		return "", "", fmt.Errorf("reset work item status: %w", err)
+	}
+
+	reason := "no tmux window for task"
+	if cancelled > 0 {
+		reason = fmt.Sprintf("%s (cancelled %d stale session record(s))", reason, cancelled)
+	}
+	return workItemStatus, reason, nil
+}
+
+func tmuxTargetMissing(err error, out []byte) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error() + "\n" + string(out))
+	return strings.Contains(text, "can't find window") ||
+		strings.Contains(text, "can't find session") ||
+		strings.Contains(text, "no server running")
 }
