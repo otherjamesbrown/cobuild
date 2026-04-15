@@ -4,16 +4,21 @@ import (
 	"testing"
 
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
 
-func TestWICreateInheritsParentRepoMetadata(t *testing.T) {
+func TestWICreateInheritsParentRoutingMetadata(t *testing.T) {
 	testConn := newFakeConnector()
 	testConn.addItem(&connector.WorkItem{
-		ID:       "cb-parent",
-		Title:    "parent",
-		Type:     "design",
-		Status:   "open",
-		Metadata: map[string]any{"repo": "context-palace"},
+		ID:     "cb-parent",
+		Title:  "parent",
+		Type:   "design",
+		Status: "open",
+		Metadata: map[string]any{
+			domain.MetaRepo:            "context-palace",
+			domain.MetaDispatchRuntime: domain.RuntimeCodex,
+			domain.MetaCompletionMode:  "direct",
+		},
 	})
 
 	testStore := newFakeStore()
@@ -39,20 +44,30 @@ func TestWICreateInheritsParentRepoMetadata(t *testing.T) {
 		t.Fatalf("created requests = %d, want 1", len(testConn.createRequests))
 	}
 
-	got := testConn.createRequests[0].Metadata["repo"]
-	if got != "context-palace" {
-		t.Fatalf("child repo metadata = %v, want context-palace", got)
+	got := testConn.createRequests[0].Metadata
+	if got[domain.MetaRepo] != "context-palace" {
+		t.Fatalf("child repo metadata = %v, want context-palace", got[domain.MetaRepo])
+	}
+	if got[domain.MetaDispatchRuntime] != domain.RuntimeCodex {
+		t.Fatalf("child dispatch_runtime = %v, want %s", got[domain.MetaDispatchRuntime], domain.RuntimeCodex)
+	}
+	if got[domain.MetaCompletionMode] != "direct" {
+		t.Fatalf("child completion_mode = %v, want direct", got[domain.MetaCompletionMode])
 	}
 }
 
-func TestWICreateSkipsAmbiguousParentRepoMetadata(t *testing.T) {
+func TestWICreateSkipsAmbiguousParentRepoMetadataButKeepsOtherRoutingMetadata(t *testing.T) {
 	testConn := newFakeConnector()
 	testConn.addItem(&connector.WorkItem{
-		ID:       "cb-parent",
-		Title:    "parent",
-		Type:     "design",
-		Status:   "open",
-		Metadata: map[string]any{"repo": "context-palace, penfold"},
+		ID:     "cb-parent",
+		Title:  "parent",
+		Type:   "design",
+		Status: "open",
+		Metadata: map[string]any{
+			domain.MetaRepo:            "context-palace, penfold",
+			domain.MetaDispatchRuntime: domain.RuntimeCodex,
+			domain.MetaCompletionMode:  "direct",
+		},
 	})
 
 	testStore := newFakeStore()
@@ -75,7 +90,14 @@ func TestWICreateSkipsAmbiguousParentRepoMetadata(t *testing.T) {
 	if len(testConn.createRequests) != 1 {
 		t.Fatalf("created requests = %d, want 1", len(testConn.createRequests))
 	}
-	if testConn.createRequests[0].Metadata != nil {
-		t.Fatalf("child metadata = %#v, want nil", testConn.createRequests[0].Metadata)
+	got := testConn.createRequests[0].Metadata
+	if _, ok := got[domain.MetaRepo]; ok {
+		t.Fatalf("child metadata = %#v, did not expect repo", got)
+	}
+	if got[domain.MetaDispatchRuntime] != domain.RuntimeCodex {
+		t.Fatalf("child dispatch_runtime = %v, want %s", got[domain.MetaDispatchRuntime], domain.RuntimeCodex)
+	}
+	if got[domain.MetaCompletionMode] != "direct" {
+		t.Fatalf("child completion_mode = %v, want direct", got[domain.MetaCompletionMode])
 	}
 }

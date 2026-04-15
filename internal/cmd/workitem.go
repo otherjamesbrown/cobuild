@@ -333,14 +333,27 @@ func inheritedChildMetadata(ctx context.Context, cn connector.Connector, parentI
 		return nil, nil
 	}
 
-	repo, err := cn.GetMetadata(ctx, parentID, domain.MetaRepo)
-	if err != nil {
-		return nil, fmt.Errorf("read parent repo metadata: %w", err)
+	inherited := map[string]any{}
+	for _, key := range []string{
+		domain.MetaRepo,
+		domain.MetaDispatchRuntime,
+		domain.MetaCompletionMode,
+	} {
+		value, err := cn.GetMetadata(ctx, parentID, key)
+		if err != nil {
+			return nil, fmt.Errorf("read parent %s metadata: %w", key, err)
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if key == domain.MetaRepo && repoMetadataLooksAmbiguous(value) {
+			continue
+		}
+		inherited[key] = value
 	}
-	repo = strings.TrimSpace(repo)
-	if repo == "" || repoMetadataLooksAmbiguous(repo) {
+	if len(inherited) == 0 {
 		return nil, nil
 	}
-
-	return map[string]any{domain.MetaRepo: repo}, nil
+	return inherited, nil
 }
