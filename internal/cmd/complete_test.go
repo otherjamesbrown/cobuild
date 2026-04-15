@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
@@ -291,6 +293,109 @@ func TestAdvancePipelinePhaseResolvesNextFromWorkflow(t *testing.T) {
 	}
 }
 
+func TestAdvancePipelinePhaseAutoClosesTaskAtDone(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-task"] = &connector.WorkItem{
+		ID: "cb-task", Type: "task", Status: "needs-review",
+	}
+
+	fs := newFakeStore()
+	fs.runs["cb-task"] = &store.PipelineRun{
+		ID: "run-task", DesignID: "cb-task", CurrentPhase: "kb-sync", Status: "active",
+	}
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	next, err := advancePipelinePhase(ctx, fs, fc, nil, "cb-task", "kb-sync")
+	if err != nil {
+		t.Fatalf("advancePipelinePhase(kb-sync->done) error = %v", err)
+	}
+	if next != domain.PhaseDone {
+		t.Fatalf("next phase = %q, want %q", next, domain.PhaseDone)
+	}
+	if got := fc.items["cb-task"].Status; got != "closed" {
+		t.Fatalf("task status = %q, want closed", got)
+	}
+	if len(fc.statusUpdates) != 1 || fc.statusUpdates[0].id != "cb-task" || fc.statusUpdates[0].status != "closed" {
+		t.Fatalf("status updates = %+v, want cb-task -> closed", fc.statusUpdates)
+	}
+}
+
+func TestAdvancePipelinePhaseAutoClosesDesignAtDone(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-design"] = &connector.WorkItem{
+		ID: "cb-design", Type: "design", Status: "needs-review",
+	}
+	fc.items["cb-task-child"] = &connector.WorkItem{
+		ID: "cb-task-child", Type: "task", Status: "closed",
+	}
+	fc.setChildTasks("cb-design", "cb-task-child")
+
+	fs := newFakeStore()
+	fs.runs["cb-design"] = &store.PipelineRun{
+		ID: "run-design", DesignID: "cb-design", CurrentPhase: "kb-sync", Status: "active",
+	}
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	next, err := advancePipelinePhase(ctx, fs, fc, nil, "cb-design", "kb-sync")
+	if err != nil {
+		t.Fatalf("advancePipelinePhase(kb-sync->done) error = %v", err)
+	}
+	if next != domain.PhaseDone {
+		t.Fatalf("next phase = %q, want %q", next, domain.PhaseDone)
+	}
+	if got := fc.items["cb-design"].Status; got != "closed" {
+		t.Fatalf("design status = %q, want closed", got)
+	}
+	if len(fc.statusUpdates) != 1 || fc.statusUpdates[0].id != "cb-design" || fc.statusUpdates[0].status != "closed" {
+		t.Fatalf("status updates = %+v, want cb-design -> closed", fc.statusUpdates)
+	}
+}
+
+func TestAdvancePipelinePhaseWarnsWhenAutoCloseFails(t *testing.T) {
+	ctx := context.Background()
+
+	fc := newFakeConnector()
+	fc.items["cb-task"] = &connector.WorkItem{
+		ID: "cb-task", Type: "task", Status: "needs-review",
+	}
+	fc.updateStatusErr["cb-task"] = fmt.Errorf("connector offline")
+
+	fs := newFakeStore()
+	fs.runs["cb-task"] = &store.PipelineRun{
+		ID: "run-task", DesignID: "cb-task", CurrentPhase: "kb-sync", Status: "active",
+	}
+	restore := installTestGlobals(t, fc, fs, "test-project")
+	defer restore()
+
+	var warnings bytes.Buffer
+	prevWarnings := phaseTransitionWarningWriter
+	phaseTransitionWarningWriter = &warnings
+	defer func() { phaseTransitionWarningWriter = prevWarnings }()
+
+	next, err := advancePipelinePhase(ctx, fs, fc, nil, "cb-task", "kb-sync")
+	if err != nil {
+		t.Fatalf("advancePipelinePhase(kb-sync->done) error = %v", err)
+	}
+	if next != domain.PhaseDone {
+		t.Fatalf("next phase = %q, want %q", next, domain.PhaseDone)
+	}
+	if got := fs.runs["cb-task"].CurrentPhase; got != domain.PhaseDone {
+		t.Fatalf("stored phase = %q, want %q", got, domain.PhaseDone)
+	}
+	if got := fc.items["cb-task"].Status; got != "needs-review" {
+		t.Fatalf("task status = %q, want unchanged needs-review after close failure", got)
+	}
+	if !strings.Contains(warnings.String(), "Warning: failed to auto-close cb-task: connector offline") {
+		t.Fatalf("warning output = %q, want auto-close warning", warnings.String())
+	}
+}
+
 func TestRecordGateVerdictRejectsStalePhase(t *testing.T) {
 	ctx := context.Background()
 
@@ -395,19 +500,27 @@ func testResolverExec() pipelinestate.CommandRunner {
 }
 
 type fakeConnector struct {
-	items          map[string]*connector.WorkItem
-	metadata       map[string]map[string]string
-	parent         map[string]string
-	edges          map[string]map[string][]connector.Edge
-	createRequests []connector.CreateRequest
+	items           map[string]*connector.WorkItem
+	metadata        map[string]map[string]string
+	parent          map[string]string
+	edges           map[string]map[string][]connector.Edge
+	createRequests  []connector.CreateRequest
+	statusUpdates   []fakeStatusUpdate
+	updateStatusErr map[string]error
+}
+
+type fakeStatusUpdate struct {
+	id     string
+	status string
 }
 
 func newFakeConnector() *fakeConnector {
 	return &fakeConnector{
-		items:    map[string]*connector.WorkItem{},
-		metadata: map[string]map[string]string{},
-		parent:   map[string]string{},
-		edges:    map[string]map[string][]connector.Edge{},
+		items:           map[string]*connector.WorkItem{},
+		metadata:        map[string]map[string]string{},
+		parent:          map[string]string{},
+		edges:           map[string]map[string][]connector.Edge{},
+		updateStatusErr: map[string]error{},
 	}
 }
 
@@ -480,10 +593,14 @@ func (f *fakeConnector) Create(ctx context.Context, req connector.CreateRequest)
 }
 
 func (f *fakeConnector) UpdateStatus(ctx context.Context, id string, status string) error {
+	if err := f.updateStatusErr[id]; err != nil {
+		return err
+	}
 	item, ok := f.items[id]
 	if !ok {
 		return fmt.Errorf("missing item %s", id)
 	}
+	f.statusUpdates = append(f.statusUpdates, fakeStatusUpdate{id: id, status: status})
 	item.Status = status
 	for owner, dirs := range f.edges {
 		for dir, edges := range dirs {

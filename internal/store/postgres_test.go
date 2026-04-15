@@ -168,6 +168,69 @@ func TestPostgresStoreAdvancePhase(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreListRunsOrdersByLatestActivity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	pgtest.Skip(t, ctx)
+	pg := pgtest.New(t, ctx)
+	s := pg.Store
+	project := fmt.Sprintf("cobuild-status-test-%d", time.Now().UnixNano())
+	designA := fmt.Sprintf("cb-store-status-a-%d", time.Now().UnixNano())
+	designB := fmt.Sprintf("cb-store-status-b-%d", time.Now().UnixNano())
+
+	runA, err := s.CreateRun(ctx, designA, project, "implement")
+	if err != nil {
+		t.Fatalf("CreateRun(%q) error = %v", designA, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if _, err := s.CreateRun(ctx, designB, project, "implement"); err != nil {
+		t.Fatalf("CreateRun(%q) error = %v", designB, err)
+	}
+
+	t.Cleanup(func() {
+		pg.CleanupDesign(t, ctx, designB)
+		pg.CleanupDesign(t, ctx, designA)
+	})
+
+	session, err := s.CreateSession(ctx, store.SessionInput{
+		PipelineID: runA.ID,
+		DesignID:   designA,
+		TaskID:     designA + "-task",
+		Phase:      "implement",
+		Project:    project,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if session.StartedAt.IsZero() {
+		t.Fatal("CreateSession() returned zero StartedAt")
+	}
+
+	runs, err := s.ListRuns(ctx, project)
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) < 2 {
+		t.Fatalf("ListRuns() len = %d, want at least 2", len(runs))
+	}
+	if runs[0].DesignID != designA {
+		t.Fatalf("runs[0].DesignID = %q, want %q (recent session should sort first)", runs[0].DesignID, designA)
+	}
+	if runs[0].LastSessionAt.IsZero() {
+		t.Fatal("runs[0].LastSessionAt = zero, want populated recent session timestamp")
+	}
+	if !runs[0].LastProgress.Equal(runs[0].LastSessionAt) && runs[0].LastProgress.Before(runs[0].LastSessionAt) {
+		t.Fatalf("runs[0].LastProgress = %v, want >= LastSessionAt %v", runs[0].LastProgress, runs[0].LastSessionAt)
+	}
+	if runs[1].DesignID != designB {
+		t.Fatalf("runs[1].DesignID = %q, want %q", runs[1].DesignID, designB)
+	}
+	if !runs[1].LastSessionAt.IsZero() {
+		t.Fatalf("runs[1].LastSessionAt = %v, want zero for run without sessions", runs[1].LastSessionAt)
+	}
+}
+
 func mustAddTask(t *testing.T, ctx context.Context, s *store.PostgresStore, pipelineID, taskShardID, designID string, wave *int) {
 	t.Helper()
 

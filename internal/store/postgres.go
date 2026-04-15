@@ -309,7 +309,8 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			COALESCE(tc.total, 0),
 			COALESCE(tc.done, 0),
 			COALESCE(tc.blocked, 0),
-			pr.updated_at
+			GREATEST(pr.updated_at, COALESCE(sa.last_session_at, pr.updated_at)) AS last_progress,
+			sa.last_session_at
 		FROM pipeline_runs pr
 		LEFT JOIN (
 			SELECT pipeline_id,
@@ -319,8 +320,15 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			FROM pipeline_tasks
 			GROUP BY pipeline_id
 		) tc ON tc.pipeline_id = pr.id
+		LEFT JOIN (
+			SELECT
+				pipeline_id,
+				MAX(GREATEST(started_at, COALESCE(ended_at, started_at))) AS last_session_at
+			FROM pipeline_sessions
+			GROUP BY pipeline_id
+		) sa ON sa.pipeline_id = pr.id
 		WHERE ($1 = '' OR pr.project = $1)
-		ORDER BY pr.updated_at DESC
+		ORDER BY last_progress DESC, pr.updated_at DESC, pr.design_id ASC
 	`, project)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
@@ -330,8 +338,12 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	var runs []PipelineRunStatus
 	for rows.Next() {
 		var r PipelineRunStatus
-		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress); err != nil {
+		var lastSessionAt *time.Time
+		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress, &lastSessionAt); err != nil {
 			return nil, err
+		}
+		if lastSessionAt != nil {
+			r.LastSessionAt = *lastSessionAt
 		}
 		runs = append(runs, r)
 	}
