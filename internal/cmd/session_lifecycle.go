@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -93,7 +94,7 @@ func redispatchReason(rec *store.SessionRecord) string {
 }
 
 func shouldMarkTaskForRedispatch(taskStatus string, rec *store.SessionRecord) bool {
-	return taskStatus == "in_progress" && redispatchableSession(rec)
+	return taskStatus == domain.StatusInProgress && redispatchableSession(rec)
 }
 
 func markTaskPendingForRedispatch(ctx context.Context, taskID string, rec *store.SessionRecord) error {
@@ -103,7 +104,7 @@ func markTaskPendingForRedispatch(ctx context.Context, taskID string, rec *store
 		}
 	}
 	if cbStore != nil {
-		if err := cbStore.UpdateTaskStatus(ctx, taskID, "pending"); err != nil {
+		if err := cbStore.UpdateTaskStatus(ctx, taskID, domain.StatusPending); err != nil {
 			return fmt.Errorf("set pipeline task pending: %w", err)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -114,7 +115,7 @@ func (m StoreProgressMonitor) Snapshot(ctx context.Context, shardID, phase strin
 
 func blockingTaskIDsForPhase(tasks []store.PipelineTaskRecord, shardID, phase string) []string {
 	switch phase {
-	case "implement", "review":
+	case domain.PhaseImplement, domain.PhaseReview:
 		var ids []string
 		for _, task := range tasks {
 			if isTerminalTaskStatus(task.Status) {
@@ -137,7 +138,7 @@ func blockingTaskIDsForPhase(tasks []store.PipelineTaskRecord, shardID, phase st
 
 func isTerminalTaskStatus(status string) bool {
 	switch status {
-	case "closed", "completed":
+	case "closed", domain.StatusCompleted:
 		return true
 	default:
 		return false

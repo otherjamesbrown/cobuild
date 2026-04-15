@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +101,7 @@ func cleanWorktrees(ctx context.Context, repoRoot string, dryRun bool) int {
 			item, err := conn.Get(ctx, taskID)
 			if err != nil {
 				shouldClean = true // can't find task — orphaned worktree
-			} else if item.Status == "closed" || item.Status == "needs-review" {
+			} else if item.Status == "closed" || item.Status == domain.StatusNeedsReview {
 				shouldClean = true
 			}
 		}

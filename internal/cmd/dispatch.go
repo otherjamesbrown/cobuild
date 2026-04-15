@@ -18,6 +18,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	cobuildruntime "github.com/otherjamesbrown/cobuild/internal/runtime"
 	_ "github.com/otherjamesbrown/cobuild/internal/runtime/claudecode" // register claude-code runtime
@@ -90,9 +91,9 @@ config "dispatch.default_runtime" > "claude-code".`,
 			}
 		}
 
-		if dispatchStatus == "in_progress" {
+		if dispatchStatus == domain.StatusInProgress {
 			fmt.Printf("Re-dispatching %s (status was in_progress, no live session).\n", taskID)
-		} else if dispatchStatus == "needs-review" {
+		} else if dispatchStatus == domain.StatusNeedsReview {
 			// Expected state for review-phase dispatches: cobuild complete
 			// sets status=needs-review before handing off to review, so the
 			// dispatched review agent's target IS exactly this. Rejecting
@@ -126,13 +127,13 @@ config "dispatch.default_runtime" > "claude-code".`,
 		fmt.Printf("Target repo: %s (from %s)\n", repoRootForWT, repoTarget.Source)
 
 		// Get or create worktree
-		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+		worktreePath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 		if worktreePath != "" {
 			// Verify existing worktree is still valid
 			if err := worktree.Verify(ctx, worktreePath); err != nil {
 				fmt.Printf("Existing worktree invalid (%v), recreating...\n", err)
 				worktree.Remove(ctx, repoRootForWT, worktreePath, taskID)
-				conn.SetMetadata(ctx, taskID, "worktree_path", "")
+				conn.SetMetadata(ctx, taskID, domain.MetaWorktreePath, "")
 				worktreePath = ""
 			}
 		}
@@ -148,7 +149,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 					return fmt.Errorf("failed to create worktree: %w", wtErr)
 				}
 				fmt.Printf("Worktree created: %s\n", worktreePath)
-				if err := conn.SetMetadata(ctx, taskID, "worktree_path", worktreePath); err != nil {
+				if err := conn.SetMetadata(ctx, taskID, domain.MetaWorktreePath, worktreePath); err != nil {
 					fmt.Printf("Warning: worktree created but failed to record path: %v\n", err)
 				}
 			}
@@ -194,7 +195,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		runtimeFlag, _ := cmd.Flags().GetString("runtime")
 		runtimeMeta := ""
 		if conn != nil {
-			runtimeMeta, _ = conn.GetMetadata(ctx, taskID, "dispatch_runtime")
+			runtimeMeta, _ = conn.GetMetadata(ctx, taskID, domain.MetaDispatchRuntime)
 		}
 		rtName := pCfg.ResolveRuntime(runtimeFlag, runtimeMeta)
 		rt, err := cobuildruntime.Get(rtName)
@@ -248,7 +249,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		}
 
 		var mergedTasks []MergedTask
-		if currentPhase == "decompose" {
+		if currentPhase == domain.PhaseDecompose {
 			mergedTasks, err = collectMergedTasks(ctx, conn, task.ID, repoRootForWT)
 			if err != nil {
 				return fmt.Errorf("load merged work for decompose prompt: %w", err)
@@ -259,11 +260,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 		// downgrade from investigate to fix regardless of phase inference.
 		// Also persist the override to pipeline_runs so `cobuild status` reflects
 		// the phase the agent actually ran (cb-eab697).
-		if currentPhase == "investigate" && hasInvestigationContent(task.Content) {
+		if currentPhase == domain.PhaseInvestigate && hasInvestigationContent(task.Content) {
 			fmt.Printf("Notice: bug %s already has investigation content — routing to fix phase instead\n", task.ID)
-			currentPhase = "fix"
+			currentPhase = domain.PhaseFix
 			if cbStore != nil {
-				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, "investigate", "fix"); err != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, task.ID, domain.PhaseInvestigate, domain.PhaseFix); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not update pipeline run phase to fix: %v\n", err)
 				}
 			}
@@ -283,7 +284,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				promptBuilder.WriteString(designContext)
 				promptBuilder.WriteString("\n\n")
 			}
-			if currentPhase == "decompose" {
+			if currentPhase == domain.PhaseDecompose {
 				promptBuilder.WriteString(renderMergedWorkSection(mergedTasks))
 				promptBuilder.WriteString("\n")
 			}
@@ -451,7 +452,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				fmt.Printf("Warning: failed to record session: %v\n", err)
 			} else {
 				sessionID = session.ID
-				if err := conn.SetMetadata(ctx, taskID, "session_id", session.ID); err != nil {
+				if err := conn.SetMetadata(ctx, taskID, domain.MetaSessionID, session.ID); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to record session_id metadata for %s: %v\n", taskID, err)
 				}
 			}
@@ -505,11 +506,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 
 		// Set task status
 		if conn != nil {
-			if err := conn.UpdateStatus(ctx, taskID, "in_progress"); err != nil {
+			if err := conn.UpdateStatus(ctx, taskID, domain.StatusInProgress); err != nil {
 				return fmt.Errorf("failed to set status to in_progress: %w", err)
 			}
 		}
-		syncPipelineTaskStatus(ctx, taskID, "in_progress")
+		syncPipelineTaskStatus(ctx, taskID, domain.StatusInProgress)
 
 		// Foreground mode (cb-f1b0e9): run the runner script in the calling
 		// terminal with inherited stdio. Skips tmux + window cleanup path +
@@ -526,7 +527,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 				if cbStore != nil && sessionID != "" {
 					if endErr := cbStore.EndSession(ctx, sessionID, store.SessionResult{
 						ExitCode:       -1,
-						Status:         "failed",
+						Status:         domain.StatusFailed,
 						Error:          fmt.Sprintf("foreground dispatch exited with error: %v", err),
 						CompletionNote: "Foreground dispatch exited non-zero",
 					}); endErr != nil {
@@ -613,11 +614,11 @@ config "dispatch.default_runtime" > "claude-code".`,
 
 		// Record dispatch metadata
 		dispatchInfo := map[string]any{
-			"dispatched_at":    time.Now().UTC().Format(time.RFC3339),
-			"agent":            agent,
-			"dispatch_runtime": rt.Name(),
-			"tmux_window":      tmuxWindow,
-			"log_file":         logFile,
+			domain.MetaDispatchedAt:    time.Now().UTC().Format(time.RFC3339),
+			domain.MetaAgent:           agent,
+			domain.MetaDispatchRuntime: rt.Name(),
+			domain.MetaTmuxWindow:      tmuxWindow,
+			domain.MetaLogFile:         logFile,
 		}
 		if err := conn.UpdateMetadataMap(ctx, taskID, dispatchInfo); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: dispatched but failed to update metadata: %v\n", err)
@@ -625,14 +626,14 @@ config "dispatch.default_runtime" > "claude-code".`,
 
 		if outputFormat == "json" {
 			out := map[string]any{
-				"task_id":       taskID,
-				"agent":         agent,
-				"runtime":       rt.Name(),
-				"model":         resolvedModel,
-				"tmux_session":  tmuxSession,
-				"worktree_path": worktreePath,
-				"tmux_window":   tmuxWindow,
-				"dispatched_at": dispatchInfo["dispatched_at"],
+				"task_id":               taskID,
+				"agent":                 agent,
+				"runtime":               rt.Name(),
+				"model":                 resolvedModel,
+				"tmux_session":          tmuxSession,
+				domain.MetaWorktreePath: worktreePath,
+				"tmux_window":           tmuxWindow,
+				domain.MetaDispatchedAt: dispatchInfo[domain.MetaDispatchedAt],
 			}
 			s, _ := cliutil.FormatJSON(out)
 			fmt.Println(s)
@@ -644,7 +645,7 @@ config "dispatch.default_runtime" > "claude-code".`,
 		fmt.Printf("  Session:  %s\n", tmuxSession)
 		fmt.Printf("  Worktree: %s\n", worktreePath)
 		fmt.Printf("  Window:   %s\n", tmuxWindow)
-		printNextStep(taskID, currentPhase, "dispatch")
+		printNextStep(taskID, currentPhase, domain.ActionDispatch)
 		dispatchSucceeded = true
 		return nil
 	},
@@ -709,11 +710,11 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 				}
 			}
 
-			if e.Status == "in_progress" {
+			if e.Status == domain.StatusInProgress {
 				inProgress = append(inProgress, e.ItemID)
 				continue
 			}
-			if e.Status == "needs-review" {
+			if e.Status == domain.StatusNeedsReview {
 				// Serial mode must wait for closure/merge, not merely review-ready.
 				blocked = append(blocked, e.ItemID)
 				continue
@@ -855,7 +856,7 @@ Tasks are dispatched up to the max_concurrent limit from pipeline config.`,
 		if len(blocked) > 0 {
 			fmt.Printf("\n%d tasks still blocked.\n", len(blocked))
 		}
-		printNextStep(designID, "implement", "dispatch-wave")
+		printNextStep(designID, domain.PhaseImplement, domain.ActionDispatchWave)
 		return nil
 	},
 }
@@ -872,7 +873,7 @@ type dispatchWaveCandidate struct {
 func resolveRuntimeForTask(ctx context.Context, pCfg *config.Config, taskID string) string {
 	meta := ""
 	if conn != nil {
-		meta, _ = conn.GetMetadata(ctx, taskID, "dispatch_runtime")
+		meta, _ = conn.GetMetadata(ctx, taskID, domain.MetaDispatchRuntime)
 	}
 	return pCfg.ResolveRuntime("", meta)
 }
@@ -923,7 +924,7 @@ func dispatchWaveMetadata(metadata map[string]any) int {
 		return 0
 	}
 
-	switch v := metadata["wave"].(type) {
+	switch v := metadata[domain.MetaWave].(type) {
 	case int:
 		return v
 	case int64:
@@ -943,7 +944,7 @@ func dispatchWaveMetadata(metadata map[string]any) int {
 // writePhasePrompt writes phase-appropriate instructions into the dispatch prompt.
 func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg *config.Config) {
 	switch phase {
-	case "design":
+	case domain.PhaseDesign:
 		b.WriteString("**Evaluate this design for pipeline readiness.**\n\n")
 		b.WriteString("Follow the gate-readiness-review skill:\n")
 		b.WriteString("1. Read the design content below\n")
@@ -957,7 +958,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   Set verdict to \"pass\" or \"fail\". The orchestrator records the gate after your session ends.\n")
 		b.WriteString("   **Do NOT run `cobuild review` or `cobuild complete` yourself** — the runner handles it.\n")
 
-	case "decompose":
+	case domain.PhaseDecompose:
 		b.WriteString("**Break this design into implementable tasks.**\n\n")
 		b.WriteString("Follow the decompose-design skill:\n")
 		b.WriteString("1. Read the design content above\n")
@@ -987,7 +988,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("Lesson from cp-c2ec47 (2026-04-11): a decompose agent read a multi-project design (specs targeting context-palace, penfold, and penf-cli), created all 8 tasks in context-palace, and set `repo` metadata on only half of them. The decomposition gate passed but the result was unusable — tasks had to be manually re-tagged. **Do not repeat this.** Read every spec and explicitly assign project + repo before creating tasks.\n\n")
 		b.WriteString("**Also:** Assign migration numbers explicitly if multiple tasks create DB migrations.\n")
 
-	case "fix":
+	case domain.PhaseFix:
 		b.WriteString("**Fix this bug.**\n\n")
 		b.WriteString("Follow the fix-bug skill:\n")
 		b.WriteString("1. Read the bug report\n")
@@ -997,7 +998,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("5. Commit — the Stop hook will run `cobuild complete`\n")
 		b.WriteString("6. After the Stop hook completes, your work is done — stop. The dispatch runner cleans up the session itself; do NOT type `/exit` (it's a REPL-only command and will be rendered as text in your final message rather than terminating the process — see cb-e619cb / cb-eaef03).\n")
 
-	case "investigate":
+	case domain.PhaseInvestigate:
 		b.WriteString("**This is a READ-ONLY investigation. Do NOT modify source code.**\n\n")
 		b.WriteString("Follow the bug-investigation skill:\n")
 		b.WriteString("1. Understand the bug report above\n")
@@ -1015,9 +1016,9 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   ```\n")
 		b.WriteString("   **Do NOT run `cobuild investigate` yourself** — the runner handles it after your session ends.\n")
 
-	case "review":
+	case domain.PhaseReview:
 		b.WriteString("**Review this PR against its task spec and parent design.**\n\n")
-		b.WriteString(fmt.Sprintf("Follow the configured review skill `%s`:\n", phaseSkillForPrompt(pCfg, "review", "review/dispatch-review.md")))
+		b.WriteString(fmt.Sprintf("Follow the configured review skill `%s`:\n", phaseSkillForPrompt(pCfg, domain.PhaseReview, "review/dispatch-review.md")))
 		b.WriteString("1. Read the task spec and parent design above\n")
 		b.WriteString("2. Check CI status: `gh pr checks <pr-number>`\n")
 		b.WriteString("3. Read the PR diff: `gh pr diff <pr-number>`\n")
@@ -1029,7 +1030,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 		b.WriteString("   ```\n")
 		b.WriteString("   **Do NOT run gate commands or merge PRs yourself** — the runner handles it.\n")
 
-	case "done":
+	case domain.PhaseDone:
 		b.WriteString("**Run a pipeline retrospective.**\n\n")
 		b.WriteString("Follow the gate-retrospective skill:\n")
 		b.WriteString("1. Gather execution data: `cobuild audit " + workItemID + "`\n")
@@ -1067,7 +1068,7 @@ func writePhasePrompt(b *strings.Builder, phase, workItemID, taskID string, pCfg
 }
 
 func dispatchTmuxWindowName(phase, taskID string) string {
-	if phase == "review" {
+	if phase == domain.PhaseReview {
 		return "review-" + taskID
 	}
 	return taskID
@@ -1108,9 +1109,9 @@ type dispatchRepoTarget struct {
 }
 
 func resolveDispatchTargetRepo(ctx context.Context, task *connector.WorkItem, taskID, project string, stderr io.Writer) (dispatchRepoTarget, error) {
-	targetRepo := metadataString(task.Metadata, "repo")
+	targetRepo := metadataString(task.Metadata, domain.MetaRepo)
 	if conn != nil {
-		if repo, err := conn.GetMetadata(ctx, taskID, "repo"); err == nil && repo != "" {
+		if repo, err := conn.GetMetadata(ctx, taskID, domain.MetaRepo); err == nil && repo != "" {
 			targetRepo = strings.TrimSpace(repo)
 		}
 	}
@@ -1166,7 +1167,7 @@ func parentDesignReferencedRepos(ctx context.Context, taskID string, reg *config
 	if err != nil {
 		return parentID, nil, err
 	}
-	if parentItem == nil || parentItem.Type != "design" {
+	if parentItem == nil || parentItem.Type != domain.WorkItemTypeDesign {
 		return parentID, nil, nil
 	}
 	return parentID, referencedReposInWorkItem(parentItem, reg), nil
@@ -1188,7 +1189,7 @@ func referencedReposInWorkItem(item *connector.WorkItem, reg *config.RepoRegistr
 		}
 	}
 
-	addRepo(metadataString(item.Metadata, "repo"))
+	addRepo(metadataString(item.Metadata, domain.MetaRepo))
 	for _, repo := range metadataRepos(item.Metadata["repos"]) {
 		addRepo(repo)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -109,7 +110,7 @@ Exit codes:
 		}
 
 		// Terminal states — pipeline is done, there's no "next".
-		if run.Status == "completed" || run.CurrentPhase == "done" {
+		if run.Status == domain.StatusCompleted || run.CurrentPhase == domain.PhaseDone {
 			fmt.Println()
 			fmt.Println("Pipeline complete. Nothing to do.")
 			return nil
@@ -132,10 +133,10 @@ Exit codes:
 		fmt.Println()
 		fmt.Println("Next step:")
 		switch run.CurrentPhase {
-		case "design", "decompose", "investigate", "fix":
+		case domain.PhaseDesign, domain.PhaseDecompose, domain.PhaseInvestigate, domain.PhaseFix:
 			fmt.Printf("  cobuild dispatch %s\n", id)
 			fmt.Printf("  (Spawns a dispatched CoBuild agent to run the %s skill)\n", run.CurrentPhase)
-		case "implement":
+		case domain.PhaseImplement:
 			strategy := currentWaveStrategy()
 			// pipeline_tasks is populated by `cobuild dispatch-wave` when
 			// it starts a wave — NOT by `cobuild wi create` from the
@@ -160,21 +161,21 @@ Exit codes:
 			redispatch := 0
 			for _, t := range tasks {
 				switch t.Status {
-				case "pending":
+				case domain.StatusPending:
 					pending++
 					if redispatchableSession(sessionPtr(latestSessions[t.TaskShardID])) {
 						redispatch++
 					}
-				case "in_progress":
+				case domain.StatusInProgress:
 					if shouldMarkTaskForRedispatch(t.Status, sessionPtr(latestSessions[t.TaskShardID])) {
 						pending++
 						redispatch++
 					} else {
 						pending++
 					}
-				case "needs-review":
+				case domain.StatusNeedsReview:
 					inReview++
-				case "completed", "closed":
+				case domain.StatusCompleted, "closed":
 					closed++
 				}
 			}
@@ -195,7 +196,7 @@ Exit codes:
 				fmt.Printf("  Tasks in review: ")
 				first := true
 				for _, t := range tasks {
-					if t.Status == "needs-review" {
+					if t.Status == domain.StatusNeedsReview {
 						if !first {
 							fmt.Printf(", ")
 						}
@@ -211,13 +212,13 @@ Exit codes:
 				fmt.Printf("  cobuild audit %s\n", id)
 				fmt.Printf("  (%d task(s) in unknown/mixed states — inspect the audit trail)\n", len(tasks))
 			}
-		case "review":
+		case domain.PhaseReview:
 			fmt.Printf("  cobuild process-review %s\n", id)
 			fmt.Println("  (Process the review for this task — merges or re-dispatches based on verdict)")
-		case "deploy":
+		case domain.PhaseDeploy:
 			fmt.Printf("  cobuild deploy %s --dry-run  (preview)\n", id)
 			fmt.Printf("  cobuild deploy %s            (execute)\n", id)
-		case "retrospective":
+		case domain.PhaseRetrospective:
 			fmt.Printf("  cobuild retro %s --body \"<findings>\"\n", id)
 			fmt.Println("  (Record the retrospective and mark the pipeline complete)")
 		default:

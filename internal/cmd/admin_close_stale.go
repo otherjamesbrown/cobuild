@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -43,11 +44,11 @@ Safe to run — only changes pipeline_run metadata, not work items.`,
 			}
 
 			// Mark as completed — check WI status to decide phase
-			targetStatus := "completed"
+			targetStatus := domain.StatusCompleted
 			wiClosed := false
 			if conn != nil {
 				item, err := conn.Get(ctx, r.DesignID)
-				if err == nil && (item.Status == "closed" || item.Status == "done") {
+				if err == nil && (item.Status == "closed" || item.Status == domain.PhaseDone) {
 					wiClosed = true
 				}
 			}
@@ -63,7 +64,7 @@ Safe to run — only changes pipeline_run metadata, not work items.`,
 				// Admin tool: intentionally uses UpdateRunPhase (force) to clean up
 				// abandoned pipelines regardless of current phase.
 				if wiClosed {
-					_ = cbStore.UpdateRunPhase(ctx, r.DesignID, "done")
+					_ = cbStore.UpdateRunPhase(ctx, r.DesignID, domain.PhaseDone)
 				}
 				if err := cbStore.UpdateRunStatus(ctx, r.DesignID, targetStatus); err != nil {
 					fmt.Printf("  %-12s error: %v\n", r.DesignID, err)

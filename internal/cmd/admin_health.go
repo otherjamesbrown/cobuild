@@ -11,6 +11,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -207,7 +208,7 @@ func countStaleWorktrees(ctx context.Context, repoRoot string) int {
 			taskID := filepath.Base(path)
 			if conn != nil {
 				item, err := conn.Get(ctx, taskID)
-				if err == nil && (item.Status == "closed" || item.Status == "needs-review") {
+				if err == nil && (item.Status == "closed" || item.Status == domain.StatusNeedsReview) {
 					count++
 				}
 			}

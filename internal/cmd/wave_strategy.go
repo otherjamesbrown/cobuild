@@ -6,6 +6,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
 
 var waveStrategyOverride func() string
@@ -35,7 +36,7 @@ func taskWave(item *connector.WorkItem) int {
 	if item == nil || item.Metadata == nil {
 		return 0
 	}
-	raw, ok := item.Metadata["wave"]
+	raw, ok := item.Metadata[domain.MetaWave]
 	if !ok {
 		return 0
 	}

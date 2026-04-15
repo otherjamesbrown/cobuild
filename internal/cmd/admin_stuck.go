@@ -7,6 +7,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -84,8 +85,8 @@ var adminStuckCmd = &cobra.Command{
 			if err == nil {
 				orphanCount := 0
 				for _, item := range edges.Items {
-					wt, _ := conn.GetMetadata(ctx, item.ID, "worktree_path")
-					dispatched, _ := conn.GetMetadata(ctx, item.ID, "dispatched_at")
+					wt, _ := conn.GetMetadata(ctx, item.ID, domain.MetaWorktreePath)
+					dispatched, _ := conn.GetMetadata(ctx, item.ID, domain.MetaDispatchedAt)
 					if wt == "" && dispatched == "" {
 						age := time.Since(item.CreatedAt)
 						if age > staleDuration {

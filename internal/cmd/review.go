@@ -15,6 +15,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	llmreview "github.com/otherjamesbrown/cobuild/internal/review"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
@@ -81,9 +82,9 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		// Get PR URL
-		prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
+		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
 		if prURL == "" && task.Metadata != nil {
-			if pr, ok := task.Metadata["pr_url"]; ok {
+			if pr, ok := task.Metadata[domain.MetaPRURL]; ok {
 				prURL = fmt.Sprintf("%v", pr)
 			}
 		}
@@ -126,7 +127,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 				if _, err := reconcileReviewedTask(ctx, taskID); err != nil {
 					return err
 				}
-				printNextStep(taskID, "merged", "process-review")
+				printNextStep(taskID, domain.OutcomeMerged, domain.ActionProcessReview)
 				return nil
 			case "CLOSED":
 				fmt.Printf("PR is closed (not merged) for %s, skipping.\n", taskID)
@@ -178,7 +179,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			// code path returned waiting only when the dispatcher said so
 			// and otherwise fell through to builtin; that fall-through is
 			// exactly cb-9792e7.
-			printNextStep(taskID, "waiting", "process-review")
+			printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
 			return nil
 		}
 
@@ -197,7 +198,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 				return err
 			}
 			if external.waiting {
-				printNextStep(taskID, "waiting", "process-review")
+				printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
 				return nil
 			}
 			findings = external.findings
@@ -241,7 +242,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// CI still pending — wait regardless of review source
 		if pCfg.Review.WaitForCI != nil && *pCfg.Review.WaitForCI && ciResult.summary == "pending" {
 			fmt.Printf("CI checks still pending for %s (PR #%d). Waiting.\n", taskID, prNumber)
-			printNextStep(taskID, "waiting", "process-review")
+			printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
 			return nil
 		}
 
@@ -281,7 +282,7 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 		if cbStore != nil {
 			body := buildVerdictBody(verdict, reviewSource, reviewResult, findings, ciResult, reviewWarning)
-			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", gateVerdict, body, 0, pCfg)
+			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, gateVerdict, body, 0, pCfg)
 			if gateErr != nil {
 				fmt.Printf("Warning: failed to record gate verdict: %v\n", gateErr)
 			}
@@ -291,13 +292,13 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			if err := doMerge(ctx, taskID, prURL); err != nil {
 				return err
 			}
-			printNextStep(taskID, "merged", "process-review")
+			printNextStep(taskID, domain.OutcomeMerged, domain.ActionProcessReview)
 			return nil
 		}
 		if err := doRequestChanges(ctx, taskID, findings, ciResult, reviewSource); err != nil {
 			return err
 		}
-		printNextStep(taskID, "redispatched", "process-review")
+		printNextStep(taskID, domain.OutcomeRedispatched, domain.ActionProcessReview)
 		return nil
 	},
 }
@@ -531,7 +532,7 @@ func reconcileReviewedTask(ctx context.Context, taskID string) (bool, error) {
 		}
 	}
 
-	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 	if wtPath != "" {
 		archiveSessionLogs(wtPath, taskID)
 		repoForCleanup, _ := config.RepoForProject(projectName)
@@ -593,13 +594,13 @@ func recordMergeFailure(ctx context.Context, taskID, prURL, detail string) {
 	if conn == nil {
 		return
 	}
-	existing, _ := conn.GetMetadata(ctx, taskID, "merge_retry_count")
+	existing, _ := conn.GetMetadata(ctx, taskID, domain.MetaMergeRetryCount)
 	count := 0
 	if existing != "" {
 		_, _ = fmt.Sscanf(existing, "%d", &count)
 	}
 	count++
-	if err := conn.SetMetadata(ctx, taskID, "merge_retry_count", fmt.Sprintf("%d", count)); err != nil {
+	if err := conn.SetMetadata(ctx, taskID, domain.MetaMergeRetryCount, fmt.Sprintf("%d", count)); err != nil {
 		reviewWarnf("Warning: failed to record merge retry count for %s: %v\n", taskID, err)
 	}
 
@@ -630,7 +631,7 @@ func mergeIsBlocked(ctx context.Context, taskID string) bool {
 	if conn == nil {
 		return false
 	}
-	v, _ := conn.GetMetadata(ctx, taskID, "merge_retry_count")
+	v, _ := conn.GetMetadata(ctx, taskID, domain.MetaMergeRetryCount)
 	if v == "" {
 		return false
 	}
@@ -655,7 +656,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 	// used by worktree at Y" (observed on cp-64af0f, 2026-04-11) because the
 	// worktree still has the branch checked out at merge time. Remove the
 	// worktree, which frees the branch, then merge-and-delete succeeds.
-	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 	cleanupTaskWorktree(ctx, taskID, wtPath)
 
 	// Auto-rebase before merge: if the PR is mergeable_state=behind/dirty
@@ -677,7 +678,7 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		return fmt.Errorf("merge failed: %w\n%s", err, string(mergeOut))
 	}
 	// Clear retry counter on success so a re-merged/re-opened PR starts fresh.
-	if err := conn.SetMetadata(ctx, taskID, "merge_retry_count", ""); err != nil {
+	if err := conn.SetMetadata(ctx, taskID, domain.MetaMergeRetryCount, ""); err != nil {
 		// Best-effort cleanup; a stale retry counter is recoverable by clearing metadata manually.
 		reviewWarnf("Warning: failed to clear merge retry count for %s: %v\n", taskID, err)
 	}
@@ -772,7 +773,7 @@ func rebaseSiblingBranches(ctx context.Context, mergedTaskID string) {
 		// Check if this sibling has a worktree with a branch
 		wtPath := ""
 		if conn != nil {
-			wtPath, _ = conn.GetMetadata(ctx, s.ItemID, "worktree_path")
+			wtPath, _ = conn.GetMetadata(ctx, s.ItemID, domain.MetaWorktreePath)
 		}
 		if wtPath == "" {
 			continue
@@ -859,10 +860,10 @@ func doRequestChanges(ctx context.Context, taskID string, findings []reviewFindi
 	}
 
 	// Set status back to in_progress for re-dispatch
-	if err := conn.UpdateStatus(ctx, taskID, "in_progress"); err != nil {
+	if err := conn.UpdateStatus(ctx, taskID, domain.StatusInProgress); err != nil {
 		fmt.Printf("Warning: failed to set in_progress: %v\n", err)
 	}
-	syncPipelineTaskStatus(ctx, taskID, "in_progress")
+	syncPipelineTaskStatus(ctx, taskID, domain.StatusInProgress)
 
 	// Re-dispatch
 	fmt.Printf("Re-dispatching %s for fixes...\n", taskID)
@@ -1295,7 +1296,7 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	if conn == nil {
 		return false, nil
 	}
-	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 	if wtPath == "" {
 		return false, nil
 	}
@@ -1319,7 +1320,7 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		_ = os.Rename(verdictFile, verdictFile+".corrupted")
 		return false, fmt.Errorf("parse gate-verdict.json: %w", err)
 	}
-	if v.Gate != "review" || v.ShardID != taskID {
+	if v.Gate != domain.GateReview || v.ShardID != taskID {
 		// Not our verdict. Leave the file alone — a different caller owns it.
 		return false, nil
 	}
@@ -1340,10 +1341,10 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	if cbStore != nil {
 		if sessions, lerr := cbStore.ListSessions(ctx, taskID); lerr == nil {
 			for _, s := range sessions {
-				if s.Status == "running" && s.Phase == "review" {
+				if s.Status == "running" && s.Phase == domain.PhaseReview {
 					if err := cbStore.EndSession(ctx, s.ID, store.SessionResult{
 						ExitCode:       0,
-						Status:         "completed",
+						Status:         domain.StatusCompleted,
 						CompletionNote: "dispatched review verdict consumed by process-review",
 					}); err != nil {
 						reviewWarnf("Warning: failed to close review session %s for %s: %v\n", s.ID, taskID, err)
@@ -1357,8 +1358,8 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	// (runner script's `cobuild review` arm beat us to it).
 	if cbStore != nil {
 		run, runErr := cbStore.GetRun(ctx, taskID)
-		if runErr == nil && run != nil && run.CurrentPhase == "review" {
-			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", v.Verdict, v.Body, 0, pCfg); rerr != nil {
+		if runErr == nil && run != nil && run.CurrentPhase == domain.PhaseReview {
+			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, v.Verdict, v.Body, 0, pCfg); rerr != nil {
 				return true, fmt.Errorf("record review gate: %w", rerr)
 			}
 		}
@@ -1368,7 +1369,7 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		if err := doMerge(ctx, taskID, prURL); err != nil {
 			return true, err
 		}
-		printNextStep(taskID, "merged", "process-review")
+		printNextStep(taskID, domain.OutcomeMerged, domain.ActionProcessReview)
 		return true, nil
 	}
 
@@ -1381,7 +1382,7 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	if err := doRequestChanges(ctx, taskID, findings, ciCheckResult{}, "dispatched"); err != nil {
 		return true, err
 	}
-	printNextStep(taskID, "redispatched", "process-review")
+	printNextStep(taskID, domain.OutcomeRedispatched, domain.ActionProcessReview)
 	return true, nil
 }
 
@@ -1404,7 +1405,7 @@ func dispatchReviewAgent(ctx context.Context, cmd *cobra.Command, taskID string)
 		sessions, err := cbStore.ListSessions(ctx, taskID)
 		if err == nil {
 			for _, s := range sessions {
-				if s.Status == "running" && s.Phase == "review" {
+				if s.Status == "running" && s.Phase == domain.PhaseReview {
 					fmt.Printf("Review agent already running for %s (session %s).\n", taskID, s.ID)
 					return true, nil
 				}

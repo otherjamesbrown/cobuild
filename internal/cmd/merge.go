@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -38,7 +39,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		// Get PR URL from metadata
 		prURL := ""
 		if task.Metadata != nil {
-			if pr, ok := task.Metadata["pr_url"]; ok {
+			if pr, ok := task.Metadata[domain.MetaPRURL]; ok {
 				prURL = fmt.Sprintf("%v", pr)
 			}
 		}
@@ -88,7 +89,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		syncPipelineTaskStatus(ctx, taskID, "closed")
 
 		// Archive session logs before cleanup
-		wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+		wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 		if wtPath != "" {
 			archiveSessionLogs(wtPath, taskID)
 
@@ -104,7 +105,7 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			return err
 		}
 
-		printNextStep(taskID, "review", "merge")
+		printNextStep(taskID, domain.PhaseReview, domain.ActionMerge)
 		return nil
 	},
 }

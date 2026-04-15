@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -215,17 +216,17 @@ func describeGate(gateName string) string {
 
 func printPhaseDescription(phaseName string) {
 	switch phaseName {
-	case "design":
+	case domain.PhaseDesign:
 		fmt.Print("Your design is checked for completeness. Is the problem clear? Are there\nacceptance criteria? Can an agent implement it without asking questions?")
-	case "decompose":
+	case domain.PhaseDecompose:
 		fmt.Print("The design is broken into small tasks that agents can complete independently.\nTasks are ordered by dependency — wave 1 has no blockers, wave 2 depends on wave 1.")
-	case "investigate":
+	case domain.PhaseInvestigate:
 		fmt.Print("A read-only investigation. The agent traces the root cause, maps affected\nfiles, and writes a fix specification — but does not modify any code.")
-	case "implement":
+	case domain.PhaseImplement:
 		fmt.Print("Agents are dispatched into isolated git worktrees, one per task. Each agent\ngets the task spec, parent design context, and project architecture.")
-	case "review":
+	case domain.PhaseReview:
 		fmt.Print("Each PR is reviewed before merging. Only real issues block — not style nitpicks\nor pre-existing CI failures.")
-	case "done":
+	case domain.PhaseDone:
 		fmt.Print("A retrospective reviews the full pipeline run: what worked, what failed, and\nwhat to change in the skills and config for next time.")
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -227,7 +228,7 @@ func fetchMergedPRContent(ctx context.Context, wiID, wiContent string) (string, 
 	// Try metadata first
 	prURL := ""
 	if conn != nil {
-		prURL, _ = conn.GetMetadata(ctx, wiID, "pr_url")
+		prURL, _ = conn.GetMetadata(ctx, wiID, domain.MetaPRURL)
 	}
 
 	// Fall back to gh pr list search
@@ -653,7 +654,7 @@ func recordKBSyncVerdict(ctx context.Context, wiID string, verdict kbSyncGateVer
 	if cbStore != nil {
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
-		_, err := RecordGateVerdict(ctx, conn, cbStore, wiID, "kb-sync", "pass", body, 0, pCfg)
+		_, err := RecordGateVerdict(ctx, conn, cbStore, wiID, domain.GateKBSync, "pass", body, 0, pCfg)
 		if err != nil {
 			fmt.Printf("Warning: failed to record gate verdict: %v\n", err)
 		}

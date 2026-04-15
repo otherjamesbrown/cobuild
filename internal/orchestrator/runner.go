@@ -20,13 +20,15 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
 
 var nonImplementPhases = map[string]struct{}{
-	"design":      {},
-	"decompose":   {},
-	"investigate": {},
-	"fix":         {},
+	domain.PhaseDesign:      {},
+	domain.PhaseDecompose:   {},
+	domain.PhaseInvestigate: {},
+	domain.PhaseFix:         {},
 }
 
 // Dispatcher triggers the phase's dispatched agent.
@@ -65,9 +67,9 @@ type Options struct {
 	// nil, implement always assumes design-with-children, which loops forever
 	// on task-type shards (cb-55f364).
 	ShardTypeSource ShardTypeSource
-	SignalCh       <-chan os.Signal
-	Now            func() time.Time
-	Sleep          func(ctx context.Context, d time.Duration) error
+	SignalCh        <-chan os.Signal
+	Now             func() time.Time
+	Sleep           func(ctx context.Context, d time.Duration) error
 }
 
 // Runner drives a pipeline from its current phase.
@@ -115,18 +117,18 @@ func (r *Runner) Run(ctx context.Context, shardID string) error {
 		}
 
 		switch phase {
-		case "done":
+		case domain.PhaseDone:
 			r.emit(shardID, phase, EventTerminal, "Pipeline complete.")
 			return nil
-		case "deploy":
+		case domain.PhaseDeploy:
 			r.emit(shardID, phase, EventTerminal, "Deploy requires human approval.")
 			return &DeployRequiredError{ShardID: shardID, Phase: phase}
-		case "implement":
+		case domain.PhaseImplement:
 			if err := r.runImplement(ctx, shardID); err != nil {
 				return err
 			}
 			continue
-		case "review":
+		case domain.PhaseReview:
 			if err := r.runReview(ctx, shardID); err != nil {
 				return err
 			}

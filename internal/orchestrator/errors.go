@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
 
 var (
@@ -19,7 +21,7 @@ var (
 type StopReason string
 
 const (
-	StopReasonCompleted      StopReason = "completed"
+	StopReasonCompleted      StopReason = domain.StatusCompleted
 	StopReasonDeployApproval StopReason = "deploy-approval"
 	StopReasonInterrupted    StopReason = "interrupted"
 	StopReasonTimeout        StopReason = "timeout"
@@ -93,7 +95,7 @@ func (e *TimeoutError) Error() string {
 
 func (e *TimeoutError) Report() StopReport {
 	return StopReport{
-		Status:          "failed",
+		Status:          domain.StatusFailed,
 		ShardID:         e.ShardID,
 		Phase:           e.Phase,
 		Reason:          StopReasonTimeout,
@@ -150,7 +152,7 @@ func (e *BlockedError) Unwrap() error {
 
 func (e *BlockedError) Report() StopReport {
 	return StopReport{
-		Status:          "failed",
+		Status:          domain.StatusFailed,
 		ShardID:         e.ShardID,
 		Phase:           e.Phase,
 		Reason:          e.Reason,
@@ -175,7 +177,7 @@ func (e *UnknownPhaseError) Error() string {
 func Report(err error) StopReport {
 	if err == nil {
 		return StopReport{
-			Status:      "completed",
+			Status:      domain.StatusCompleted,
 			Reason:      StopReasonCompleted,
 			Message:     "pipeline complete",
 			Recoverable: false,
@@ -189,7 +191,7 @@ func Report(err error) StopReport {
 	}
 
 	return StopReport{
-		Status:      "failed",
+		Status:      domain.StatusFailed,
 		Reason:      StopReasonUnknownFailure,
 		Message:     err.Error(),
 		Recoverable: false,
