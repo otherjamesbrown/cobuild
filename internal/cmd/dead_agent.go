@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 )
 
@@ -43,7 +44,7 @@ func recoverDeadAgent(ctx context.Context, taskID string) (bool, string, error) 
 		reason = fmt.Sprintf("%s (cancelled %d stale session record(s))", reason, cancelled)
 	}
 
-	if err := cbStore.UpdateTaskStatus(ctx, taskID, "pending"); err != nil {
+	if err := cbStore.UpdateTaskStatus(ctx, taskID, domain.StatusPending); err != nil {
 		return false, "", fmt.Errorf("reset pipeline task status: %w", err)
 	}
 	if err := conn.UpdateStatus(ctx, taskID, "open"); err != nil {

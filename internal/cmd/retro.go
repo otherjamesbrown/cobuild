@@ -6,6 +6,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ In autonomous mode, the poller triggers this automatically.`,
 			return fmt.Errorf("get pipeline: %w", err)
 		}
 
-		if run.CurrentPhase != "done" && run.CurrentPhase != "review" {
+		if run.CurrentPhase != domain.PhaseDone && run.CurrentPhase != domain.PhaseReview {
 			fmt.Printf("Warning: pipeline is in %q phase (expected: done).\n", run.CurrentPhase)
 		}
 
@@ -80,7 +81,7 @@ In autonomous mode, the poller triggers this automatically.`,
 				pCfg = config.DefaultConfig()
 			}
 
-			result, err := RecordGateVerdict(ctx, conn, cbStore, designID, "retrospective", "pass", body, 0, pCfg)
+			result, err := RecordGateVerdict(ctx, conn, cbStore, designID, domain.GateRetrospective, "pass", body, 0, pCfg)
 			if err != nil {
 				return fmt.Errorf("record retrospective: %w", err)
 			}
@@ -88,12 +89,12 @@ In autonomous mode, the poller triggers this automatically.`,
 			fmt.Printf("\nRetrospective recorded: %s\n", result.ReviewShardID)
 
 			// Mark pipeline as completed
-			if err := cbStore.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+			if err := cbStore.UpdateRunStatus(ctx, designID, domain.StatusCompleted); err != nil {
 				fmt.Printf("Warning: failed to mark pipeline as completed: %v\n", err)
 			} else {
 				fmt.Println("Pipeline marked as completed.")
 			}
-			printNextStep(designID, "done", "retro")
+			printNextStep(designID, domain.PhaseDone, domain.ActionRetro)
 		} else {
 			fmt.Println("\nTo record the retrospective: cobuild retro <design-id> --body \"<findings>\"")
 		}

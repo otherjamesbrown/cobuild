@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
 )
@@ -44,7 +45,7 @@ merge PRs, and run retrospectives.`,
 			fmt.Printf("No pipeline run found — initialising in %s mode...\n", modeLabel)
 
 			// Determine start phase
-			startPhase := "design"
+			startPhase := domain.PhaseDesign
 			if conn != nil {
 				item, err := conn.Get(ctx, id)
 				if err == nil {

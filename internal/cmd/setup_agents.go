@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -362,18 +363,18 @@ func generateAgentsContent(project, prefix string, workflows map[string]string, 
 	sb.WriteString("|-----------|--------|---------|\n")
 
 	phaseDescriptions := map[string]string{
-		"orchestrate": "Orchestrator-side pipeline driver (run-pipeline.md) — load this when asked to run a shard through CoBuild end-to-end",
-		"design":      "Design evaluation",
-		"decompose":   "Break designs into tasks",
-		"fix":         "Single-session bug fix (investigate + implement)",
-		"investigate": "Root cause analysis for needs-investigation bugs",
-		"implement":   "Task dispatch and monitoring",
-		"review":      "Code review",
-		"done":        "Post-delivery retrospective",
-		"shared":      "Cross-phase reference",
+		"orchestrate":           "Orchestrator-side pipeline driver (run-pipeline.md) — load this when asked to run a shard through CoBuild end-to-end",
+		domain.PhaseDesign:      "Design evaluation",
+		domain.PhaseDecompose:   "Break designs into tasks",
+		domain.PhaseFix:         "Single-session bug fix (investigate + implement)",
+		domain.PhaseInvestigate: "Root cause analysis for needs-investigation bugs",
+		domain.PhaseImplement:   "Task dispatch and monitoring",
+		domain.PhaseReview:      "Code review",
+		domain.PhaseDone:        "Post-delivery retrospective",
+		"shared":                "Cross-phase reference",
 	}
 
-	phaseOrder := []string{"orchestrate", "design", "decompose", "fix", "investigate", "implement", "review", "done", "shared"}
+	phaseOrder := []string{"orchestrate", domain.PhaseDesign, domain.PhaseDecompose, domain.PhaseFix, domain.PhaseInvestigate, domain.PhaseImplement, domain.PhaseReview, domain.PhaseDone, "shared"}
 	for _, phase := range phaseOrder {
 		names, ok := skills[phase]
 		if !ok || len(names) == 0 {

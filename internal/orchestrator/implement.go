@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -79,7 +80,7 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 	}
 
 	if r.opts.StepMode && r.opts.BeforeStep != nil {
-		if err := r.opts.BeforeStep(ctx, shardID, "implement"); err != nil {
+		if err := r.opts.BeforeStep(ctx, shardID, domain.PhaseImplement); err != nil {
 			return err
 		}
 	}
@@ -94,15 +95,15 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 			return normalizeContextError(ctx, err)
 		}
 		if !deadline.IsZero() && !r.opts.Now().Before(deadline) {
-			return &TimeoutError{ShardID: shardID, Phase: "implement", Timeout: r.opts.PhaseTimeout}
+			return &TimeoutError{ShardID: shardID, Phase: domain.PhaseImplement, Timeout: r.opts.PhaseTimeout}
 		}
 
 		currentPhase, err := r.phases.CurrentPhase(ctx, shardID)
 		if err != nil {
 			return err
 		}
-		if currentPhase != "implement" {
-			r.emit(shardID, "implement", EventTransition, fmt.Sprintf("Phase: implement -> %s", currentPhase))
+		if currentPhase != domain.PhaseImplement {
+			r.emit(shardID, domain.PhaseImplement, EventTransition, fmt.Sprintf("Phase: implement -> %s", currentPhase))
 			return nil
 		}
 
@@ -118,7 +119,7 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 			if err != nil {
 				return fmt.Errorf("process review %s: %w", taskID, err)
 			}
-			r.emit(shardID, "implement", EventReview, formatReviewMessage(taskID, result))
+			r.emit(shardID, domain.PhaseImplement, EventReview, formatReviewMessage(taskID, result))
 			if strings.EqualFold(result.Outcome, "merged") {
 				merged = true
 			}
@@ -143,11 +144,11 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 				if err != nil {
 					return fmt.Errorf("advance design after all tasks closed %s: %w", shardID, err)
 				}
-				r.emit(shardID, "implement", EventReview, formatReviewMessage(shardID, result))
+				r.emit(shardID, domain.PhaseImplement, EventReview, formatReviewMessage(shardID, result))
 				// Phase should have advanced; loop top will detect and exit
 				continue
 			}
-			r.emit(shardID, "implement", EventPoll, "Phase: implement -> still waiting on pipeline state")
+			r.emit(shardID, domain.PhaseImplement, EventPoll, "Phase: implement -> still waiting on pipeline state")
 		} else {
 			// Probe in-progress tasks for dead agents. If any recover, we
 			// re-dispatch the wave instead of polling forever (cb-f93173 #1).
@@ -160,7 +161,7 @@ func (r *Runner) runImplement(ctx context.Context, shardID string) error {
 					continue
 				}
 			}
-			r.emit(shardID, "implement", EventPoll, fmt.Sprintf("Phase: implement -> still waiting on %s", strings.Join(waiting, ", ")))
+			r.emit(shardID, domain.PhaseImplement, EventPoll, fmt.Sprintf("Phase: implement -> still waiting on %s", strings.Join(waiting, ", ")))
 		}
 
 		if err := r.opts.Sleep(ctx, r.opts.PollInterval); err != nil {
@@ -178,18 +179,18 @@ func (r *Runner) runDirectImplement(ctx context.Context, shardID string) error {
 		return fmt.Errorf("dispatcher is nil")
 	}
 	if r.opts.StepMode && r.opts.BeforeStep != nil {
-		if err := r.opts.BeforeStep(ctx, shardID, "implement"); err != nil {
+		if err := r.opts.BeforeStep(ctx, shardID, domain.PhaseImplement); err != nil {
 			return err
 		}
 	}
-	r.emit(shardID, "implement", EventDispatch, "Phase: implement -> dispatching")
+	r.emit(shardID, domain.PhaseImplement, EventDispatch, "Phase: implement -> dispatching")
 	if err := r.dispatcher.Dispatch(ctx, shardID); err != nil {
 		if errors.Is(err, ErrInterrupted) {
-			return &InterruptedError{ShardID: shardID, Phase: "implement"}
+			return &InterruptedError{ShardID: shardID, Phase: domain.PhaseImplement}
 		}
 		return fmt.Errorf("dispatch implement for shard %s: %w", shardID, err)
 	}
-	_, err := r.waitForPhaseAdvance(ctx, shardID, "implement")
+	_, err := r.waitForPhaseAdvance(ctx, shardID, domain.PhaseImplement)
 	return err
 }
 
@@ -199,7 +200,7 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 	}
 
 	if r.opts.StepMode && r.opts.BeforeStep != nil {
-		if err := r.opts.BeforeStep(ctx, shardID, "review"); err != nil {
+		if err := r.opts.BeforeStep(ctx, shardID, domain.PhaseReview); err != nil {
 			return err
 		}
 	}
@@ -223,21 +224,21 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 			return normalizeContextError(ctx, err)
 		}
 		if !deadline.IsZero() && !r.opts.Now().Before(deadline) {
-			return &TimeoutError{ShardID: shardID, Phase: "review", Timeout: r.opts.PhaseTimeout}
+			return &TimeoutError{ShardID: shardID, Phase: domain.PhaseReview, Timeout: r.opts.PhaseTimeout}
 		}
 
 		result, err := r.opts.Reviewer.ProcessReview(ctx, shardID)
 		if err != nil {
 			return fmt.Errorf("process review %s: %w", shardID, err)
 		}
-		r.emit(shardID, "review", EventReview, formatReviewMessage(shardID, result))
+		r.emit(shardID, domain.PhaseReview, EventReview, formatReviewMessage(shardID, result))
 
 		currentPhase, err := r.phases.CurrentPhase(ctx, shardID)
 		if err != nil {
 			return err
 		}
-		if currentPhase != "review" {
-			r.emit(shardID, "review", EventTransition, fmt.Sprintf("Phase: review -> %s", currentPhase))
+		if currentPhase != domain.PhaseReview {
+			r.emit(shardID, domain.PhaseReview, EventTransition, fmt.Sprintf("Phase: review -> %s", currentPhase))
 			return nil
 		}
 
@@ -249,16 +250,16 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 			if failCount >= maxRetries {
 				return &BlockedError{
 					ShardID:     shardID,
-					Phase:       "review",
+					Phase:       domain.PhaseReview,
 					Reason:      StopReasonBlockedReview,
 					Message:     fmt.Sprintf("review rejected %d times in a row — needs human intervention (see latest review gate for findings)", failCount),
 					Recoverable: true,
 				}
 			}
-			r.emit(shardID, "review", EventPoll, fmt.Sprintf("Phase: review -> retry %d/%d after failed gate", failCount, maxRetries))
+			r.emit(shardID, domain.PhaseReview, EventPoll, fmt.Sprintf("Phase: review -> retry %d/%d after failed gate", failCount, maxRetries))
 		}
 
-		r.emit(shardID, "review", EventPoll, fmt.Sprintf("Phase: review -> still waiting on %s", shardID))
+		r.emit(shardID, domain.PhaseReview, EventPoll, fmt.Sprintf("Phase: review -> still waiting on %s", shardID))
 		if err := r.opts.Sleep(ctx, r.opts.PollInterval); err != nil {
 			return normalizeContextError(ctx, err)
 		}
@@ -266,7 +267,7 @@ func (r *Runner) runReview(ctx context.Context, shardID string) error {
 }
 
 func (r *Runner) dispatchWave(ctx context.Context, shardID string) error {
-	r.emit(shardID, "implement", EventDispatch, "Phase: implement -> dispatching wave")
+	r.emit(shardID, domain.PhaseImplement, EventDispatch, "Phase: implement -> dispatching wave")
 	if err := r.opts.WaveDispatcher.DispatchWave(ctx, shardID); err != nil {
 		return fmt.Errorf("dispatch wave for shard %s: %w", shardID, err)
 	}
@@ -276,7 +277,7 @@ func (r *Runner) dispatchWave(ctx context.Context, shardID string) error {
 func reviewableTaskIDs(tasks []store.PipelineTaskRecord) []string {
 	ids := make([]string, 0, len(tasks))
 	for _, task := range tasks {
-		if task.Status == "needs-review" {
+		if task.Status == domain.StatusNeedsReview {
 			ids = append(ids, task.TaskShardID)
 		}
 	}
@@ -289,16 +290,16 @@ func reviewableTaskIDs(tasks []store.PipelineTaskRecord) []string {
 func (r *Runner) recoverDeadAgentsInWave(ctx context.Context, shardID string, tasks []store.PipelineTaskRecord) int {
 	recovered := 0
 	for _, t := range tasks {
-		if t.Status != "in_progress" {
+		if t.Status != domain.StatusInProgress {
 			continue
 		}
 		ok, reason, err := r.opts.DeadAgentRecoverer.RecoverDeadAgent(ctx, t.TaskShardID)
 		if err != nil {
-			r.emit(shardID, "implement", EventPoll, fmt.Sprintf("dead-agent probe %s -> error: %v", t.TaskShardID, err))
+			r.emit(shardID, domain.PhaseImplement, EventPoll, fmt.Sprintf("dead-agent probe %s -> error: %v", t.TaskShardID, err))
 			continue
 		}
 		if ok {
-			r.emit(shardID, "implement", EventPoll, fmt.Sprintf("dead-agent recovered %s: %s", t.TaskShardID, reason))
+			r.emit(shardID, domain.PhaseImplement, EventPoll, fmt.Sprintf("dead-agent recovered %s: %s", t.TaskShardID, reason))
 			recovered++
 		}
 	}
@@ -309,7 +310,7 @@ func waitingTaskIDs(tasks []store.PipelineTaskRecord) []string {
 	ids := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.Status {
-		case "pending", "in_progress", "needs-review":
+		case domain.StatusPending, domain.StatusInProgress, domain.StatusNeedsReview:
 			ids = append(ids, task.TaskShardID)
 		}
 	}

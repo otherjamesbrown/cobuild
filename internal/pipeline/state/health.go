@@ -3,6 +3,8 @@ package state
 import (
 	"fmt"
 	"time"
+
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 )
 
 // staleReviewWindow is how long a pipeline may sit in review with no
@@ -33,7 +35,7 @@ func computeHealth(state *PipelineState) (Health, []string) {
 		if session.Status == "running" {
 			runningSessions = append(runningSessions, session)
 		}
-		if state.Run != nil && state.Run.Status == "completed" && session.Status == "running" {
+		if state.Run != nil && state.Run.Status == domain.StatusCompleted && session.Status == "running" {
 			inconsistencies.addHard("pipeline run is completed but a session is still running")
 		}
 	}
@@ -98,7 +100,7 @@ func isStale(state *PipelineState, runningSessions []SessionState) bool {
 	}
 	for _, session := range state.Sessions {
 		switch session.Status {
-		case "orphaned", "cancelled", "completed", "failed", "timeout":
+		case "orphaned", domain.StatusCancelled, domain.StatusCompleted, domain.StatusFailed, "timeout":
 			return true
 		}
 	}
@@ -106,7 +108,7 @@ func isStale(state *PipelineState, runningSessions []SessionState) bool {
 	// than staleReviewWindow with nothing running is waiting on a human
 	// decision (merge, fail, close). Flag it so live/status can filter these
 	// out of the "actually active" view. No auto-fix — operator decides.
-	if state.Run.Phase == "review" && !state.ResolvedAt.IsZero() &&
+	if state.Run.Phase == domain.PhaseReview && !state.ResolvedAt.IsZero() &&
 		state.ResolvedAt.Sub(state.Run.UpdatedAt) > staleReviewWindow {
 		return true
 	}

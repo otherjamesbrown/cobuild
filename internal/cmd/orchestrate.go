@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/orchestrator"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/spf13/cobra"
@@ -39,7 +40,7 @@ var newOrchestrateRunner = func(opts orchestrator.Options) orchestrateCommandRun
 				switch task.Status {
 				case "closed":
 					return orchestrator.ReviewResult{Outcome: "merged"}, nil
-				case "in_progress":
+				case domain.StatusInProgress:
 					return orchestrator.ReviewResult{Outcome: "redispatched"}, nil
 				}
 			}
@@ -94,7 +95,7 @@ failures.`,
 		// or `cobuild run` call; refusing here was pure friction for the
 		// common case (cb-d5e1dd #6).
 		if _, err := cbStore.GetRun(cmd.Context(), shardID); err != nil {
-			startPhase := "design"
+			startPhase := domain.PhaseDesign
 			if conn != nil {
 				if item, itemErr := conn.Get(cmd.Context(), shardID); itemErr == nil && item != nil {
 					repoRoot := findRepoRoot()

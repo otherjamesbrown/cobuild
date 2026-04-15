@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,7 @@ without going through cobuild merge.`,
 			if r.Status != "active" {
 				continue
 			}
-			if r.Phase == "done" {
+			if r.Phase == domain.PhaseDone {
 				continue
 			}
 
@@ -59,7 +60,7 @@ without going through cobuild merge.`,
 				reason = "work item closed"
 			} else if item.Type == "task" || item.Type == "bug" {
 				// Check if PR is merged
-				prURL, _ := conn.GetMetadata(ctx, r.DesignID, "pr_url")
+				prURL, _ := conn.GetMetadata(ctx, r.DesignID, domain.MetaPRURL)
 				if prURL != "" {
 					resolved, reason = checkPRMerged(ctx, prURL)
 				} else {
@@ -72,7 +73,7 @@ without going through cobuild merge.`,
 						reason = "PR merged (found by branch)"
 					}
 				}
-			} else if item.Type == "design" {
+			} else if item.Type == domain.WorkItemTypeDesign {
 				// Check if all child tasks are closed
 				children, err := conn.GetEdges(ctx, r.DesignID, "incoming", []string{"child-of"})
 				if err == nil && len(children) > 0 {
@@ -96,11 +97,11 @@ without going through cobuild merge.`,
 					action = "advancing"
 					// Admin tool: intentionally uses UpdateRunPhase (force) to repair
 					// pipelines that are stuck in an inconsistent state.
-					if err := cbStore.UpdateRunPhase(ctx, r.DesignID, "done"); err != nil {
+					if err := cbStore.UpdateRunPhase(ctx, r.DesignID, domain.PhaseDone); err != nil {
 						fmt.Printf("  %-12s error advancing phase: %v\n", r.DesignID, err)
 						continue
 					}
-					if err := cbStore.UpdateRunStatus(ctx, r.DesignID, "completed"); err != nil {
+					if err := cbStore.UpdateRunStatus(ctx, r.DesignID, domain.StatusCompleted); err != nil {
 						fmt.Printf("  %-12s error marking completed: %v\n", r.DesignID, err)
 						continue
 					}

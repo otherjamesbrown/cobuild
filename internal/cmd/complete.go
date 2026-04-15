@@ -11,6 +11,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/runtime"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -64,7 +65,7 @@ Steps:
 			return nil
 		}
 
-		if task.Status == "needs-review" {
+		if task.Status == domain.StatusNeedsReview {
 			if autoFlag {
 				// Idempotent: Stop hook fired after dispatch script already completed it
 				fmt.Printf("Task %s already needs-review, skipping (--auto)\n", taskID)
@@ -73,7 +74,7 @@ Steps:
 			return validateCompletionViaConnector(ctx, taskID, task)
 		}
 
-		worktreePath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+		worktreePath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 		directDecision, err := detectDirectCompletion(ctx, task, worktreePath)
 		if err != nil {
 			return fmt.Errorf("detect completion mode: %w", err)
@@ -96,7 +97,7 @@ Steps:
 			}
 			endTaskSession(ctx, taskID, worktreePath, store.SessionResult{
 				ExitCode:       1,
-				Status:         "failed",
+				Status:         domain.StatusFailed,
 				Error:          directDecision.reason,
 				CompletionNote: directDecision.reason,
 			})
@@ -180,7 +181,7 @@ Steps:
 
 		// Create PR — detect repo from the worktree's git remote (not pipeline config,
 		// which may point to a different repo in multi-repo projects)
-		prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
+		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
 		if prURL == "" {
 			fmt.Println("Creating PR...")
 			repo := ""
@@ -215,7 +216,7 @@ Steps:
 				} else {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("PR created: %s\n", prURL)
-					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
+					conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
 				}
 			} else {
 				fmt.Println("Could not detect GitHub repo -- skipping PR creation")
@@ -242,11 +243,11 @@ Steps:
 		// Mark needs-review
 		fmt.Println("Marking needs-review...")
 		if conn != nil {
-			if err := conn.UpdateStatus(ctx, taskID, "needs-review"); err != nil {
+			if err := conn.UpdateStatus(ctx, taskID, domain.StatusNeedsReview); err != nil {
 				fmt.Printf("Warning: failed to set status: %v\n", err)
 			}
 		}
-		syncPipelineTaskStatus(ctx, taskID, "needs-review")
+		syncPipelineTaskStatus(ctx, taskID, domain.StatusNeedsReview)
 
 		// cb-e619cb: signal to the dispatch runner's post-completion
 		// watchdog that the PR flow finished successfully. The interactive
@@ -266,7 +267,7 @@ Steps:
 		if cbStore != nil {
 			run, _ := cbStore.GetRun(ctx, taskID)
 			if run != nil {
-				if err := advancePipelinePhaseTo(ctx, cbStore, taskID, run.CurrentPhase, "review"); err != nil {
+				if err := advancePipelinePhaseTo(ctx, cbStore, taskID, run.CurrentPhase, domain.PhaseReview); err != nil {
 					if !strings.Contains(err.Error(), "no pipeline run") {
 						fmt.Printf("Warning: failed to advance pipeline phase: %v\n", err)
 					}
@@ -284,11 +285,11 @@ Steps:
 			FilesChanged: filesCount,
 			Commits:      1,
 			PRURL:        prURL,
-			Status:       "completed",
+			Status:       domain.StatusCompleted,
 		})
 
 		fmt.Printf("Task %s complete -> needs-review\n", taskID)
-		printNextStep(taskID, "implement", "complete")
+		printNextStep(taskID, domain.PhaseImplement, domain.ActionComplete)
 		return nil
 	},
 }
@@ -296,7 +297,7 @@ Steps:
 func validateCompletionViaConnector(ctx context.Context, taskID string, task *connector.WorkItem) error {
 	issues := []string{}
 
-	wtPath, _ := conn.GetMetadata(ctx, taskID, "worktree_path")
+	wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 
 	if wtPath != "" {
 		commitOut, err := exec.Command("git", "-C", wtPath, "log", "--oneline", "main..HEAD").Output()
@@ -305,7 +306,7 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 		}
 	}
 
-	prURL, _ := conn.GetMetadata(ctx, taskID, "pr_url")
+	prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
 	if prURL == "" {
 		issues = append(issues, "no PR created")
 		if wtPath != "" {
@@ -328,7 +329,7 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 				if err == nil {
 					prURL = strings.TrimSpace(string(prOut))
 					fmt.Printf("Validation: PR created: %s\n", prURL)
-					conn.SetMetadata(ctx, taskID, "pr_url", prURL)
+					conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
 				}
 			}
 		}

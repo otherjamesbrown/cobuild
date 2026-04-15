@@ -12,6 +12,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/spf13/cobra"
@@ -108,7 +109,7 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 	// Search for items with the label
 	// This is connector-specific — for CP we'd search by label
 	// For now, use a simple list and filter
-	for _, itemType := range []string{"design", "bug"} {
+	for _, itemType := range []string{domain.WorkItemTypeDesign, domain.WorkItemTypeBug} {
 		result, err := conn.List(ctx, connector.ListFilters{
 			Type:   itemType,
 			Status: "open",
@@ -143,7 +144,7 @@ func pollAutoLabelledItems(ctx context.Context, autoLabel string, dryRun bool) {
 				fmt.Printf("  [auto] %s (%s) — has label %q, would init autonomous pipeline\n", item.ID, item.Type, autoLabel)
 			} else {
 				fmt.Printf("  [auto] %s (%s) — initialising autonomous pipeline\n", item.ID, item.Type)
-				startPhase := "design"
+				startPhase := domain.PhaseDesign
 				repoRoot := findRepoRoot()
 				pCfg, _ := config.LoadConfig(repoRoot)
 				bootstrap, resolveErr := pipelinestate.ResolveBootstrap(&item, pCfg)
@@ -389,7 +390,7 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 
 		// Check phase — some phases need task-level dispatch, not design-level
 		switch run.Phase {
-		case "implement":
+		case domain.PhaseImplement:
 			// Check for child tasks that need dispatch
 			edges, _ := conn.GetEdges(ctx, run.DesignID, "incoming", []string{"child-of"})
 			if len(edges) > 0 {
@@ -404,7 +405,7 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 				}
 			}
 
-		case "design", "decompose", "investigate", "review", "done":
+		case domain.PhaseDesign, domain.PhaseDecompose, domain.PhaseInvestigate, domain.PhaseReview, domain.PhaseDone:
 			// Design-level dispatch — spawn agent for this phase
 			if dryRun {
 				fmt.Printf("  [%s] %s (%s) — would dispatch\n", run.Phase, run.DesignID, run.Project)
@@ -426,7 +427,7 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 	}
 
 	// List tasks needing review
-	result, err := conn.List(ctx, connectorListFilters("task", "needs-review"))
+	result, err := conn.List(ctx, connectorListFilters("task", domain.StatusNeedsReview))
 	if err != nil {
 		return
 	}
@@ -447,7 +448,7 @@ func pollNeedsReviewTasks(ctx context.Context, repoRoot string, pCfg *config.Con
 				if s.Type != "" && s.Type != "task" {
 					continue
 				}
-				if s.Status != "closed" && s.Status != "needs-review" {
+				if s.Status != "closed" && s.Status != domain.StatusNeedsReview {
 					allDone = false
 					break
 				}
@@ -584,9 +585,9 @@ func dispatchReadyTasks(ctx context.Context, repoRoot string, pCfg *config.Confi
 		switch taskStatus {
 		case "closed":
 			done++
-		case "in_progress":
+		case domain.StatusInProgress:
 			inProgress++
-		case "needs-review":
+		case domain.StatusNeedsReview:
 			if resolveWaveStrategy(pCfg) == "parallel" {
 				done++ // effectively done for parallel dispatch
 			}
@@ -666,13 +667,13 @@ func pollTaskReviews(ctx context.Context, dryRun bool) {
 		return
 	}
 
-	result, err := conn.List(ctx, connectorListFilters("task", "needs-review"))
+	result, err := conn.List(ctx, connectorListFilters("task", domain.StatusNeedsReview))
 	if err != nil {
 		return
 	}
 
 	for _, item := range result.Items {
-		prURL, _ := conn.GetMetadata(ctx, item.ID, "pr_url")
+		prURL, _ := conn.GetMetadata(ctx, item.ID, domain.MetaPRURL)
 		if prURL == "" {
 			continue
 		}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -201,7 +202,7 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 		return "", fmt.Errorf("missing task")
 	}
 
-	if repoValue, ok := metadataValue(task, "repo"); ok {
+	if repoValue, ok := metadataValue(task, domain.MetaRepo); ok {
 		repos, err := normalizeRepoTargets(repoValue)
 		if err != nil {
 			return "", err
@@ -216,7 +217,7 @@ func resolveTaskTargetRepo(ctx context.Context, cn connector.Connector, task *co
 	}
 
 	if cn != nil {
-		repo, err := cn.GetMetadata(ctx, task.ID, "repo")
+		repo, err := cn.GetMetadata(ctx, task.ID, domain.MetaRepo)
 		if err != nil {
 			return "", fmt.Errorf("read repo metadata: %w", err)
 		}
@@ -349,20 +350,20 @@ func cleanRepoList(values []string) []string {
 // runs at done and other gates without a strict phase mapping.
 func expectedPhaseForGate(gateName string) string {
 	switch gateName {
-	case "readiness-review":
-		return "design"
-	case "decomposition-review":
-		return "decompose"
+	case domain.GateReadinessReview:
+		return domain.PhaseDesign
+	case domain.GateDecompositionReview:
+		return domain.PhaseDecompose
 	case "investigation":
-		return "investigate"
-	case "review":
+		return domain.PhaseInvestigate
+	case domain.GateReview:
 		// "review" gate covers tasks completing review phase. Tasks have
 		// their own pipeline runs in implement/fix/review phases.
 		// Skip strict validation here — the gate fires from process-review
 		// for tasks, and the design's review phase sits separately.
 		return ""
-	case "retrospective":
-		return "done"
+	case domain.GateRetrospective:
+		return domain.PhaseDone
 	default:
 		return ""
 	}

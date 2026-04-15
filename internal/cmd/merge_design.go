@@ -7,6 +7,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/merge"
 	"github.com/spf13/cobra"
 )
@@ -54,14 +55,14 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 			if item.Type != "task" && item.Type != "bug" {
 				continue
 			}
-			if item.Status != "closed" && item.Status != "needs-review" {
+			if item.Status != "closed" && item.Status != domain.StatusNeedsReview {
 				fmt.Printf("  Skipping %s (status: %s, not ready for merge)\n", item.ID, item.Status)
 				continue
 			}
 
 			wave := 0
 			if item.Metadata != nil {
-				if w, ok := item.Metadata["wave"]; ok {
+				if w, ok := item.Metadata[domain.MetaWave]; ok {
 					if wf, ok := w.(float64); ok {
 						wave = int(wf)
 					}
@@ -70,7 +71,7 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 
 			pr := ""
 			if item.Metadata != nil {
-				if p, ok := item.Metadata["pr_url"]; ok {
+				if p, ok := item.Metadata[domain.MetaPRURL]; ok {
 					pr = fmt.Sprintf("%v", p)
 				}
 			}
@@ -211,7 +212,7 @@ files, skips fully superseded tasks, and runs tests after each merge.`,
 		}
 
 		if err == nil && failed == 0 {
-			printNextStep(designID, "done", "merge-design")
+			printNextStep(designID, domain.PhaseDone, domain.ActionMergeDesign)
 		}
 		return err
 	},

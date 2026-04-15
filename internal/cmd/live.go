@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/pipeline/livestate"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +57,7 @@ is one-shot — wrap with watch(1) for continuous updates.`,
 		if !showAll {
 			active := snap.Pipelines[:0]
 			for _, p := range snap.Pipelines {
-				if p.Phase != "done" && p.Status != "completed" {
+				if p.Phase != domain.PhaseDone && p.Status != domain.StatusCompleted {
 					active = append(active, p)
 				}
 			}

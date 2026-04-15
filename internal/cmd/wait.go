@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +35,7 @@ Exit codes:
 
 		targetStatus, _ := cmd.Flags().GetString("status")
 		if targetStatus == "" {
-			targetStatus = "needs-review"
+			targetStatus = domain.StatusNeedsReview
 		}
 		intervalSec, _ := cmd.Flags().GetInt("interval")
 		if intervalSec < 5 {
@@ -112,7 +113,7 @@ Exit codes:
 				// since the tasks may be in different pipeline states.
 				if len(taskIDs) == 1 && cbStore != nil {
 					if run, err := cbStore.GetRun(ctx, taskIDs[0]); err == nil && run != nil {
-						printNextStep(taskIDs[0], run.CurrentPhase, "wait-complete")
+						printNextStep(taskIDs[0], run.CurrentPhase, domain.ActionWaitComplete)
 						return nil
 					}
 				}
@@ -144,7 +145,7 @@ func hasLabel(labels []string, target string) bool {
 }
 
 func init() {
-	waitCmd.Flags().String("status", "needs-review", "Target status to wait for")
+	waitCmd.Flags().String("status", domain.StatusNeedsReview, "Target status to wait for")
 	waitCmd.Flags().Int("interval", 60, "Poll interval in seconds")
 	waitCmd.Flags().String("timeout", "2h", "Maximum wait time (e.g., 30m, 2h)")
 	rootCmd.AddCommand(waitCmd)

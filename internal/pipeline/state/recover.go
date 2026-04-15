@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -163,14 +164,14 @@ func CompleteStaleRun(ctx context.Context, deps RecoveryDependencies, state *Pip
 		return result, fmt.Errorf("recovery store is required")
 	}
 
-	if state.Run.Phase != "done" {
-		if err := deps.Store.UpdateRunPhase(ctx, state.DesignID, "done"); err != nil {
+	if state.Run.Phase != domain.PhaseDone {
+		if err := deps.Store.UpdateRunPhase(ctx, state.DesignID, domain.PhaseDone); err != nil {
 			return result, fmt.Errorf("complete stale run %s: update phase: %w", state.DesignID, err)
 		}
 		result.Changed = true
 	}
-	if state.Run.Status != "completed" {
-		if err := deps.Store.UpdateRunStatus(ctx, state.DesignID, "completed"); err != nil {
+	if state.Run.Status != domain.StatusCompleted {
+		if err := deps.Store.UpdateRunStatus(ctx, state.DesignID, domain.StatusCompleted); err != nil {
 			return result, fmt.Errorf("complete stale run %s: update status: %w", state.DesignID, err)
 		}
 		result.Changed = true

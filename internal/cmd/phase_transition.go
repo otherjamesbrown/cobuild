@@ -6,6 +6,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
@@ -42,7 +43,7 @@ func advancePipelinePhase(
 	// tasks is almost always a silent failure — the operator sees green
 	// gates and moves on while no code was produced (cb-d5e1dd #1). Fail
 	// loud instead. Bugs and tasks are allowed to advance without children.
-	if nextPhase == "done" {
+	if nextPhase == domain.PhaseDone {
 		if err := assertDesignHasChildTasks(ctx, cn, designID); err != nil {
 			return "", err
 		}
@@ -66,7 +67,7 @@ func assertDesignHasChildTasks(ctx context.Context, cn connector.Connector, desi
 	if err != nil || item == nil {
 		return nil
 	}
-	if item.Type != "design" {
+	if item.Type != domain.WorkItemTypeDesign {
 		return nil
 	}
 	edges, err := cn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
@@ -150,8 +151,8 @@ func advanceDesignToCompleted(ctx context.Context, st store.Store, cn connector.
 	}
 
 	// Already done — just ensure status is marked completed
-	if expectedPhase == "done" {
-		if err := st.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+	if expectedPhase == domain.PhaseDone {
+		if err := st.UpdateRunStatus(ctx, designID, domain.StatusCompleted); err != nil {
 			fmt.Printf("  Warning: failed to mark %s completed: %v\n", designID, err)
 		}
 		return
@@ -167,7 +168,7 @@ func advanceDesignToCompleted(ctx context.Context, st store.Store, cn connector.
 	}
 
 	// If we advanced to an intermediate phase, keep going until done
-	for next != "done" && next != "" {
+	for next != domain.PhaseDone && next != "" {
 		var err error
 		next, err = advancePipelinePhase(ctx, st, cn, pCfg, designID, next)
 		if err != nil {
@@ -176,7 +177,7 @@ func advanceDesignToCompleted(ctx context.Context, st store.Store, cn connector.
 		}
 	}
 
-	if err := st.UpdateRunStatus(ctx, designID, "completed"); err != nil {
+	if err := st.UpdateRunStatus(ctx, designID, domain.StatusCompleted); err != nil {
 		fmt.Printf("  Warning: failed to mark %s completed: %v\n", designID, err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 	"github.com/otherjamesbrown/cobuild/internal/worktree"
 )
@@ -43,7 +44,7 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 
 	prURL := ""
 	if conn != nil && task != nil {
-		prURL, _ = conn.GetMetadata(ctx, task.ID, "pr_url")
+		prURL, _ = conn.GetMetadata(ctx, task.ID, domain.MetaPRURL)
 	}
 	if prURL != "" {
 		return directCompletionDecision{}, nil
@@ -85,7 +86,7 @@ func detectDirectCompletion(ctx context.Context, task *connector.WorkItem, workt
 // (e.g. a no-op review pass) from an agent that silently failed to deliver.
 func phaseProducesCode(phase string) bool {
 	switch phase {
-	case "fix", "implement", "investigate":
+	case domain.PhaseFix, domain.PhaseImplement, domain.PhaseInvestigate:
 		return true
 	}
 	return false
@@ -146,7 +147,7 @@ func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string
 		if len(pCfg) > 0 {
 			cfg = pCfg[0]
 		}
-		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, cfg); err != nil {
+		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, "pass", directReviewPassBody, 0, cfg); err != nil {
 			fmt.Printf("Warning: failed to record direct completion gate: %v\n", err)
 		}
 	}
@@ -155,7 +156,7 @@ func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string
 		ExitCode:       0,
 		FilesChanged:   0,
 		Commits:        0,
-		Status:         "completed",
+		Status:         domain.StatusCompleted,
 		CompletionNote: reason,
 	})
 
@@ -163,14 +164,14 @@ func completeDirectTask(ctx context.Context, taskID, worktreePath, reason string
 	closeTaskAndAdvance(ctx, taskID)
 
 	fmt.Printf("Task %s complete -> closed (direct)\n", taskID)
-	printNextStep(taskID, "done", "complete")
+	printNextStep(taskID, domain.PhaseDone, domain.ActionComplete)
 	return nil
 }
 
 func maybeProcessDirectReview(ctx context.Context, taskID string, task *connector.WorkItem, dryRun bool) (bool, error) {
 	worktreePath := ""
 	if conn != nil {
-		worktreePath, _ = conn.GetMetadata(ctx, taskID, "worktree_path")
+		worktreePath, _ = conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
 	}
 
 	decision, err := detectDirectCompletion(ctx, task, worktreePath)
@@ -198,14 +199,14 @@ func maybeProcessDirectReview(ctx context.Context, taskID string, task *connecto
 	if cbStore != nil {
 		repoRoot := findRepoRoot()
 		pCfg, _ := config.LoadConfig(repoRoot)
-		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, "review", "pass", directReviewPassBody, 0, pCfg); err != nil {
+		if _, err := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, "pass", directReviewPassBody, 0, pCfg); err != nil {
 			fmt.Printf("Warning: failed to record direct review gate: %v\n", err)
 		}
 	}
 
 	closeTaskAndAdvance(ctx, taskID)
 	cleanupTaskWorktree(ctx, taskID, worktreePath)
-	printNextStep(taskID, "merged", "process-review")
+	printNextStep(taskID, domain.OutcomeMerged, domain.ActionProcessReview)
 	return true, nil
 }
 
@@ -267,7 +268,7 @@ func endTaskSession(ctx context.Context, taskID, worktreePath string, result sto
 	if cbStore == nil || conn == nil {
 		return
 	}
-	sessionID, _ := conn.GetMetadata(ctx, taskID, "session_id")
+	sessionID, _ := conn.GetMetadata(ctx, taskID, domain.MetaSessionID)
 	if sessionID == "" {
 		rec, err := cbStore.GetSession(ctx, taskID)
 		if err == nil && rec != nil && rec.Status == "running" {

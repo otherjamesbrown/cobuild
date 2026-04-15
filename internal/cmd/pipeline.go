@@ -14,6 +14,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/pipeline/livestate"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -52,7 +53,7 @@ var initCmd = &cobra.Command{
 		autonomous, _ := cmd.Flags().GetBool("autonomous")
 
 		// Determine start phase from work item type + workflow config
-		startPhase := "design"
+		startPhase := domain.PhaseDesign
 		if conn != nil {
 			item, err := conn.Get(ctx, id)
 			if err == nil {
@@ -99,7 +100,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  Phase:    %s\n", run.CurrentPhase)
 			fmt.Printf("  Mode:     %s\n", mode)
 			fmt.Printf("  Progress: %s\n", run.CreatedAt.Format(time.RFC3339))
-			printNextStep(id, startPhase, "init")
+			printNextStep(id, startPhase, domain.ActionInit)
 		} else {
 			return fmt.Errorf("no store configured — set up ~/.cobuild/config.yaml or COBUILD_* env vars")
 		}
@@ -287,9 +288,9 @@ var gateCmd = &cobra.Command{
 			fmt.Printf("  Phase:        %s\n", gateResult.Phase)
 		}
 		if gateResult.Verdict == "pass" {
-			printNextStep(designID, gateResult.NextPhase, "gate-pass")
+			printNextStep(designID, gateResult.NextPhase, domain.ActionGatePass)
 		} else {
-			printNextStep(designID, gateResult.Phase, "gate-fail")
+			printNextStep(designID, gateResult.Phase, domain.ActionGateFail)
 		}
 		return nil
 	},
@@ -329,9 +330,9 @@ var reviewCmd = &cobra.Command{
 		// for direct calls where the lookup returned ErrNotFound. The flag
 		// presence is the caller's actual intent and doesn't depend on
 		// transient pipeline state.
-		gateName := "review"
+		gateName := domain.GateReview
 		if readiness > 0 {
-			gateName = "readiness-review"
+			gateName = domain.GateReadinessReview
 			if readiness > 5 {
 				return fmt.Errorf("--readiness must be 1-5 for readiness-review, got %d", readiness)
 			}
@@ -353,7 +354,7 @@ var reviewCmd = &cobra.Command{
 		}
 
 		recordedReadiness := 0
-		if gateName == "readiness-review" {
+		if gateName == domain.GateReadinessReview {
 			recordedReadiness = readiness
 		}
 		result, err := RecordGateVerdict(ctx, conn, cbStore, shardID, gateName, verdict, content, recordedReadiness, pCfg)
@@ -368,7 +369,7 @@ var reviewCmd = &cobra.Command{
 		}
 
 		label := "Phase 1 review"
-		if gateName == "review" {
+		if gateName == domain.GateReview {
 			label = "PR review"
 		}
 		fmt.Printf("Recorded %s for %s\n", label, result.DesignID)
@@ -377,20 +378,20 @@ var reviewCmd = &cobra.Command{
 		phaseTransition := result.Phase
 		if result.Verdict == "pass" {
 			phaseTransition = fmt.Sprintf("%s -> %s", result.Phase, result.NextPhase)
-			if result.NextPhase == "" && gateName == "readiness-review" {
+			if result.NextPhase == "" && gateName == domain.GateReadinessReview {
 				phaseTransition = "design -> decompose"
 			}
 		}
-		if gateName == "readiness-review" {
+		if gateName == domain.GateReadinessReview {
 			fmt.Printf("  Verdict:      %s (%d/5)\n", result.Verdict, readiness)
 		} else {
 			fmt.Printf("  Verdict:      %s\n", result.Verdict)
 		}
 		fmt.Printf("  Phase:        %s\n", phaseTransition)
 		if result.Verdict == "pass" {
-			printNextStep(shardID, result.NextPhase, "gate-pass")
+			printNextStep(shardID, result.NextPhase, domain.ActionGatePass)
 		} else {
-			printNextStep(shardID, result.Phase, "gate-fail")
+			printNextStep(shardID, result.Phase, domain.ActionGateFail)
 		}
 		return nil
 	},
@@ -544,9 +545,9 @@ var investigateCmd = &cobra.Command{
 			fmt.Printf("  Phase:        %s → %s\n", result.Phase, result.NextPhase)
 		}
 		if result.Verdict == "pass" {
-			printNextStep(bugID, result.NextPhase, "gate-pass")
+			printNextStep(bugID, result.NextPhase, domain.ActionGatePass)
 		} else {
-			printNextStep(bugID, "investigate", "gate-fail")
+			printNextStep(bugID, domain.PhaseInvestigate, domain.ActionGateFail)
 		}
 		return nil
 	},
@@ -733,7 +734,7 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 	}
 
 	if phase == "" {
-		phase = "design"
+		phase = domain.PhaseDesign
 		if conn != nil {
 			item, err := conn.Get(ctx, id)
 			if err == nil && item != nil {
@@ -825,8 +826,8 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 				continue
 			}
 			if conn != nil {
-				_ = conn.SetMetadata(ctx, state.TaskID, "worktree_path", "")
-				_ = conn.SetMetadata(ctx, state.TaskID, "session_id", "")
+				_ = conn.SetMetadata(ctx, state.TaskID, domain.MetaWorktreePath, "")
+				_ = conn.SetMetadata(ctx, state.TaskID, domain.MetaSessionID, "")
 			}
 			removed++
 		}
@@ -981,10 +982,10 @@ func collectResetTaskState(ctx context.Context, designID string, sessions []stor
 	if conn != nil {
 		for _, state := range byTask {
 			if state.WorktreePath == "" {
-				state.WorktreePath, _ = conn.GetMetadata(ctx, state.TaskID, "worktree_path")
+				state.WorktreePath, _ = conn.GetMetadata(ctx, state.TaskID, domain.MetaWorktreePath)
 			}
 			if state.PRURL == "" {
-				state.PRURL, _ = conn.GetMetadata(ctx, state.TaskID, "pr_url")
+				state.PRURL, _ = conn.GetMetadata(ctx, state.TaskID, domain.MetaPRURL)
 			}
 			if state.Repo == "" {
 				if repo, _, err := parsePRURL(state.PRURL); err == nil {
@@ -1007,7 +1008,7 @@ func collectResetTaskState(ctx context.Context, designID string, sessions []stor
 
 func shouldPreserveTasksForResetPhase(phase string) bool {
 	switch phase {
-	case "implement", "review", "deploy", "retrospective", "done":
+	case domain.PhaseImplement, domain.PhaseReview, domain.PhaseDeploy, domain.PhaseRetrospective, domain.PhaseDone:
 		return true
 	default:
 		return false
@@ -1019,7 +1020,7 @@ func restoreResetTasks(ctx context.Context, pipelineID string, tasks []store.Pip
 		if err := cbStore.AddTask(ctx, pipelineID, task.TaskShardID, task.DesignID, task.Wave); err != nil {
 			return err
 		}
-		if task.Status != "" && task.Status != "pending" {
+		if task.Status != "" && task.Status != domain.StatusPending {
 			if err := cbStore.UpdateTaskStatus(ctx, task.TaskShardID, task.Status); err != nil {
 				return err
 			}
