@@ -504,6 +504,7 @@ type fakeConnector struct {
 	metadata        map[string]map[string]string
 	parent          map[string]string
 	edges           map[string]map[string][]connector.Edge
+	appended        map[string][]string
 	createRequests  []connector.CreateRequest
 	statusUpdates   []fakeStatusUpdate
 	updateStatusErr map[string]error
@@ -520,6 +521,7 @@ func newFakeConnector() *fakeConnector {
 		metadata:        map[string]map[string]string{},
 		parent:          map[string]string{},
 		edges:           map[string]map[string][]connector.Edge{},
+		appended:        map[string][]string{},
 		updateStatusErr: map[string]error{},
 	}
 }
@@ -615,6 +617,7 @@ func (f *fakeConnector) UpdateStatus(ctx context.Context, id string, status stri
 }
 
 func (f *fakeConnector) AppendContent(ctx context.Context, id string, content string) error {
+	f.appended[id] = append(f.appended[id], content)
 	return nil
 }
 
@@ -924,6 +927,12 @@ func (f *fakeStore) EndSession(ctx context.Context, id string, result store.Sess
 }
 
 func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.SessionRecord, error) {
+	for i := len(f.sessions) - 1; i >= 0; i-- {
+		if f.sessions[i].TaskID == taskID {
+			session := f.sessions[i]
+			return &session, nil
+		}
+	}
 	return nil, nil
 }
 

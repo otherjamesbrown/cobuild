@@ -34,6 +34,8 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("no store configured (need database connection)")
 		}
 
+		reconcileExitedSessionsRun(ctx)
+
 		runs, err := cbStore.ListRuns(ctx, projectName)
 		if err != nil {
 			return fmt.Errorf("list pipeline runs: %w", err)
