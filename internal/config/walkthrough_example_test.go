@@ -65,7 +65,6 @@ func TestWalkthroughExampleConfigLoads(t *testing.T) {
 		t.Fatalf("AssembleContext: %v", err)
 	}
 	for _, snippet := range []string{
-		"Walkthrough Anatomy",
 		"# Skill: Walkthrough Readiness Review",
 		"# Dispatch Prompt",
 		"# Parent Design",
@@ -73,6 +72,9 @@ func TestWalkthroughExampleConfigLoads(t *testing.T) {
 		if !strings.Contains(contextText, snippet) {
 			t.Fatalf("assembled context missing %q\ncontext:\n%s", snippet, contextText)
 		}
+	}
+	if strings.Contains(contextText, "Walkthrough Anatomy") {
+		t.Fatalf("design-phase context should not include implement-only anatomy\ncontext:\n%s", contextText)
 	}
 
 	projectData, err := os.ReadFile(filepath.Join(exampleRoot, ".cobuild.yaml"))

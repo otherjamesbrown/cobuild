@@ -21,7 +21,7 @@ const (
 
 // LayerEntry is one file under .cobuild/context/.
 type LayerEntry struct {
-	// RelPath is relative to repoRoot (e.g. ".cobuild/context/always/anatomy.md").
+	// RelPath is relative to repoRoot (e.g. ".cobuild/context/implement/anatomy.md").
 	RelPath string `json:"rel_path"`
 	// Bucket is the subdir: "always", "dispatch", "design", etc.
 	Bucket string `json:"bucket"`
