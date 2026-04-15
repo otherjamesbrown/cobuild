@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/connector"
 	"github.com/otherjamesbrown/cobuild/internal/store"
@@ -143,5 +145,43 @@ func TestDecomposeCmdFailsWhenChildTaskRepoTargetingIsMissingOrAmbiguous(t *test
 	}
 	if got := fs.runs["cb-design"].CurrentPhase; got != "decompose" {
 		t.Fatalf("design phase = %q, want decompose after failure", got)
+	}
+}
+
+func TestShowWarnsWhenGateHistoryLookupFails(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{
+		ID:     "cb-design",
+		Title:  "Warn on silent read failure",
+		Type:   "design",
+		Status: "in_progress",
+	})
+
+	fs := newFakeStore()
+	fs.runs["cb-design"] = &store.PipelineRun{
+		ID:           "run-1",
+		DesignID:     "cb-design",
+		CurrentPhase: "review",
+		Status:       "active",
+		CreatedAt:    time.Now().Add(-2 * time.Hour),
+		UpdatedAt:    time.Now().Add(-1 * time.Hour),
+	}
+	fs.gateHistoryErr = fmt.Errorf("gate history unavailable")
+
+	restore := installTestGlobals(t, fc, fs, "context-palace")
+	defer restore()
+
+	out, err := runCommandWithOutputs(t, showCmd, []string{"cb-design"})
+	if err != nil {
+		t.Fatalf("show failed: %v", err)
+	}
+	if !strings.Contains(out, "Warning: failed to load gate history for cb-design: gate history unavailable") {
+		t.Fatalf("show output missing gate-history warning:\n%s", out)
+	}
+	if !strings.Contains(out, "cb-design: Warn on silent read failure") {
+		t.Fatalf("show output missing header:\n%s", out)
+	}
+	if !strings.Contains(out, "Phase:          review") {
+		t.Fatalf("show output missing pipeline body after warning:\n%s", out)
 	}
 }

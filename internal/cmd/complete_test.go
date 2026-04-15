@@ -540,11 +540,15 @@ func filterEdgesByType(edges []connector.Edge, types []string) []connector.Edge 
 type fakeStore struct {
 	runs            map[string]*store.PipelineRun
 	gates           []store.PipelineGateInput
+	gateHistory     []store.PipelineGateRecord
 	ended           map[string]store.SessionResult
 	runningSessions []store.SessionRecord
 	sessions        []store.SessionRecord
 	lastProject     string
 	resetCalls      int
+	gateHistoryErr  error
+	listTasksErr    error
+	listSessionsErr error
 	// Convenience fields for simpler tests (serial wave tests).
 	run   *store.PipelineRun
 	tasks []store.PipelineTaskRecord
@@ -674,7 +678,10 @@ func (f *fakeStore) RecordGate(ctx context.Context, input store.PipelineGateInpu
 }
 
 func (f *fakeStore) GetGateHistory(ctx context.Context, designID string) ([]store.PipelineGateRecord, error) {
-	return nil, nil
+	if f.gateHistoryErr != nil {
+		return nil, f.gateHistoryErr
+	}
+	return append([]store.PipelineGateRecord(nil), f.gateHistory...), nil
 }
 
 func (f *fakeStore) GetLatestGateRound(ctx context.Context, pipelineID, gateName string) (int, error) {
@@ -693,6 +700,9 @@ func (f *fakeStore) AddTask(ctx context.Context, pipelineID, taskShardID, design
 }
 
 func (f *fakeStore) ListTasks(ctx context.Context, pipelineID string) ([]store.PipelineTaskRecord, error) {
+	if f.listTasksErr != nil {
+		return nil, f.listTasksErr
+	}
 	if f.tasks != nil {
 		return append([]store.PipelineTaskRecord(nil), f.tasks...), nil
 	}
@@ -740,6 +750,9 @@ func (f *fakeStore) GetSession(ctx context.Context, taskID string) (*store.Sessi
 }
 
 func (f *fakeStore) ListSessions(ctx context.Context, designID string) ([]store.SessionRecord, error) {
+	if f.listSessionsErr != nil {
+		return nil, f.listSessionsErr
+	}
 	if designID == "" {
 		return append([]store.SessionRecord(nil), f.sessions...), nil
 	}
