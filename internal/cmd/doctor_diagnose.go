@@ -36,7 +36,7 @@ func runDoctorDiagnose(ctx context.Context, w io.Writer, errW io.Writer, shardID
 	}
 
 	// 2. Orchestrate processes driving this shard
-	procs, err := livestate.CollectProcesses(ctx, pipelineCommandCombinedOutput, time.Now())
+	procs, err := livestate.CollectProcesses(ctx, execCommandCombinedOutput, time.Now())
 	if err != nil {
 		fmt.Fprintf(w, "Orchestrate processes: query error: %v\n", err)
 	} else {

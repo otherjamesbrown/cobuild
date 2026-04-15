@@ -23,12 +23,6 @@ import (
 )
 
 var (
-	pipelineCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).Output()
-	}
-	pipelineCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
-	}
 	pipelineCommandRun = func(ctx context.Context, name string, args ...string) error {
 		return exec.CommandContext(ctx, name, args...).Run()
 	}
@@ -874,7 +868,7 @@ func runPipelineReset(ctx context.Context, id string, opts resetOptions) error {
 					fmt.Printf("Warning: failed to parse PR number from %s\n", pr.URL)
 					continue
 				}
-				if err := livestate.ClosePR(ctx, pipelineCommandCombinedOutput, pr.Repo, number, fmt.Sprintf("Closed by cobuild reset %s", id)); err != nil {
+				if err := livestate.ClosePR(ctx, execCommandCombinedOutput, pr.Repo, number, fmt.Sprintf("Closed by cobuild reset %s", id)); err != nil {
 					fmt.Printf("Warning: failed to close PR %s: %v\n", pr.URL, err)
 					continue
 				}
@@ -1030,7 +1024,7 @@ func restoreResetTasks(ctx context.Context, pipelineID string, tasks []store.Pip
 }
 
 func killDesignOrchestrateProcesses(ctx context.Context, designID string) (int, error) {
-	rows, err := livestate.CollectProcesses(ctx, pipelineCommandCombinedOutput, time.Now())
+	rows, err := livestate.CollectProcesses(ctx, execCommandCombinedOutput, time.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -1053,7 +1047,7 @@ func killDesignTmuxWindows(ctx context.Context, designID string) (int, error) {
 		if name == "tmux" {
 			args = tmuxCommandArgs(pCfg, args...)
 		}
-		return pipelineCommandCombinedOutput(ctx, name, args...)
+		return execCommandCombinedOutput(ctx, name, args...)
 	}
 	windows, err := livestate.CollectTmux(ctx, tmuxExec)
 	if err != nil {
@@ -1097,7 +1091,7 @@ func removeResetWorktree(ctx context.Context, taskID, worktreePath string) error
 }
 
 func repoRootForWorktree(ctx context.Context, worktreePath string) string {
-	out, err := pipelineCommandOutput(ctx, "git", "-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := execCommandOutput(ctx, "git", "-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return ""
 	}
@@ -1115,7 +1109,7 @@ func detectGitHubRepoFromWorktree(ctx context.Context, worktreePath string) stri
 	if strings.TrimSpace(worktreePath) == "" {
 		return ""
 	}
-	out, err := pipelineCommandOutput(ctx, "git", "-C", worktreePath, "remote", "get-url", "origin")
+	out, err := execCommandOutput(ctx, "git", "-C", worktreePath, "remote", "get-url", "origin")
 	if err != nil {
 		return ""
 	}
@@ -1163,7 +1157,7 @@ func inspectResetGitState(ctx context.Context, designID string, taskStates []res
 
 	openPRs := []resetTaskPRState{}
 	if len(repos) > 0 {
-		prs, err := livestate.CollectPRs(ctx, pipelineCommandCombinedOutput, repos, time.Now())
+		prs, err := livestate.CollectPRs(ctx, execCommandCombinedOutput, repos, time.Now())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1212,7 +1206,7 @@ func remoteBranchExists(ctx context.Context, repo, branch string) (bool, error) 
 	if repo == "" || branch == "" {
 		return false, nil
 	}
-	out, err := pipelineCommandCombinedOutput(ctx, "gh", "api", fmt.Sprintf("repos/%s/branches/%s", repo, branch))
+	out, err := execCommandCombinedOutput(ctx, "gh", "api", fmt.Sprintf("repos/%s/branches/%s", repo, branch))
 	if err == nil {
 		return true, nil
 	}

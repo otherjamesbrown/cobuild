@@ -64,13 +64,13 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 	restore := installTestGlobals(t, fc, fs, "cobuild")
 	defer restore()
 
-	prevOutput := pipelineCommandOutput
-	prevCombined := pipelineCommandCombinedOutput
+	prevOutput := execCommandOutput
+	prevCombined := execCommandCombinedOutput
 	prevRun := pipelineCommandRun
 	prevConfig := pipelineConfigLoader
 	t.Cleanup(func() {
-		pipelineCommandOutput = prevOutput
-		pipelineCommandCombinedOutput = prevCombined
+		execCommandOutput = prevOutput
+		execCommandCombinedOutput = prevCombined
 		pipelineCommandRun = prevRun
 		pipelineConfigLoader = prevConfig
 	})
@@ -86,7 +86,7 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 		cfg.Dispatch.TmuxSocket = socketPath
 		return cfg
 	}
-	pipelineCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	execCommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "git" {
 			return nil, fmt.Errorf("no git metadata")
 		}
@@ -101,7 +101,7 @@ func TestRunPipelineResetPerformsFullCleanupAndIsIdempotent(t *testing.T) {
 			return fmt.Errorf("unexpected run command %s %s", name, strings.Join(args, " "))
 		}
 	}
-	pipelineCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	execCommandCombinedOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		switch call {
 		case "ps auxww":

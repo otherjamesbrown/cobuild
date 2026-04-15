@@ -321,25 +321,26 @@ func (s *stubReviewer) Review(_ context.Context, input llmreview.ReviewInput) (*
 	return s.result, nil
 }
 
-func installReviewCommandTestGlobals(t *testing.T, fc *reviewFakeConnector, fs *reviewFakeStore) func() {
+func installReviewCommandTestGlobals(t *testing.T, fc *reviewFakeConnector, fs *reviewFakeStore) {
 	t.Helper()
 	origConn, origStore, origProject := conn, cbStore, projectName
-	origOutput, origCombined := reviewCommandOutput, reviewCommandCombinedOutput
+	origOutput, origCombined := execCommandOutput, execCommandCombinedOutput
 	origConfigLoader, origFactory := reviewConfigLoader, reviewerFactory
 
 	conn = fc
 	cbStore = fs
 	projectName = "cobuild"
 
-	return func() {
+	restore := func() {
 		conn = origConn
 		cbStore = origStore
 		projectName = origProject
-		reviewCommandOutput = origOutput
-		reviewCommandCombinedOutput = origCombined
+		execCommandOutput = origOutput
+		execCommandCombinedOutput = origCombined
 		reviewConfigLoader = origConfigLoader
 		reviewerFactory = origFactory
 	}
+	t.Cleanup(restore)
 }
 
 func newPRReviewFixture() (*reviewFakeConnector, *reviewFakeStore) {
@@ -539,8 +540,7 @@ func TestProcessReviewClosedDirectTaskIsIdempotent(t *testing.T) {
 
 func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) {
 	fc, fs := newPRReviewFixture()
-	restore := installReviewCommandTestGlobals(t, fc, fs)
-	defer restore()
+	installReviewCommandTestGlobals(t, fc, fs)
 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "auto"
@@ -571,7 +571,7 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 	}
 
 	var combinedCalls [][]string
-	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		key := name + " " + strings.Join(args, " ")
 		switch key {
 		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
@@ -587,7 +587,7 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 			return nil, nil
 		}
 	}
-	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		combinedCalls = append(combinedCalls, append([]string{name}, args...))
 		key := name + " " + strings.Join(args, " ")
 		switch {
@@ -643,8 +643,7 @@ func TestProcessReviewBuiltInSuccessPostsCommentAndRecordsLLMBody(t *testing.T) 
 
 func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 	fc, fs := newPRReviewFixture()
-	restore := installReviewCommandTestGlobals(t, fc, fs)
-	defer restore()
+	installReviewCommandTestGlobals(t, fc, fs)
 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "claude"
@@ -662,7 +661,7 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 	}
 
 	var combinedCalls [][]string
-	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		key := name + " " + strings.Join(args, " ")
 		switch key {
 		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
@@ -682,7 +681,7 @@ func TestProcessReviewBuiltInProviderFailureFallsBackToCIOnly(t *testing.T) {
 			return nil, nil
 		}
 	}
-	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		combinedCalls = append(combinedCalls, append([]string{name}, args...))
 		key := name + " " + strings.Join(args, " ")
 		switch key {
@@ -761,8 +760,7 @@ func TestRecordMergeFailureLogsAuditWriteErrors(t *testing.T) {
 
 func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
 	fc, fs := newPRReviewFixture()
-	restore := installReviewCommandTestGlobals(t, fc, fs)
-	defer restore()
+	installReviewCommandTestGlobals(t, fc, fs)
 
 	cfg := config.DefaultConfig()
 	cfg.Review.Provider = "external"
@@ -774,7 +772,7 @@ func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
 		return &stubReviewer{}, nil
 	}
 
-	reviewCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		key := name + " " + strings.Join(args, " ")
 		switch key {
 		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
@@ -788,7 +786,7 @@ func TestProcessReviewExternalProviderStillWaitsForGemini(t *testing.T) {
 			return nil, nil
 		}
 	}
-	reviewCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	execCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		t.Fatalf("unexpected CombinedOutput command: %s %s", name, strings.Join(args, " "))
 		return nil, nil
 	}
