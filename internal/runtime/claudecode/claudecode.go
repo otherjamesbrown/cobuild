@@ -289,7 +289,13 @@ elif [ -f .cobuild/gate-verdict.json ]; then
                 cobuild investigate "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
             review)
-                cobuild review "$SHARD_ID" --verdict "$VERDICT" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
+                # cb-465d17: route PR review gates through process-review, not
+                # cobuild review. process-review consumes the verdict file,
+                # records the gate, AND runs gh pr merge on pass. cobuild review
+                # only records the gate + advances phase -- used that way on a
+                # task with a PR, it advances phase=done while leaving the PR
+                # unmerged (observed on cb-b78c67).
+                cobuild process-review "$SHARD_ID" 2>&1 | tee -a "$OLDPWD/$LOGFILE"
                 ;;
             retrospective)
                 cobuild retro "$SHARD_ID" --body "$BODY" 2>&1 | tee -a "$OLDPWD/$LOGFILE"

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -45,6 +47,104 @@ func TestReviewCmdNormalizesNeedsFixVerdictToFail(t *testing.T) {
 		t.Fatalf("stored verdict = %q, want fail", got)
 	}
 	if got := fs.runs["cb-task"].CurrentPhase; got != "review" {
+		t.Fatalf("phase = %q, want review after fail verdict", got)
+	}
+}
+
+// TestReviewCmdRefusesPassWhenTaskHasOpenPR verifies the cb-465d17 guard:
+// `cobuild review --verdict pass` on a task with pr_url metadata must fail,
+// because `cobuild review` doesn't merge. A PASS there would advance phase=done
+// while leaving the PR open — the exact failure mode observed on cb-b78c67,
+// where three PASS reviews in the same minute left PR #94 unmerged.
+//
+// The correct caller in that situation is `cobuild process-review`, which
+// consumes .cobuild/gate-verdict.json, records the gate, AND runs gh pr merge
+// before advancing the phase.
+func TestReviewCmdRefusesPassWhenTaskHasOpenPR(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{
+		ID:     "cb-taskpr",
+		Title:  "task with PR",
+		Type:   "task",
+		Status: "needs-review",
+		Metadata: map[string]any{
+			domain.MetaPRURL: "https://github.com/otherjamesbrown/cobuild/pull/94",
+		},
+	})
+	fs := newFakeStore()
+	fs.runs["cb-taskpr"] = &store.PipelineRun{
+		ID:           "run-2",
+		DesignID:     "cb-taskpr",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cobuild")
+	defer restore()
+
+	resetReviewGateFlags(t)
+	t.Cleanup(func() { resetReviewGateFlags(t) })
+
+	_ = reviewCmd.Flags().Set("verdict", "pass")
+	_ = reviewCmd.Flags().Set("body", "LGTM.")
+
+	err := reviewCmd.RunE(reviewCmd, []string{"cb-taskpr"})
+	if err == nil {
+		t.Fatal("review --verdict pass on task with pr_url should error (cb-465d17), got nil")
+	}
+	for _, want := range []string{"cb-465d17", "process-review", "pull/94"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+
+	if len(fs.gates) != 0 {
+		t.Fatalf("refused review should not record a gate, got %d", len(fs.gates))
+	}
+	if got := fs.runs["cb-taskpr"].CurrentPhase; got != "review" {
+		t.Fatalf("phase = %q after refused pass, want review (must not advance)", got)
+	}
+}
+
+// TestReviewCmdAllowsFailForTaskWithOpenPR verifies the guard is narrow: a FAIL
+// verdict must still flow through `cobuild review` because doRequestChanges
+// (re-dispatch loop) runs inside process-review on fail, and FAIL doesn't
+// advance phase anyway. Only pass needs the guard.
+func TestReviewCmdAllowsFailForTaskWithOpenPR(t *testing.T) {
+	fc := newFakeConnector()
+	fc.addItem(&connector.WorkItem{
+		ID:     "cb-taskpr-fail",
+		Title:  "task with PR",
+		Type:   "task",
+		Status: "needs-review",
+		Metadata: map[string]any{
+			domain.MetaPRURL: "https://github.com/otherjamesbrown/cobuild/pull/94",
+		},
+	})
+	fs := newFakeStore()
+	fs.runs["cb-taskpr-fail"] = &store.PipelineRun{
+		ID:           "run-3",
+		DesignID:     "cb-taskpr-fail",
+		CurrentPhase: "review",
+		Status:       "active",
+	}
+
+	restore := installTestGlobals(t, fc, fs, "cobuild")
+	defer restore()
+
+	resetReviewGateFlags(t)
+	t.Cleanup(func() { resetReviewGateFlags(t) })
+
+	_ = reviewCmd.Flags().Set("verdict", "fail")
+	_ = reviewCmd.Flags().Set("body", "Missing coverage.")
+
+	if err := reviewCmd.RunE(reviewCmd, []string{"cb-taskpr-fail"}); err != nil {
+		t.Fatalf("review --verdict fail on task with pr_url should record gate, got %v", err)
+	}
+	if len(fs.gates) != 1 || fs.gates[0].Verdict != "fail" {
+		t.Fatalf("expected one fail gate, got %+v", fs.gates)
+	}
+	if got := fs.runs["cb-taskpr-fail"].CurrentPhase; got != "review" {
 		t.Fatalf("phase = %q, want review after fail verdict", got)
 	}
 }
