@@ -7,6 +7,7 @@ import (
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -242,11 +243,17 @@ var wiCreateCmd = &cobra.Command{
 			return fmt.Errorf("--type is required")
 		}
 
+		metadata, err := inheritedChildMetadata(ctx, conn, parent)
+		if err != nil {
+			return err
+		}
+
 		id, err := conn.Create(ctx, connector.CreateRequest{
 			Title:    title,
 			Content:  body,
 			Type:     wiType,
 			Labels:   labels,
+			Metadata: metadata,
 			ParentID: parent,
 		})
 		if err != nil {
@@ -319,4 +326,34 @@ func init() {
 	workItemCmd.AddCommand(wiCreateCmd)
 
 	rootCmd.AddCommand(workItemCmd)
+}
+
+func inheritedChildMetadata(ctx context.Context, cn connector.Connector, parentID string) (map[string]any, error) {
+	if cn == nil || strings.TrimSpace(parentID) == "" {
+		return nil, nil
+	}
+
+	inherited := map[string]any{}
+	for _, key := range []string{
+		domain.MetaRepo,
+		domain.MetaDispatchRuntime,
+		domain.MetaCompletionMode,
+	} {
+		value, err := cn.GetMetadata(ctx, parentID, key)
+		if err != nil {
+			return nil, fmt.Errorf("read parent %s metadata: %w", key, err)
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if key == domain.MetaRepo && repoMetadataLooksAmbiguous(value) {
+			continue
+		}
+		inherited[key] = value
+	}
+	if len(inherited) == 0 {
+		return nil, nil
+	}
+	return inherited, nil
 }
