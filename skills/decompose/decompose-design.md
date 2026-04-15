@@ -202,7 +202,7 @@ Before recording the decomposition gate, check that dispatched agents will have 
 ```bash
 cobuild scan
 ```
-This generates `.cobuild/context/always/anatomy.md` — a file index with descriptions and token estimates. Agents use it to understand the codebase structure without reading every file. Run this before dispatching so agents have a current map.
+This generates `.cobuild/context/implement/anatomy.md` — a file index with descriptions and token estimates. Implementing agents use it to understand the codebase structure without reading every file. Run this before dispatching so implement-phase tasks have a current map without bloating design and review prompts.
 
 **Check always-on context:**
 ```bash

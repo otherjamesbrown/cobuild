@@ -130,6 +130,73 @@ func TestScanProject_DefaultSkipsPythonCaches(t *testing.T) {
 	}
 }
 
+func TestScanProject_DefaultSkipsRecursiveContextAndGeneratedFiles(t *testing.T) {
+	dir := t.TempDir()
+	must := func(path, content string) {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	must("src/main.go", "package main")
+	must(".cobuild/context/always/anatomy.md", "# old anatomy")
+	must(".cobuild/dispatch-context.md", "# transient dispatch context")
+	must(".specify/memory/constitution.md", "# constitution")
+	must("api/proto/foo/v1/foo.pb.go", "package foov1")
+	must("api/proto/foo/v1/foo.proto", "syntax = \"proto3\";")
+
+	entries, err := scanProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawMain, sawProto bool
+	for _, e := range entries {
+		switch {
+		case e.Path == "src/main.go":
+			sawMain = true
+		case e.Path == "api/proto/foo/v1/foo.proto":
+			sawProto = true
+		case strings.HasPrefix(e.Path, ".cobuild/context"):
+			t.Fatalf("recursive context output should be excluded, got %s", e.Path)
+		case e.Path == ".cobuild/dispatch-context.md":
+			t.Fatalf("transient dispatch context should be excluded, got %s", e.Path)
+		case strings.HasPrefix(e.Path, ".specify"):
+			t.Fatalf(".specify should be excluded by default, got %s", e.Path)
+		case strings.HasSuffix(e.Path, ".pb.go"):
+			t.Fatalf("generated protobuf stubs should be excluded by default, got %s", e.Path)
+		}
+	}
+	if !sawMain {
+		t.Fatal("expected src/main.go in scan output")
+	}
+	if !sawProto {
+		t.Fatal("expected foo.proto in scan output")
+	}
+}
+
+func TestRemoveLegacyAnatomy(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := legacyAnatomyPath(dir)
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeLegacyAnatomy(dir); err != nil {
+		t.Fatalf("removeLegacyAnatomy: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy anatomy should be removed, stat err=%v", err)
+	}
+}
+
 func TestFormatAnatomy_CollapsesLargeDirs(t *testing.T) {
 	var entries []fileEntry
 	// synthesize a directory with enough tokens to trip collapseDirTokens
@@ -147,7 +214,7 @@ func TestFormatAnatomy_CollapsesLargeDirs(t *testing.T) {
 	})
 
 	out := formatAnatomy(entries, false)
-	if !strings.Contains(out, "listing suppressed") {
+	if !strings.Contains(out, "summarized") {
 		t.Fatalf("expected large dir to be collapsed, output:\n%s", out)
 	}
 	if !strings.Contains(out, "one.go") {
@@ -155,7 +222,7 @@ func TestFormatAnatomy_CollapsesLargeDirs(t *testing.T) {
 	}
 
 	verbose := formatAnatomy(entries, true)
-	if strings.Contains(verbose, "listing suppressed") {
+	if strings.Contains(verbose, "summarized") {
 		t.Fatalf("--verbose should not collapse, got:\n%s", verbose)
 	}
 }

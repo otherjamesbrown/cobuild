@@ -78,7 +78,6 @@ The simplest way to manage context: put markdown files in phase-named directorie
 ```
 .cobuild/context/
     always/                        # every agent sees these
-        anatomy.md                 # auto-generated file index (cobuild scan)
         architecture.md            # system structure, patterns
         principles.md              # hard constraints, rules
         naming-conventions.md      # terminology, style
@@ -86,6 +85,7 @@ The simplest way to manage context: put markdown files in phase-named directorie
         domain-ingest.md           # how the ingest pipeline works
         domain-entities.md         # entity model reference
     implement/                     # implementing agents
+        anatomy.md                 # auto-generated file index (cobuild scan)
         sub-agents.md              # available sub-agents and when to use them
         testing-standards.md       # how to write tests for this project
         coding-patterns.md         # patterns to follow, anti-patterns to avoid

@@ -14,13 +14,11 @@ import (
 // extras are additional key-value pairs to inject.
 // workItemFetcher is an optional function to fetch work-item content by ID (via the connector).
 func AssembleContext(cfg *Config, repoRoot, mode, phase string, extras map[string]string, workItemFetcher func(id string) (string, string, error)) (string, error) {
-	if cfg == nil || len(cfg.Context.Layers) == 0 {
-		return assembleDefaultContext(cfg, repoRoot, mode, extras)
-	}
-
 	var sections []string
 
-	// 1. Auto-discover context files from .cobuild/context/<phase>/ directories
+	// 1. Auto-discover context files from .cobuild/context/<phase>/ directories.
+	// This is intentionally active even with zero YAML context layers; the
+	// directory convention is the "zero config" path for phase-scoped context.
 	autoLayers := discoverContextDirs(repoRoot, mode, phase)
 	for _, layer := range autoLayers {
 		content, err := resolveLayer(layer, cfg, repoRoot, extras, workItemFetcher)
@@ -30,6 +28,17 @@ func AssembleContext(cfg *Config, repoRoot, mode, phase string, extras map[strin
 		if content != "" {
 			sections = append(sections, fmt.Sprintf("<!-- context: %s (auto) -->\n%s", layer.Name, content))
 		}
+	}
+
+	if cfg == nil || len(cfg.Context.Layers) == 0 {
+		defaultContent, err := assembleDefaultContext(cfg, repoRoot, mode, extras)
+		if err != nil {
+			return "", err
+		}
+		if defaultContent != "" {
+			sections = append(sections, defaultContent)
+		}
+		return strings.Join(sections, "\n\n---\n\n"), nil
 	}
 
 	// 2. Configured layers from pipeline.yaml
@@ -55,11 +64,12 @@ func AssembleContext(cfg *Config, repoRoot, mode, phase string, extras map[strin
 
 // discoverContextDirs finds .md files in .cobuild/context/<phase>/ directories.
 // Convention:
-//   .cobuild/context/always/     → loaded for every phase
-//   .cobuild/context/design/     → loaded for design phase
-//   .cobuild/context/implement/  → loaded for implement phase
-//   .cobuild/context/investigate/→ loaded for investigate phase
-//   etc.
+//
+//	.cobuild/context/always/     → loaded for every phase
+//	.cobuild/context/design/     → loaded for design phase
+//	.cobuild/context/implement/  → loaded for implement phase
+//	.cobuild/context/investigate/→ loaded for investigate phase
+//	etc.
 func discoverContextDirs(repoRoot, mode, phase string) []ContextLayer {
 	var layers []ContextLayer
 	contextBase := filepath.Join(repoRoot, ".cobuild", "context")

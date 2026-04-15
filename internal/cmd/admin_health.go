@@ -123,7 +123,8 @@ var adminHealthCmd = &cobra.Command{
 		}
 
 		// Anatomy
-		anatomyPath := filepath.Join(repoRoot, ".cobuild", "context", "always", "anatomy.md")
+		anatomyPath := anatomyOutputPath(repoRoot)
+		legacyPath := legacyAnatomyPath(repoRoot)
 		if info, err := os.Stat(anatomyPath); err == nil {
 			daysOld := int(time.Since(info.ModTime()).Hours() / 24)
 			if daysOld > 7 {
@@ -132,6 +133,9 @@ var adminHealthCmd = &cobra.Command{
 			} else {
 				fmt.Printf("✓ Anatomy          Current (%d days old)\n", daysOld)
 			}
+		} else if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			fmt.Println("⚠ Anatomy          Legacy always/ location present — run cobuild scan to migrate")
+			warnings++
 		} else {
 			fmt.Println("⚠ Anatomy          Not found — run cobuild scan to generate file index")
 			warnings++

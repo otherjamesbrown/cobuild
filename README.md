@@ -313,7 +313,7 @@ Or use the zero-config directory convention — drop `.md` files in `.cobuild/co
 `cobuild scan` generates a file index for the codebase — every file with its line count, estimated token cost, and auto-detected description:
 
 ```bash
-cobuild scan              # generate .cobuild/context/always/anatomy.md
+cobuild scan              # generate .cobuild/context/implement/anatomy.md
 cobuild scan --check      # check if stale
 ```
 

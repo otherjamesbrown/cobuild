@@ -14,13 +14,14 @@ import (
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Generate a project anatomy file — file index with descriptions and token estimates",
-	Long: `Scans the project directory and generates .cobuild/context/always/anatomy.md
+	Long: `Scans the project directory and generates .cobuild/context/implement/anatomy.md
 containing a file-level index. Dispatched agents can use this to understand
 the codebase structure without reading every file.
 
 Each entry includes: file path, estimated token count, and auto-detected description.
 Excludes: VCS dirs, deps, caches, build output, coverage, binaries. Large
-directories are collapsed to a one-line summary to keep anatomy.md small.
+directories are collapsed to a one-line summary to keep anatomy.md small. Scan
+also skips recursive context output and common generated protobuf stubs.
 
 Project-specific excludes: put one path per line in .cobuild/scan-exclude
 (supports comments with #). Paths are matched against the directory's
@@ -44,10 +45,14 @@ relative path OR its basename.`,
 		content := formatAnatomy(entries, verbose)
 
 		if check {
-			anatomyPath := filepath.Join(repoRoot, ".cobuild", "context", "always", "anatomy.md")
+			anatomyPath := anatomyOutputPath(repoRoot)
 			existing, err := os.ReadFile(anatomyPath)
 			if err != nil {
-				fmt.Println("anatomy.md not found — run cobuild scan to generate.")
+				if _, legacyErr := os.Stat(legacyAnatomyPath(repoRoot)); legacyErr == nil {
+					fmt.Printf("anatomy.md not found at %s — run cobuild scan to migrate from legacy always/ path.\n", filepath.ToSlash(strings.TrimPrefix(anatomyPath, repoRoot+string(filepath.Separator))))
+					return nil
+				}
+				fmt.Printf("anatomy.md not found at %s — run cobuild scan to generate.\n", filepath.ToSlash(strings.TrimPrefix(anatomyPath, repoRoot+string(filepath.Separator))))
 				return nil
 			}
 			if string(existing) == content {
@@ -63,11 +68,14 @@ relative path OR its basename.`,
 			return nil
 		}
 
-		outDir := filepath.Join(repoRoot, ".cobuild", "context", "always")
+		outPath := anatomyOutputPath(repoRoot)
+		outDir := filepath.Dir(outPath)
 		os.MkdirAll(outDir, 0755)
-		outPath := filepath.Join(outDir, "anatomy.md")
 		if err := os.WriteFile(outPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("write anatomy: %w", err)
+		}
+		if err := removeLegacyAnatomy(repoRoot); err != nil {
+			return fmt.Errorf("remove legacy anatomy: %w", err)
 		}
 		fmt.Printf("Generated %s (%d files, %d total estimated tokens)\n", outPath, len(entries), totalTokens(entries))
 
@@ -99,8 +107,8 @@ var skipDirs = map[string]bool{
 	"dist": true, "build": true, "target": true, "out": true,
 	// Coverage / test artifacts
 	"coverage": true, "htmlcov": true, ".nyc_output": true,
-	// CoBuild / Claude / Beads internals
-	".cobuild/sessions": true, ".claude": true, ".beads": true,
+	// CoBuild / Claude / Beads / tool internals
+	".cobuild/sessions": true, ".cobuild/context": true, ".claude": true, ".beads": true, ".specify": true,
 }
 
 var skipExts = map[string]bool{
@@ -109,6 +117,39 @@ var skipExts = map[string]bool{
 	".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
 	".zip": true, ".tar": true, ".gz": true, ".bz2": true,
 	".pdf": true, ".lock": true,
+}
+
+var skipFileSuffixes = []string{
+	".pb.go",
+}
+
+var skipFilePaths = map[string]bool{
+	".cobuild/dispatch-context.md": true,
+	".cobuild/dispatch.log":        true,
+	".cobuild/gate-verdict.json":   true,
+	".cobuild/last-prompt.md":      true,
+	".cobuild/session.err":         true,
+	".cobuild/session.log":         true,
+	".cobuild/session_id":          true,
+}
+
+func anatomyOutputPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".cobuild", "context", "implement", "anatomy.md")
+}
+
+func legacyAnatomyPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".cobuild", "context", "always", "anatomy.md")
+}
+
+func removeLegacyAnatomy(repoRoot string) error {
+	legacyPath := legacyAnatomyPath(repoRoot)
+	if legacyPath == anatomyOutputPath(repoRoot) {
+		return nil
+	}
+	if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func scanProject(repoRoot string) ([]fileEntry, error) {
@@ -153,9 +194,19 @@ func scanProject(repoRoot string) ([]fileEntry, error) {
 		}
 
 		// Skip files
+		relSlash := filepath.ToSlash(rel)
+		if skipFilePaths[relSlash] {
+			return nil
+		}
 		ext := strings.ToLower(filepath.Ext(info.Name()))
 		if skipExts[ext] {
 			return nil
+		}
+		lowerName := strings.ToLower(info.Name())
+		for _, suffix := range skipFileSuffixes {
+			if strings.HasSuffix(lowerName, suffix) {
+				return nil
+			}
 		}
 		if info.Size() > 1_000_000 { // skip files > 1MB
 			return nil
@@ -360,7 +411,7 @@ func formatAnatomy(entries []fileEntry, verbose bool) string {
 		}
 
 		if !verbose && (dirTokens >= collapseDirTokens || len(files) >= collapseDirFiles) {
-			sb.WriteString(fmt.Sprintf("%d files, ~%s tokens — large directory, listing suppressed. Use `cobuild scan --verbose` or read the directory directly to see individual files.\n\n",
+			sb.WriteString(fmt.Sprintf("%d files, ~%s tokens — summarized. Use `cobuild scan --verbose` to expand.\n\n",
 				len(files), formatTokensShort(dirTokens)))
 			continue
 		}
