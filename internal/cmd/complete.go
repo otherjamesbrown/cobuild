@@ -179,23 +179,16 @@ Steps:
 			fmt.Printf("Push warning: %s\n", strings.TrimSpace(string(pushOut)))
 		}
 
-		// Create PR — detect repo from the worktree's git remote (not pipeline config,
-		// which may point to a different repo in multi-repo projects)
-		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
+		// Create PR — recover existing PRs by branch when metadata is missing so
+		// re-dispatched rounds can resume from prior local commits instead of
+		// tripping the empty-worktree guard.
+		prURL := taskPRURL(ctx, task, worktreePath)
+		if prURL != "" && conn != nil {
+			_ = conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
+		}
 		if prURL == "" {
 			fmt.Println("Creating PR...")
-			repo := ""
-			// Primary: detect from worktree's git remote
-			repoOut, err := exec.Command("git", "-C", worktreePath, "remote", "get-url", "origin").Output()
-			if err == nil {
-				url := strings.TrimSpace(string(repoOut))
-				for _, prefix := range []string{"git@github.com:", "https://github.com/"} {
-					if strings.HasPrefix(url, prefix) {
-						repo = strings.TrimSuffix(strings.TrimPrefix(url, prefix), ".git")
-						break
-					}
-				}
-			}
+			repo := detectGitHubRepoFromWorktree(ctx, worktreePath)
 			// Fallback: pipeline config
 			if repo == "" && pCfg != nil && pCfg.GitHub.OwnerRepo != "" {
 				repo = pCfg.GitHub.OwnerRepo
@@ -306,7 +299,10 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 		}
 	}
 
-	prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
+	prURL := taskPRURL(ctx, task, wtPath)
+	if prURL != "" && conn != nil {
+		_ = conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
+	}
 	if prURL == "" {
 		issues = append(issues, "no PR created")
 		if wtPath != "" {
