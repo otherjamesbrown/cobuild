@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -673,17 +672,15 @@ func doMerge(ctx context.Context, taskID, prURL string) error {
 		reviewWarnf("Warning: GitHub merged %s but gh reported a local cleanup error:\n%s\n", prURL, strings.TrimSpace(string(mergeOut)))
 	}
 
-	if reviewConfigLoader().AutoOnMergeEnabled() {
-		if err := reviewCleanupTaskResources(ctx, taskID); err != nil {
+	onMergeSuccess(
+		ctx,
+		taskID,
+		reviewCleanupTaskResources,
+		func(taskID string, err error) {
 			reviewWarnf("Warning: merge succeeded, but local cleanup failed for %s: %v\n", taskID, err)
-		}
-	} else {
-		reviewWarnf("cleanup auto_on_merge=false; skipping automatic local cleanup for %s\n", taskID)
-	}
-
-	// Rebase sibling branches onto updated main to prevent merge conflicts
-	// on subsequent wave PRs (cb-7dd0d4).
-	rebaseSiblingBranches(ctx, taskID)
+		},
+		reviewWarnf,
+	)
 
 	// Run kb-sync if the project has it enabled
 	maybeRunKBSync(ctx, taskID)
@@ -722,93 +719,6 @@ func maybeRunKBSync(ctx context.Context, taskID string) {
 	}
 	for _, l := range lines[start:] {
 		fmt.Printf("  kb-sync: %s\n", l)
-	}
-}
-
-// rebaseSiblingBranches rebases open sibling branches onto main after a PR
-// merge to prevent merge conflicts on subsequent waves (cb-7dd0d4).
-// Best-effort: failures are logged but don't block task closure.
-func rebaseSiblingBranches(ctx context.Context, mergedTaskID string) {
-	if conn == nil {
-		return
-	}
-
-	// Find parent design
-	edges, err := conn.GetEdges(ctx, mergedTaskID, "outgoing", []string{"child-of"})
-	if err != nil || len(edges) == 0 {
-		return
-	}
-	designID := edges[0].ItemID
-
-	// Find sibling tasks
-	siblings, err := conn.GetEdges(ctx, designID, "incoming", []string{"child-of"})
-	if err != nil {
-		return
-	}
-
-	// Resolve the repo for this design
-	repoRoot := ""
-	if run, err := cbStore.GetRun(ctx, designID); err == nil {
-		repoRoot, _ = config.RepoForProject(run.Project)
-	}
-	if repoRoot == "" {
-		return
-	}
-
-	// Fetch latest main
-	exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", "origin", "main").Run()
-
-	rebased := 0
-	for _, s := range siblings {
-		if s.ItemID == mergedTaskID || s.Status == "closed" {
-			continue
-		}
-		if s.Type != "" && s.Type != "task" {
-			continue
-		}
-
-		// Check if this sibling has a worktree with a branch
-		wtPath := ""
-		if conn != nil {
-			wtPath, _ = conn.GetMetadata(ctx, s.ItemID, domain.MetaWorktreePath)
-		}
-		if wtPath == "" {
-			continue
-		}
-
-		// Get the branch name
-		branchOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "branch", "--show-current").Output()
-		if err != nil {
-			continue
-		}
-		branch := strings.TrimSpace(string(branchOut))
-		if branch == "" || branch == "main" {
-			continue
-		}
-
-		// Rebase onto origin/main
-		rebaseOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "rebase", "origin/main").CombinedOutput()
-		if err != nil {
-			// Abort failed rebase and skip — agent will need to handle conflicts
-			exec.CommandContext(ctx, "git", "-C", wtPath, "rebase", "--abort").Run()
-			fmt.Printf("  rebase %s: conflict (skipped)\n", s.ItemID)
-			continue
-		}
-		_ = rebaseOut
-
-		// Force-push the rebased branch
-		pushOut, err := exec.CommandContext(ctx, "git", "-C", wtPath, "push", "--force-with-lease").CombinedOutput()
-		if err != nil {
-			fmt.Printf("  rebase %s: push failed: %s\n", s.ItemID, strings.TrimSpace(string(pushOut)))
-			continue
-		}
-
-		rebased++
-		fmt.Printf("  rebased %s (%s)\n", s.ItemID, branch)
-	}
-
-	if rebased > 0 {
-		fmt.Printf("  Rebased %d sibling branch(es) onto main.\n", rebased)
 	}
 }
 

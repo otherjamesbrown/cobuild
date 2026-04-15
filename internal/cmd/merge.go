@@ -84,14 +84,18 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 		}
 		syncPipelineTaskStatus(ctx, taskID, "closed")
 
-		if cleanupAutoOnMergeEnabled() {
-			if err := mergeCleanupTaskResources(ctx, taskID); err != nil {
+		onMergeSuccess(
+			ctx,
+			taskID,
+			mergeCleanupTaskResources,
+			func(_ string, err error) {
 				fmt.Printf("  Warning: merge succeeded, but local cleanup failed: %v\n", err)
 				fmt.Printf("  Retry cleanup separately later if needed.\n")
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "cleanup auto_on_merge=false; skipping automatic local cleanup for %s\n", taskID)
-		}
+			},
+			func(format string, args ...any) {
+				fmt.Printf(format, args...)
+			},
+		)
 
 		if err := handlePostCloseProgress(ctx, taskID); err != nil {
 			return err

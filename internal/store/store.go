@@ -57,6 +57,7 @@ type Store interface {
 	GetTasksByWave(ctx context.Context, designID string, wave int) ([]PipelineTaskRecord, error)
 	IsWaveClosed(ctx context.Context, designID string, wave int) (bool, error)
 	UpdateTaskStatus(ctx context.Context, taskShardID, status string) error
+	UpdateTaskRebaseStatus(ctx context.Context, taskShardID, rebaseStatus string) error
 
 	// --- Pipeline Sessions ---
 

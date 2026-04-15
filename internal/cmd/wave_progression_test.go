@@ -83,6 +83,9 @@ func (s stubWaveStore) GetTasksByWave(_ context.Context, _ string, wave int) ([]
 func (s stubWaveStore) UpdateTaskStatus(context.Context, string, string) error {
 	return errWaveStoreNotUsed("UpdateTaskStatus")
 }
+func (s stubWaveStore) UpdateTaskRebaseStatus(context.Context, string, string) error {
+	return errWaveStoreNotUsed("UpdateTaskRebaseStatus")
+}
 func (s stubWaveStore) CreateSession(context.Context, store.SessionInput) (*store.SessionRecord, error) {
 	return nil, errWaveStoreNotUsed("CreateSession")
 }

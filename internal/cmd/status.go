@@ -57,8 +57,8 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("%-12s %-14s %-10s %-8s %-6s %s\n", "ID", "PHASE", "STATUS", "HEALTH", "TASKS", "LAST ACTIVITY")
-		fmt.Printf("%-12s %-14s %-10s %-8s %-6s %s\n", "----", "-----", "------", "------", "-----", "-------------")
+		fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n", "ID", "PHASE", "STATUS", "HEALTH", "REBASE", "TASKS", "LAST ACTIVITY")
+		fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n", "----", "-----", "------", "------", "------", "-----", "-------------")
 		for _, r := range runs {
 			taskSummary := "-"
 			if r.TaskTotal > 0 {
@@ -67,12 +67,14 @@ var statusCmd = &cobra.Command{
 
 			lastActivity := cliutil.TimeAgo(r.LastProgress)
 			health := statusHealthFor(r.Status, r.LastProgress)
+			rebase := statusRebaseFor(r.RebaseConflicts)
 
-			fmt.Printf("%-12s %-14s %-10s %-8s %-6s %s\n",
+			fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n",
 				r.DesignID,
 				r.Phase,
 				r.Status,
 				health,
+				rebase,
 				taskSummary,
 				lastActivity,
 			)
@@ -141,6 +143,13 @@ func statusHealthFor(runStatus string, lastProgress time.Time) string {
 	default:
 		return "ACTIVE"
 	}
+}
+
+func statusRebaseFor(conflicts int) string {
+	if conflicts <= 0 {
+		return "-"
+	}
+	return "CONFLICT"
 }
 
 func init() {

@@ -83,6 +83,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		design_id TEXT NOT NULL,
 		wave INTEGER,
 		status TEXT NOT NULL DEFAULT 'pending',
+		rebase_status TEXT NOT NULL DEFAULT 'none',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
@@ -108,6 +109,8 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		ADD COLUMN IF NOT EXISTS early_death BOOLEAN NOT NULL DEFAULT FALSE;
 	ALTER TABLE IF EXISTS pipeline_runs
 		ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
+	ALTER TABLE IF EXISTS pipeline_tasks
+		ADD COLUMN IF NOT EXISTS rebase_status TEXT NOT NULL DEFAULT 'none';
 	-- Dedupe and constrain pipeline_tasks. The poller's registerTaskForDispatch
 	-- previously inserted a fresh row every cycle when its error-string match
 	-- failed (cb-2d60c4) — accumulating dozens of duplicate rows for the same
@@ -309,6 +312,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			COALESCE(tc.total, 0),
 			COALESCE(tc.done, 0),
 			COALESCE(tc.blocked, 0),
+			COALESCE(tc.rebase_conflicts, 0),
 			GREATEST(pr.updated_at, COALESCE(sa.last_session_at, pr.updated_at)) AS last_progress,
 			sa.last_session_at
 		FROM pipeline_runs pr
@@ -316,7 +320,11 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			SELECT pipeline_id,
 				COUNT(*) as total,
 				COUNT(*) FILTER (WHERE status = 'completed') as done,
-				COUNT(*) FILTER (WHERE status = 'failed') as blocked
+				COUNT(*) FILTER (WHERE status = 'failed') as blocked,
+				COUNT(*) FILTER (
+					WHERE rebase_status = 'conflict'
+					  AND status IN ('needs-review', 'in_progress')
+				) as rebase_conflicts
 			FROM pipeline_tasks
 			GROUP BY pipeline_id
 		) tc ON tc.pipeline_id = pr.id
@@ -339,7 +347,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	for rows.Next() {
 		var r PipelineRunStatus
 		var lastSessionAt *time.Time
-		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.LastProgress, &lastSessionAt); err != nil {
+		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.RebaseConflicts, &r.LastProgress, &lastSessionAt); err != nil {
 			return nil, err
 		}
 		if lastSessionAt != nil {
@@ -441,10 +449,10 @@ func (s *PostgresStore) AddTask(ctx context.Context, pipelineID, taskShardID, de
 	// cycle without accumulating duplicate rows (cb-2d60c4). The unique
 	// index on (pipeline_id, task_shard_id) is created in Migrate.
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pipeline_tasks (id, pipeline_id, task_shard_id, design_id, wave, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO pipeline_tasks (id, pipeline_id, task_shard_id, design_id, wave, status, rebase_status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (pipeline_id, task_shard_id) DO NOTHING
-	`, newID("pt"), pipelineID, taskShardID, designID, wave, "pending")
+	`, newID("pt"), pipelineID, taskShardID, designID, wave, "pending", "none")
 	if err != nil {
 		return fmt.Errorf("add pipeline task: %w", err)
 	}
@@ -453,7 +461,7 @@ func (s *PostgresStore) AddTask(ctx context.Context, pipelineID, taskShardID, de
 
 func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]PipelineTaskRecord, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, rebase_status, created_at, updated_at
 		FROM pipeline_tasks WHERE pipeline_id = $1
 		ORDER BY wave NULLS LAST, created_at ASC, id ASC
 	`, pipelineID)
@@ -466,7 +474,7 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 	for rows.Next() {
 		var t PipelineTaskRecord
 		if err := rows.Scan(
-			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.RebaseStatus, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -477,7 +485,7 @@ func (s *PostgresStore) ListTasks(ctx context.Context, pipelineID string) ([]Pip
 
 func (s *PostgresStore) ListTasksByDesign(ctx context.Context, designID string) ([]PipelineTaskRecord, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, rebase_status, created_at, updated_at
 		FROM pipeline_tasks WHERE design_id = $1
 		ORDER BY wave NULLS LAST, created_at ASC
 	`, designID)
@@ -490,7 +498,7 @@ func (s *PostgresStore) ListTasksByDesign(ctx context.Context, designID string) 
 	for rows.Next() {
 		var t PipelineTaskRecord
 		if err := rows.Scan(
-			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.RebaseStatus, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -502,10 +510,10 @@ func (s *PostgresStore) ListTasksByDesign(ctx context.Context, designID string) 
 func (s *PostgresStore) GetTaskByShardID(ctx context.Context, taskShardID string) (*PipelineTaskRecord, error) {
 	var t PipelineTaskRecord
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, rebase_status, created_at, updated_at
 		FROM pipeline_tasks WHERE task_shard_id = $1
 	`, taskShardID).Scan(
-		&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+		&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.RebaseStatus, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -518,7 +526,7 @@ func (s *PostgresStore) GetTaskByShardID(ctx context.Context, taskShardID string
 
 func (s *PostgresStore) GetTasksByWave(ctx context.Context, designID string, wave int) ([]PipelineTaskRecord, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, created_at, updated_at
+		SELECT id, pipeline_id, task_shard_id, design_id, wave, status, rebase_status, created_at, updated_at
 		FROM pipeline_tasks
 		WHERE design_id = $1 AND wave = $2
 		ORDER BY created_at ASC, id ASC
@@ -532,7 +540,7 @@ func (s *PostgresStore) GetTasksByWave(ctx context.Context, designID string, wav
 	for rows.Next() {
 		var t PipelineTaskRecord
 		if err := rows.Scan(
-			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.CreatedAt, &t.UpdatedAt,
+			&t.ID, &t.PipelineID, &t.TaskShardID, &t.DesignID, &t.Wave, &t.Status, &t.RebaseStatus, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan pipeline task: %w", err)
 		}
@@ -566,6 +574,16 @@ func (s *PostgresStore) UpdateTaskStatus(ctx context.Context, taskShardID, statu
 	`, taskShardID, status)
 	if err != nil {
 		return fmt.Errorf("update task status: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateTaskRebaseStatus(ctx context.Context, taskShardID, rebaseStatus string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_tasks SET rebase_status = $2, updated_at = NOW() WHERE task_shard_id = $1
+	`, taskShardID, rebaseStatus)
+	if err != nil {
+		return fmt.Errorf("update task rebase status: %w", err)
 	}
 	return nil
 }

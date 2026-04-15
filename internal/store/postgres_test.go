@@ -122,6 +122,68 @@ func TestPostgresStoreIsWaveClosed(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreTaskRebaseStatusRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	pgtest.Skip(t, ctx)
+	pg := pgtest.New(t, ctx)
+	s := pg.Store
+	project := fmt.Sprintf("cobuild-rebase-status-%d", time.Now().UnixNano())
+	designID := fmt.Sprintf("cb-store-rebase-%d", time.Now().UnixNano())
+	run, err := s.CreateRun(ctx, designID, project, "review")
+	if err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+
+	t.Cleanup(func() {
+		pg.CleanupDesign(t, ctx, designID)
+	})
+
+	if err := s.AddTask(ctx, run.ID, designID+"-task-a", designID, nil); err != nil {
+		t.Fatalf("AddTask(task-a) error = %v", err)
+	}
+	if err := s.AddTask(ctx, run.ID, designID+"-task-b", designID, nil); err != nil {
+		t.Fatalf("AddTask(task-b) error = %v", err)
+	}
+	if err := s.UpdateTaskStatus(ctx, designID+"-task-a", "needs-review"); err != nil {
+		t.Fatalf("UpdateTaskStatus(task-a) error = %v", err)
+	}
+	if err := s.UpdateTaskStatus(ctx, designID+"-task-b", "in_progress"); err != nil {
+		t.Fatalf("UpdateTaskStatus(task-b) error = %v", err)
+	}
+	if err := s.UpdateTaskRebaseStatus(ctx, designID+"-task-b", "conflict"); err != nil {
+		t.Fatalf("UpdateTaskRebaseStatus(task-b) error = %v", err)
+	}
+
+	taskA, err := s.GetTaskByShardID(ctx, designID+"-task-a")
+	if err != nil {
+		t.Fatalf("GetTaskByShardID(task-a) error = %v", err)
+	}
+	if taskA.RebaseStatus != "none" {
+		t.Fatalf("task-a rebase status = %q, want none", taskA.RebaseStatus)
+	}
+
+	taskB, err := s.GetTaskByShardID(ctx, designID+"-task-b")
+	if err != nil {
+		t.Fatalf("GetTaskByShardID(task-b) error = %v", err)
+	}
+	if taskB.RebaseStatus != "conflict" {
+		t.Fatalf("task-b rebase status = %q, want conflict", taskB.RebaseStatus)
+	}
+
+	runs, err := s.ListRuns(ctx, project)
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("ListRuns() len = %d, want 1", len(runs))
+	}
+	if runs[0].RebaseConflicts != 1 {
+		t.Fatalf("runs[0].RebaseConflicts = %d, want 1", runs[0].RebaseConflicts)
+	}
+}
+
 func TestPostgresStoreAdvancePhase(t *testing.T) {
 	t.Parallel()
 

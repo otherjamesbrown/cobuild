@@ -746,6 +746,18 @@ func (f *completionFakeStore) UpdateTaskStatus(_ context.Context, taskShardID, s
 	return nil
 }
 
+func (f *completionFakeStore) UpdateTaskRebaseStatus(_ context.Context, taskShardID, rebaseStatus string) error {
+	for pipelineID := range f.tasks {
+		for i := range f.tasks[pipelineID] {
+			if f.tasks[pipelineID][i].TaskShardID == taskShardID {
+				f.tasks[pipelineID][i].RebaseStatus = rebaseStatus
+				f.tasks[pipelineID][i].UpdatedAt = time.Now()
+			}
+		}
+	}
+	return nil
+}
+
 func (f *completionFakeStore) CreateSession(_ context.Context, input store.SessionInput) (*store.SessionRecord, error) {
 	rec := &store.SessionRecord{ID: "sess-" + input.TaskID, TaskID: input.TaskID, Status: "running"}
 	f.sessions[rec.ID] = rec
