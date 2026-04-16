@@ -80,6 +80,7 @@ If you see "M", "parent session", "calling agent", "fresh session", or "implemen
 | `cobuild deploy <design-id>` | Deploy affected services |
 | `cobuild retro <design-id>` | Run retrospective |
 | `cobuild status` | Show all active pipelines with ACTIVITY column (dispatched/awaiting-transition/blocked) |
+| `cobuild inspect <id>` | Full diagnostic view of a pipeline (shard + sessions + PR + gates) |
 | `cobuild audit <id>` | View gate history and timeline |
 | `cobuild show <id>` | Compact current state for one pipeline |
 | `cobuild scan` | Refresh project anatomy (file index for agents) |

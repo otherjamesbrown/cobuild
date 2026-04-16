@@ -10,7 +10,7 @@ The user runs 8-9 projects through CoBuild. They cannot track what is running, w
 
 - Which `cobuild orchestrate` / `cobuild poller` processes are running (`ps aux`)
 - Which tmux windows exist and which are stale (`tmux list-windows -t cobuild-*`)
-- Which pipelines are "active" vs actually progressing (`cobuild status` — check the ACTIVITY column for `dispatched`/`awaiting-transition`/`blocked`)
+- Which pipelines are "active" vs actually progressing (`cobuild status` — check the ACTIVITY column for `dispatched`/`awaiting-transition`/`blocked`; `cobuild inspect <id>` for a one-screen diagnostic of a specific pipeline)
 - Which PRs are open, mergeable, or conflicting (`gh pr list --json mergeable`)
 
 **Proactively report issues.** If an agent reports "stuck in a loop" or "same error again", you should already know about it from your monitoring — don't wait for the user to notice.

@@ -5,6 +5,7 @@ Every pipeline decision is recorded with structured data. Gate verdicts, review 
 ## Quick start
 
 ```bash
+cobuild inspect <design-id>     # one-screen diagnostic: shard + pipeline + sessions + PR + gates
 cobuild audit <design-id>       # show full gate timeline
 cobuild show <design-id>        # pipeline state + metadata
 cobuild status                  # overview across all active designs (ACTIVITY column shows dispatched/awaiting-transition/blocked)
