@@ -344,6 +344,10 @@ review:
         wait: false
 ```
 
+### Review Escalation
+
+When consecutive review rounds fail with the same structured finding (determined by SHA-256 hash of extracted findings), the pipeline blocks immediately instead of continuing to retry. The default threshold is 2 identical consecutive failures. A blocked pipeline surfaces in `cobuild status` as `blocked` and can be recovered with `cobuild reset` after addressing the underlying issue.
+
 ### CI modes
 
 | Mode | Behavior |

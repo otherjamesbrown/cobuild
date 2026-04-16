@@ -65,6 +65,9 @@ func (s stubWaveStore) GetGateHistory(context.Context, string) ([]store.Pipeline
 func (s stubWaveStore) GetLatestGateRound(context.Context, string, string) (int, error) {
 	return 0, errWaveStoreNotUsed("GetLatestGateRound")
 }
+func (s stubWaveStore) GetPreviousGateHash(context.Context, string, string, int) (*string, error) {
+	return nil, errWaveStoreNotUsed("GetPreviousGateHash")
+}
 func (s stubWaveStore) AddTask(context.Context, string, string, string, *int) error {
 	return errWaveStoreNotUsed("AddTask")
 }

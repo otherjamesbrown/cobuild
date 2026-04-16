@@ -152,4 +152,6 @@ const (
 	OutcomeRedispatched = "redispatched"
 	// OutcomeWaiting indicates review data is not ready yet.
 	OutcomeWaiting = "waiting"
+	// OutcomeBlocked indicates review escalation blocked the pipeline.
+	OutcomeBlocked = "blocked"
 )

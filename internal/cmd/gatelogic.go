@@ -17,11 +17,13 @@ import (
 // GateVerdictResult holds the outcome of recording a gate verdict.
 type GateVerdictResult struct {
 	DesignID      string `json:"design_id"`
+	PipelineID    string `json:"pipeline_id"`
 	GateName      string `json:"gate_name"`
 	Phase         string `json:"phase"`
 	Round         int    `json:"round"`
 	Verdict       string `json:"verdict"`
 	ReviewShardID string `json:"review_shard_id"`
+	FindingsHash  string `json:"findings_hash,omitempty"`
 	NextPhase     string `json:"next_phase,omitempty"`
 }
 
@@ -111,6 +113,15 @@ func RecordGateVerdict(
 		reviewPtr = &reviewID
 	}
 
+	// cb-f55aa0: compute findings hash for fail verdicts so review
+	// escalation can detect repeated identical findings.
+	var hashPtr *string
+	findingsHash := ""
+	if verdict != "pass" && body != "" {
+		findingsHash = computeFindingsHash(body)
+		hashPtr = &findingsHash
+	}
+
 	_, err = st.RecordGate(ctx, store.PipelineGateInput{
 		PipelineID:     run.ID,
 		DesignID:       designID,
@@ -120,6 +131,7 @@ func RecordGateVerdict(
 		ReadinessScore: readinessPtr,
 		Body:           bodyPtr,
 		ReviewShardID:  reviewPtr,
+		FindingsHash:   hashPtr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("record gate: %w", err)
@@ -142,11 +154,13 @@ func RecordGateVerdict(
 
 	return &GateVerdictResult{
 		DesignID:      designID,
+		PipelineID:    run.ID,
 		GateName:      gateName,
 		Phase:         resultPhase,
 		Round:         round,
 		Verdict:       verdict,
 		ReviewShardID: reviewID,
+		FindingsHash:  findingsHash,
 		NextPhase:     nextPhase,
 	}, nil
 }

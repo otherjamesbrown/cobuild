@@ -9,6 +9,7 @@ Use this file when a phase spoke tells you to escalate, or when retry/iteration 
 - Review round 3 still requests changes
 - You find a circular dependency in the task graph
 - An agent crashes repeatedly on the same task and exceeds `max_retries`
+- The same review finding repeats in 2 consecutive rounds (auto-blocked — fix the code, then `cobuild reset`)
 - Post-merge tests fail
 - Any ambiguity remains that you cannot resolve from the shard and config
 

@@ -869,6 +869,10 @@ func (f *fakeStore) GetLatestGateRound(ctx context.Context, pipelineID, gateName
 	return 0, nil
 }
 
+func (f *fakeStore) GetPreviousGateHash(ctx context.Context, pipelineID, gateName string, currentRound int) (*string, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) AddTask(ctx context.Context, pipelineID, taskShardID, designID string, wave *int) error {
 	f.tasks = append(f.tasks, store.PipelineTaskRecord{
 		PipelineID:  pipelineID,

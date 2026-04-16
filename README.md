@@ -107,7 +107,7 @@ For bugs where the root cause is unknown, the fix spans multiple systems, or the
 3. **Fix** (bugs, default) — single-session investigate+implement; agent traces cause then fixes
 4. **Investigation** (bugs with `needs-investigation` label) — read-only root cause analysis, fix specification
 5. **Implement** — dispatch agents in isolated worktrees with phase-aware context
-6. **Review** — external (Gemini) or agent-based, with CI integration
+6. **Review** — external (Gemini) or agent-based, with CI integration. Pipelines auto-block when the same finding repeats in consecutive rounds (recover with `cobuild reset`)
 7. **Done** — retrospective captures lessons and feeds back into skills
 
 ### Phase-Aware Dispatch
