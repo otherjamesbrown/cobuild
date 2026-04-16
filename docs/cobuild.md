@@ -612,6 +612,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | Command | Purpose |
 |---------|---------|
 | `cobuild status` | Outcomes, pipelines, blockers, agents — includes ACTIVITY column |
+| `cobuild inspect <id>` | Full diagnostic view: shard + pipeline + sessions + PR + gates in one screen. Supports `--json` |
 
 The ACTIVITY column on `cobuild status` shows a derived state for each pipeline run:
 

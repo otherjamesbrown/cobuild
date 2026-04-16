@@ -381,6 +381,7 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 | `cobuild retro <id>` | Run pipeline retrospective |
 | **Status** | |
 | `cobuild status` | Show all active pipelines with ACTIVITY column (dispatched/awaiting-transition/blocked) |
+| `cobuild inspect <id>` | Show full diagnostic view of a pipeline (shard + sessions + PR + gates) |
 | `cobuild audit <id>` | Show gate timeline |
 | **Work Items** | |
 | `cobuild wi show <id>` | Show work item |

@@ -138,7 +138,7 @@ cobuild dispatch-wave <design-id>
 
 **Implementation loop specifics:**
 
-- `cobuild audit <design-id>` is your friend. It shows every gate, every task status, every phase transition. Run it whenever you need to know "where are we?"
+- `cobuild inspect <design-id>` is the preferred diagnostic — it shows shard, pipeline, recent sessions, PR state, and gate verdicts on one screen. Use `cobuild audit <design-id>` when you need the full gate timeline.
 - Don't `process-review` before Gemini has had a chance to review. The command will tell you "Waiting Nm" if the PR is too young. Retry after the timeout elapses (default 10 minutes).
 - If a task fails review (`request-changes`), the agent is re-dispatched. Treat it like a new task in the loop — eventually it'll reach needs-review again.
 - If a task has been re-dispatched 3+ times, that's a signal something structural is wrong. Stop the loop and report to the user.
