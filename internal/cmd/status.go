@@ -57,8 +57,8 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n", "ID", "PHASE", "STATUS", "HEALTH", "REBASE", "TASKS", "LAST ACTIVITY")
-		fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n", "----", "-----", "------", "------", "------", "-----", "-------------")
+		fmt.Printf("%-12s %-14s %-10s %-20s %-8s %-8s %-6s %s\n", "ID", "PHASE", "STATUS", "ACTIVITY", "HEALTH", "REBASE", "TASKS", "LAST ACTIVITY")
+		fmt.Printf("%-12s %-14s %-10s %-20s %-8s %-8s %-6s %s\n", "----", "-----", "------", "--------", "------", "------", "-----", "-------------")
 		for _, r := range runs {
 			taskSummary := "-"
 			if r.TaskTotal > 0 {
@@ -68,11 +68,13 @@ var statusCmd = &cobra.Command{
 			lastActivity := cliutil.TimeAgo(r.LastProgress)
 			health := statusHealthFor(r.Status, r.LastProgress)
 			rebase := statusRebaseFor(r.RebaseConflicts)
+			activity := statusActivityFor(r.Activity)
 
-			fmt.Printf("%-12s %-14s %-10s %-8s %-8s %-6s %s\n",
+			fmt.Printf("%-12s %-14s %-10s %-20s %-8s %-8s %-6s %s\n",
 				r.DesignID,
 				r.Phase,
 				r.Status,
+				activity,
 				health,
 				rebase,
 				taskSummary,
@@ -110,6 +112,11 @@ func statusRunMatchesActiveFilter(run store.PipelineRunStatus, recentWindow time
 	case "active", "in_progress":
 		return true
 	}
+	// cb-c5e27b: blocked runs always show under --active so they don't hide
+	// behind a wall of completed pipelines.
+	if run.Activity == "blocked" {
+		return true
+	}
 	if recentWindow <= 0 || run.LastSessionAt.IsZero() {
 		return false
 	}
@@ -143,6 +150,13 @@ func statusHealthFor(runStatus string, lastProgress time.Time) string {
 	default:
 		return "ACTIVE"
 	}
+}
+
+func statusActivityFor(activity string) string {
+	if activity == "" {
+		return "-"
+	}
+	return activity
 }
 
 func statusRebaseFor(conflicts int) string {

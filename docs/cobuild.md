@@ -556,7 +556,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 | `cobuild init-skills --update` | Update skills, overwriting existing files |
 | `cobuild insights` | Analyze execution data, produce report |
 | `cobuild improve` | Suggest/apply pipeline improvements from patterns |
-| `cobuild status` | Show all active pipelines with phase, tasks, last activity |
+| `cobuild status` | Show all active pipelines with phase, tasks, last activity, and ACTIVITY state |
 | `cobuild explain` | Show the full pipeline in human-readable markdown |
 | `cobuild update-agents` | Regenerate AGENTS.md from current skills and config |
 | `cobuild scan` | Generate project anatomy (file index with token estimates) |
@@ -607,7 +607,17 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 
 | Command | Purpose |
 |---------|---------|
-| `cobuild status` | Outcomes, pipelines, blockers, agents |
+| `cobuild status` | Outcomes, pipelines, blockers, agents — includes ACTIVITY column |
+
+The ACTIVITY column on `cobuild status` shows a derived state for each pipeline run:
+
+| Activity | Meaning |
+|----------|---------|
+| `dispatched` | At least one session has no `ended_at` (agent in flight) |
+| `awaiting-transition` | All sessions ended, phase unchanged, no failed gate |
+| `blocked` | Most recent gate for current phase failed, or retry cap hit |
+
+The `--active` filter includes blocked runs alongside active ones.
 
 ---
 

@@ -302,6 +302,11 @@ func (s *PostgresStore) ResetRun(ctx context.Context, designID, phase string) er
 	return nil
 }
 
+// activityGateRetryCap matches the orchestrator's default MaxGateRetries.
+// When a pipeline has this many consecutive fail gates for the current phase,
+// the activity state is "blocked" even if the latest gate isn't a fail.
+const activityGateRetryCap = 3
+
 func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]PipelineRunStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
@@ -314,7 +319,15 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			COALESCE(tc.blocked, 0),
 			COALESCE(tc.rebase_conflicts, 0),
 			GREATEST(pr.updated_at, COALESCE(sa.last_session_at, pr.updated_at)) AS last_progress,
-			sa.last_session_at
+			sa.last_session_at,
+			-- cb-c5e27b: derive activity state from session + gate data.
+			CASE
+				WHEN pr.status != 'active' THEN ''
+				WHEN COALESCE(rs.running_count, 0) > 0 THEN 'dispatched'
+				WHEN COALESCE(lg.verdict, '') = 'fail' THEN 'blocked'
+				WHEN COALESCE(lg.fail_run, 0) >= $2 THEN 'blocked'
+				ELSE 'awaiting-transition'
+			END AS activity
 		FROM pipeline_runs pr
 		LEFT JOIN (
 			SELECT pipeline_id,
@@ -335,9 +348,22 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 			FROM pipeline_sessions
 			GROUP BY pipeline_id
 		) sa ON sa.pipeline_id = pr.id
+		LEFT JOIN (
+			SELECT pipeline_id, COUNT(*) AS running_count
+			FROM pipeline_sessions
+			WHERE ended_at IS NULL
+			GROUP BY pipeline_id
+		) rs ON rs.pipeline_id = pr.id
+		LEFT JOIN LATERAL (
+			SELECT verdict, round AS fail_run
+			FROM pipeline_gates
+			WHERE pipeline_id = pr.id AND phase = pr.current_phase
+			ORDER BY created_at DESC
+			LIMIT 1
+		) lg ON true
 		WHERE ($1 = '' OR pr.project = $1)
 		ORDER BY last_progress DESC, pr.updated_at DESC, pr.design_id ASC
-	`, project)
+	`, project, activityGateRetryCap)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
@@ -347,7 +373,7 @@ func (s *PostgresStore) ListRuns(ctx context.Context, project string) ([]Pipelin
 	for rows.Next() {
 		var r PipelineRunStatus
 		var lastSessionAt *time.Time
-		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.RebaseConflicts, &r.LastProgress, &lastSessionAt); err != nil {
+		if err := rows.Scan(&r.DesignID, &r.Project, &r.Phase, &r.Status, &r.TaskTotal, &r.TaskDone, &r.TaskBlocked, &r.RebaseConflicts, &r.LastProgress, &lastSessionAt, &r.Activity); err != nil {
 			return nil, err
 		}
 		if lastSessionAt != nil {

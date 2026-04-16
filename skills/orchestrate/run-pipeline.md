@@ -255,7 +255,7 @@ If the pipeline hit a failure, include the specific failing gate's body (from `c
 
 ## Anti-patterns
 
-- **Don't poll cobuild status repeatedly instead of cobuild audit <id>.** `status` lists all pipelines; `audit <id>` gives you the timeline for the one you care about.
+- **Don't poll cobuild status repeatedly instead of cobuild audit <id>.** `status` lists all pipelines; `audit <id>` gives you the timeline for the one you care about. The ACTIVITY column on `cobuild status` tells you at a glance whether an agent is running (`dispatched`), waiting for the next phase (`awaiting-transition`), or stuck (`blocked`).
 - **Don't re-dispatch a task that's in needs-review.** Run `process-review <task-id>` instead — it handles the merge/reject loop.
 - **Don't run `cobuild complete` from the orchestrator session.** That command is for dispatched CoBuild agents to run as their LAST action, not for orchestrators.
 - **Don't ask the user "should I run X?" when X is the obvious mechanical next step.** The whole point of this skill is that you don't ask. Run the command, report the result.
