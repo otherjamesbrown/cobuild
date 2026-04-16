@@ -38,7 +38,7 @@ cobuild explain                # see your pipeline in human-readable form
 cobuild init <design-id>       # initialise pipeline (auto-detects type)
 cobuild dispatch <design-id>   # spawn agent for the current phase
 cobuild wait <design-id>       # wait for agent to complete
-cobuild status                 # see all active pipelines
+cobuild status                 # see all active pipelines + per-run activity state
 ```
 
 For full interactive setup (connector, storage, context layers), read the [bootstrap guide](skills/shared/bootstrap.md) or ask your AI assistant to follow it.
@@ -380,7 +380,7 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 | `cobuild deploy <id>` | Deploy affected services |
 | `cobuild retro <id>` | Run pipeline retrospective |
 | **Status** | |
-| `cobuild status` | Show all active pipelines |
+| `cobuild status` | Show all active pipelines with ACTIVITY column (dispatched/awaiting-transition/blocked) |
 | `cobuild audit <id>` | Show gate timeline |
 | **Work Items** | |
 | `cobuild wi show <id>` | Show work item |
@@ -413,7 +413,7 @@ When you want to know "is it done?", use:
 
 ```bash
 cobuild audit <id>     # instant — shows gate timeline, verdicts, current phase
-cobuild status         # instant — shows all active pipelines
+cobuild status         # instant — shows all active pipelines with activity state
 ```
 
 ### Run manually before going autonomous

@@ -64,6 +64,12 @@ type PipelineRunStatus struct {
 	Project         string    `json:"project"`
 	Phase           string    `json:"phase"`
 	Status          string    `json:"status"`
+	// Activity is the derived orchestrator-facing state (cb-c5e27b):
+	//   "dispatched"           — at least one session has no ended_at
+	//   "awaiting-transition"  — all sessions ended, phase unchanged, no failed gate
+	//   "blocked"              — most recent gate for current phase is fail, or retry cap hit
+	//   ""                     — non-active runs (completed, cancelled)
+	Activity        string    `json:"activity,omitempty"`
 	TaskTotal       int       `json:"task_total"`
 	TaskDone        int       `json:"task_done"`
 	TaskBlocked     int       `json:"task_blocked"`

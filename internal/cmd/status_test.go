@@ -52,6 +52,34 @@ func TestStatusRebaseFor(t *testing.T) {
 	}
 }
 
+func TestStatusActivityFor(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", "-"},
+		{"dispatched", "dispatched"},
+		{"awaiting-transition", "awaiting-transition"},
+		{"blocked", "blocked"},
+	}
+	for _, tc := range tests {
+		if got := statusActivityFor(tc.in); got != tc.want {
+			t.Fatalf("statusActivityFor(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStatusActiveFilterIncludesBlockedRuns(t *testing.T) {
+	now := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
+	runs := []store.PipelineRunStatus{
+		{DesignID: "cb-blocked", Status: "active", Activity: "blocked", LastProgress: now.Add(-72 * time.Hour)},
+		{DesignID: "cb-completed", Status: "completed", LastProgress: now.Add(-72 * time.Hour)},
+	}
+	got := statusFilterAndSortRuns(runs, true, 24*time.Hour, now)
+	if len(got) != 1 || got[0].DesignID != "cb-blocked" {
+		t.Fatalf("--active should include blocked runs, got %v", got)
+	}
+}
+
 func TestStatusFilterAndSortRunsActiveFilter(t *testing.T) {
 	now := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
 	runs := []store.PipelineRunStatus{

@@ -10,7 +10,7 @@ The user runs 8-9 projects through CoBuild. They cannot track what is running, w
 
 - Which `cobuild orchestrate` / `cobuild poller` processes are running (`ps aux`)
 - Which tmux windows exist and which are stale (`tmux list-windows -t cobuild-*`)
-- Which pipelines are "active" vs actually progressing (`cobuild status`, DB session freshness)
+- Which pipelines are "active" vs actually progressing (`cobuild status` — check the ACTIVITY column for `dispatched`/`awaiting-transition`/`blocked`)
 - Which PRs are open, mergeable, or conflicting (`gh pr list --json mergeable`)
 
 **Proactively report issues.** If an agent reports "stuck in a loop" or "same error again", you should already know about it from your monitoring — don't wait for the user to notice.
@@ -199,6 +199,7 @@ Major rework of the dispatch → completion flow, driven by dogfooding on penfol
 ### 4. Fix remaining known bugs
 - cb-7dd0d4 (squash merge + dependent branches) — **shipped**. Test coverage gap tracked by cb-383574.
 - **cb-0e0482** — Both runtimes dying mid-dispatch on some designs. Observability shipped (cb-1d8abc: `dispatch-error.log`, `early_death` column, HEALTH column on `cobuild status`). Needs a repro.
+- **cb-c5e27b** — Pipeline visibility: `cobuild status` now includes an ACTIVITY column with derived states (`dispatched`, `awaiting-transition`, `blocked`). The `--active` filter includes blocked runs.
 
 ### 5. Build the deploy agent
 Deploy is currently a shell command. Should be a sub-agent with:
