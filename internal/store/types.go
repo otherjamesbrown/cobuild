@@ -28,6 +28,7 @@ type PipelineGateRecord struct {
 	TaskCount      *int      `json:"task_count,omitempty"`
 	Body           *string   `json:"body,omitempty"`
 	ReviewShardID  *string   `json:"review_shard_id,omitempty"`
+	FindingsHash   *string   `json:"findings_hash,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -56,6 +57,7 @@ type PipelineGateInput struct {
 	TaskCount      *int
 	Body           *string
 	ReviewShardID  *string
+	FindingsHash   *string
 }
 
 // PipelineRunStatus is an enriched view of a pipeline run for the status command.

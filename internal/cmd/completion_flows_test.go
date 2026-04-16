@@ -667,6 +667,10 @@ func (f *completionFakeStore) GetLatestGateRound(_ context.Context, pipelineID, 
 	return maxRound, nil
 }
 
+func (f *completionFakeStore) GetPreviousGateHash(_ context.Context, _, _ string, _ int) (*string, error) {
+	return nil, nil
+}
+
 func (f *completionFakeStore) AddTask(_ context.Context, pipelineID, taskShardID, designID string, wave *int) error {
 	f.tasks[pipelineID] = append(f.tasks[pipelineID], store.PipelineTaskRecord{
 		ID:          fmt.Sprintf("pt-%d", len(f.tasks[pipelineID])+1),

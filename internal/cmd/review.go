@@ -276,9 +276,19 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 		if cbStore != nil {
 			body := buildVerdictBody(verdict, reviewSource, reviewResult, findings, ciResult, reviewWarning)
-			_, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, gateVerdict, body, 0, pCfg)
+			gateResult, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, gateVerdict, body, 0, pCfg)
 			if gateErr != nil {
 				fmt.Printf("Warning: failed to record gate verdict: %v\n", gateErr)
+			}
+
+			// cb-f55aa0: if the same review finding repeats N times
+			// consecutively, block instead of burning retry budget.
+			if gateResult != nil && gateVerdict == "fail" {
+				if shouldEscalateReview(ctx, cbStore, gateResult) {
+					fmt.Printf("Review rejected %dx with same finding — escalating to orchestrator.\n", reviewEscalationThreshold)
+					printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
+					return nil
+				}
 			}
 		}
 
@@ -1264,10 +1274,13 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 
 	// Record the gate unless the pipeline has already advanced past review
 	// (runner script's `cobuild review` arm beat us to it).
+	var gateResult *GateVerdictResult
 	if cbStore != nil {
 		run, runErr := cbStore.GetRun(ctx, taskID)
 		if runErr == nil && run != nil && run.CurrentPhase == domain.PhaseReview {
-			if _, rerr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, verdict, v.Body, 0, pCfg); rerr != nil {
+			var rerr error
+			gateResult, rerr = RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, verdict, v.Body, 0, pCfg)
+			if rerr != nil {
 				return true, fmt.Errorf("record review gate: %w", rerr)
 			}
 		}
@@ -1279,6 +1292,15 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		}
 		printNextStep(taskID, domain.OutcomeMerged, domain.ActionProcessReview)
 		return true, nil
+	}
+
+	// cb-f55aa0: check for repeated identical findings before re-dispatching.
+	if gateResult != nil && cbStore != nil {
+		if shouldEscalateReview(ctx, cbStore, gateResult) {
+			fmt.Printf("Review rejected %dx with same finding — escalating to orchestrator.\n", reviewEscalationThreshold)
+			printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
+			return true, nil
+		}
 	}
 
 	// verdict=fail — append the agent's findings as synthetic feedback and

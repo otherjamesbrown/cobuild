@@ -100,6 +100,10 @@ func printNextStep(workItemID, phase, action string) {
 		case domain.OutcomeWaiting:
 			fmt.Printf("  cobuild process-review %s\n", workItemID)
 			fmt.Println("  (Review data not ready yet — retry after a few minutes.)")
+		case domain.OutcomeBlocked:
+			fmt.Printf("  Pipeline blocked — same review finding repeated. Manual intervention required.\n")
+			fmt.Printf("  cobuild audit %s   (see the repeated finding)\n", workItemID)
+			fmt.Printf("  cobuild reset %s   (retry after fixing the root cause)\n", workItemID)
 		default:
 			fmt.Printf("  cobuild next %s\n", workItemID)
 		}

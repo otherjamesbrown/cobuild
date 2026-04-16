@@ -111,6 +111,8 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
 	ALTER TABLE IF EXISTS pipeline_tasks
 		ADD COLUMN IF NOT EXISTS rebase_status TEXT NOT NULL DEFAULT 'none';
+	ALTER TABLE IF EXISTS pipeline_gates
+		ADD COLUMN IF NOT EXISTS findings_hash TEXT;
 	-- Dedupe and constrain pipeline_tasks. The poller's registerTaskForDispatch
 	-- previously inserted a fresh row every cycle when its error-string match
 	-- failed (cb-2d60c4) — accumulating dozens of duplicate rows for the same
@@ -410,17 +412,18 @@ func (s *PostgresStore) RecordGate(ctx context.Context, input PipelineGateInput)
 		TaskCount:      input.TaskCount,
 		Body:           input.Body,
 		ReviewShardID:  input.ReviewShardID,
+		FindingsHash:   input.FindingsHash,
 	}
 
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO pipeline_gates (
 			id, pipeline_id, design_id, gate_name, phase, round, verdict,
-			reviewer, readiness_score, task_count, body, review_shard_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			reviewer, readiness_score, task_count, body, review_shard_id, findings_hash
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING created_at
 	`,
 		rec.ID, rec.PipelineID, rec.DesignID, rec.GateName, rec.Phase, rec.Round, rec.Verdict,
-		rec.Reviewer, rec.ReadinessScore, rec.TaskCount, rec.Body, rec.ReviewShardID,
+		rec.Reviewer, rec.ReadinessScore, rec.TaskCount, rec.Body, rec.ReviewShardID, rec.FindingsHash,
 	).Scan(&rec.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("record gate: %w", err)
@@ -431,7 +434,8 @@ func (s *PostgresStore) RecordGate(ctx context.Context, input PipelineGateInput)
 func (s *PostgresStore) GetGateHistory(ctx context.Context, designID string) ([]PipelineGateRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, pipeline_id, design_id, gate_name, phase, round, verdict,
-			reviewer, readiness_score, task_count, body, review_shard_id, created_at
+			reviewer, readiness_score, task_count, body, review_shard_id,
+			findings_hash, created_at
 		FROM pipeline_gates WHERE design_id = $1
 		ORDER BY created_at ASC
 	`, designID)
@@ -445,13 +449,31 @@ func (s *PostgresStore) GetGateHistory(ctx context.Context, designID string) ([]
 		var r PipelineGateRecord
 		if err := rows.Scan(
 			&r.ID, &r.PipelineID, &r.DesignID, &r.GateName, &r.Phase, &r.Round, &r.Verdict,
-			&r.Reviewer, &r.ReadinessScore, &r.TaskCount, &r.Body, &r.ReviewShardID, &r.CreatedAt,
+			&r.Reviewer, &r.ReadinessScore, &r.TaskCount, &r.Body, &r.ReviewShardID,
+			&r.FindingsHash, &r.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan gate record: %w", err)
 		}
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// GetPreviousGateHash returns the findings_hash of the most recent fail gate
+// for the given pipeline and gate name, excluding the current round.
+func (s *PostgresStore) GetPreviousGateHash(ctx context.Context, pipelineID, gateName string, currentRound int) (*string, error) {
+	var hash *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT findings_hash FROM pipeline_gates
+		WHERE pipeline_id = $1 AND gate_name = $2 AND round = $3 AND verdict = 'fail'
+	`, pipelineID, gateName, currentRound-1).Scan(&hash)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get previous gate hash: %w", err)
+	}
+	return hash, nil
 }
 
 func (s *PostgresStore) GetLatestGateRound(ctx context.Context, pipelineID, gateName string) (int, error) {

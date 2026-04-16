@@ -200,6 +200,7 @@ Major rework of the dispatch → completion flow, driven by dogfooding on penfol
 - cb-7dd0d4 (squash merge + dependent branches) — **shipped**. Test coverage gap tracked by cb-383574.
 - **cb-0e0482** — Both runtimes dying mid-dispatch on some designs. Observability shipped (cb-1d8abc: `dispatch-error.log`, `early_death` column, HEALTH column on `cobuild status`). Needs a repro.
 - **cb-c5e27b** — Pipeline visibility: `cobuild status` now includes an ACTIVITY column with derived states (`dispatched`, `awaiting-transition`, `blocked`). The `--active` filter includes blocked runs.
+- **cb-f55aa0** — Review escalation: when 2 consecutive review gates fail with the same findings hash, the pipeline blocks automatically instead of exhausting the retry cap. Recovery via `cobuild reset`.
 
 ### 5. Build the deploy agent
 Deploy is currently a shell command. Should be a sub-agent with:

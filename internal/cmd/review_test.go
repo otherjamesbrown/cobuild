@@ -251,6 +251,10 @@ func (f *reviewFakeStore) GetLatestGateRound(_ context.Context, pipelineID, gate
 	return f.latestGateKey[pipelineID+":"+gateName], nil
 }
 
+func (f *reviewFakeStore) GetPreviousGateHash(_ context.Context, _, _ string, _ int) (*string, error) {
+	return nil, nil
+}
+
 func (f *reviewFakeStore) AddTask(context.Context, string, string, string, *int) error { return nil }
 func (f *reviewFakeStore) ListTasks(context.Context, string) ([]store.PipelineTaskRecord, error) {
 	return nil, fmt.Errorf("not implemented")

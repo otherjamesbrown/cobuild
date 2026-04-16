@@ -47,6 +47,10 @@ type Store interface {
 	RecordGate(ctx context.Context, input PipelineGateInput) (*PipelineGateRecord, error)
 	GetGateHistory(ctx context.Context, designID string) ([]PipelineGateRecord, error)
 	GetLatestGateRound(ctx context.Context, pipelineID, gateName string) (int, error)
+	// GetPreviousGateHash returns the findings_hash of the fail gate at
+	// round (currentRound-1) for the same pipeline+gate. Returns nil when
+	// no such gate exists. Used by review escalation (cb-f55aa0).
+	GetPreviousGateHash(ctx context.Context, pipelineID, gateName string, currentRound int) (*string, error)
 
 	// --- Pipeline Tasks ---
 
