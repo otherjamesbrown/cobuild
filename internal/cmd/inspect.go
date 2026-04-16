@@ -70,13 +70,14 @@ type inspectPipeline struct {
 }
 
 type inspectSession struct {
-	ID        string  `json:"id"`
-	StartedAt string  `json:"started_at"`
-	EndedAt   string  `json:"ended_at,omitempty"`
-	Duration  string  `json:"duration,omitempty"`
-	Runtime   string  `json:"runtime"`
-	Model     string  `json:"model,omitempty"`
-	Running   bool    `json:"running,omitempty"`
+	ID           string `json:"id"`
+	StartedAt    string `json:"started_at"`
+	EndedAt      string `json:"ended_at,omitempty"`
+	Duration     string `json:"duration,omitempty"`
+	Runtime      string `json:"runtime"`
+	Model        string `json:"model,omitempty"`
+	Running      bool   `json:"running,omitempty"`
+	StaleContext bool   `json:"stale_context,omitempty"`
 }
 
 type inspectPR struct {
@@ -175,6 +176,11 @@ func gatherInspectData(ctx context.Context, shardID string) (*inspectData, error
 					is.Duration = formatDuration(s.EndedAt.Sub(s.StartedAt))
 				} else {
 					is.Running = true
+					// cb-44a9d7: flag running sessions whose context may be stale
+					// because the shard was updated after dispatch.
+					if !item.UpdatedAt.IsZero() && item.UpdatedAt.After(s.StartedAt) {
+						is.StaleContext = true
+					}
 				}
 				data.Sessions = append(data.Sessions, is)
 			}
@@ -272,6 +278,10 @@ func printInspectText(data *inspectData) {
 			if s.Running {
 				fmt.Printf("  %s  started %s  (running)            runtime: %-8s model: %s\n",
 					s.ID, s.StartedAt, s.Runtime, s.Model)
+				if s.StaleContext {
+					fmt.Printf("    WARNING: shard updated after dispatch — agent may have stale context\n")
+					fmt.Printf("    Run: cobuild redispatch --reset-context %s\n", data.Shard.ID)
+				}
 			} else {
 				fmt.Printf("  %s  started %s  ended %s (%s)  runtime: %-8s model: %s\n",
 					s.ID, s.StartedAt, s.EndedAt, s.Duration, s.Runtime, s.Model)

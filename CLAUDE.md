@@ -15,6 +15,8 @@ The user runs 8-9 projects through CoBuild. They cannot track what is running, w
 
 **Proactively report issues.** If an agent reports "stuck in a loop" or "same error again", you should already know about it from your monitoring — don't wait for the user to notice.
 
+**Stale context detection.** `cobuild inspect <id>` warns when a shard was updated after dispatch — the running agent may have stale scope. Use `cobuild redispatch <id>` to kill the session and re-dispatch with fresh context.
+
 ### Response style: specific, not verbose
 
 - When the user asks "what do I tell agent X" → give them the paste. Nothing else unless they ask.

@@ -590,6 +590,7 @@ Session ID defaults to `<agent-name>-<unix-timestamp>`. If M crashes without unl
 |---------|---------|
 | `cobuild dispatch <shard-id>` | Spawn agent in tmux with full context; implement-phase designs default to child-task wave dispatch unless `--mono` is passed |
 | `cobuild dispatch-wave <design-id>` | Dispatch all ready tasks for a design |
+| `cobuild redispatch <id>` | Kill running agent session, end session record, re-dispatch with fresh shard context |
 | `cobuild wait <task-id> [id...]` | Wait for tasks to reach target status |
 | `cobuild complete <task-id>` | Post-agent: commit, push, PR, evidence, needs-review |
 | `cobuild merge <task-id>` | Merge approved PR, close task |

@@ -74,6 +74,7 @@ If you see "M", "parent session", "calling agent", "fresh session", or "implemen
 | `cobuild dispatch <task-id>` | Dispatch to a dispatched CoBuild agent (works for every phase) |
 | **`cobuild next <id>`** | **Print the single next command to run for a pipeline — use when confused** |
 | `cobuild dispatch-wave <design-id>` | Dispatch all ready tasks in a wave |
+| `cobuild redispatch <id>` | Kill running agent and re-dispatch with fresh context |
 | `cobuild process-review <task-id>` | Process Gemini review → merge or re-dispatch |
 | `cobuild merge <task-id>` | Merge an approved PR manually |
 | `cobuild merge-design <design-id>` | Smart merge all PRs (conflict detection) |

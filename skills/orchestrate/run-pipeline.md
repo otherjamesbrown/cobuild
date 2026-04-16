@@ -171,6 +171,12 @@ cobuild dispatch <design-id>
 
 ## Known failure modes and fixes
 
+### "Shard was updated after dispatch — agent has stale context"
+
+**Symptom:** `cobuild inspect <id>` shows a staleness warning because the shard body was modified after the agent was dispatched.
+
+**Fix:** Run `cobuild redispatch <id>` — this kills the running session, ends the session record, and re-dispatches with the current shard content.
+
 ### "Dispatched agent is stuck at an interactive prompt"
 
 **Symptom:** A tmux window for a task ID (e.g. `cp-c2ec47`) is still alive hours after dispatch. `tmux capture-pane` shows the dispatched agent waiting at a `❯` prompt.
