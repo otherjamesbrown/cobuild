@@ -369,6 +369,7 @@ Claude Code hooks record per-event data (tool calls, compaction, errors) for det
 | `cobuild run <id>` | Submit for autonomous processing by poller |
 | `cobuild dispatch <id>` | Spawn agent for current phase (phase-aware) |
 | `cobuild dispatch-wave <id>` | Dispatch all ready tasks for a design |
+| `cobuild redispatch <id>` | Kill running agent, end session, re-dispatch with fresh context |
 | `cobuild wait <id> [id...]` | Wait for tasks to complete |
 | `cobuild complete <id>` | Post-agent completion (PR, evidence) |
 | `cobuild gate <id> <name>` | Record gate verdict |
