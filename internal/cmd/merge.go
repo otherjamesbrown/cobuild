@@ -35,19 +35,19 @@ If all tasks for the parent design are closed, advances to the done phase.`,
 			return fmt.Errorf("get task: %w", err)
 		}
 
-		// Get PR URL from metadata
-		prURL := ""
-		if task.Metadata != nil {
+		// Get PR URL — try connector metadata first (authoritative), then
+		// inline metadata, then branch-name lookup (cb-bb760c). Backfill
+		// metadata when found via fallback so future calls don't repeat.
+		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
+		if prURL == "" && task.Metadata != nil {
 			if pr, ok := task.Metadata[domain.MetaPRURL]; ok {
 				prURL = fmt.Sprintf("%v", pr)
 			}
 		}
 		if prURL == "" {
-			// Try to find PR from branch name
-			branch := taskID // convention: branch name = task ID
-			out, err := execCommandOutput(ctx, "gh", "pr", "list", "--head", branch, "--json", "url", "--jq", ".[0].url")
-			if err == nil && len(strings.TrimSpace(string(out))) > 0 {
-				prURL = strings.TrimSpace(string(out))
+			prURL = lookupPRByBranch(ctx, taskID)
+			if prURL != "" {
+				_ = conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
 			}
 		}
 

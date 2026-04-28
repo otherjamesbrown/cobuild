@@ -75,11 +75,28 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			return fmt.Errorf("get task: %w", err)
 		}
 
-		// Get PR URL
+		// Get PR URL — try metadata first, then fall back to looking up
+		// the PR by branch name. cb-bb760c: cobuild complete writes pr_url
+		// metadata, but when the agent dies before complete runs (or
+		// complete's PR lookup silently fails), the metadata is missing.
+		// The branch-name fallback keeps process-review working; if found,
+		// we backfill the metadata so the fallback doesn't fire again.
 		prURL, _ := conn.GetMetadata(ctx, taskID, domain.MetaPRURL)
 		if prURL == "" && task.Metadata != nil {
 			if pr, ok := task.Metadata[domain.MetaPRURL]; ok {
 				prURL = fmt.Sprintf("%v", pr)
+			}
+		}
+		if prURL == "" {
+			wtPath, _ := conn.GetMetadata(ctx, taskID, domain.MetaWorktreePath)
+			prURL = lookupOpenPRForWorktree(ctx, wtPath)
+			if prURL == "" {
+				// Last resort: branch name = task ID (CoBuild convention)
+				prURL = lookupPRByBranch(ctx, taskID)
+			}
+			if prURL != "" {
+				fmt.Printf("Recovered PR URL from branch lookup: %s\n", prURL)
+				_ = conn.SetMetadata(ctx, taskID, domain.MetaPRURL, prURL)
 			}
 		}
 		if prURL == "" {

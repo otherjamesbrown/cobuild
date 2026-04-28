@@ -121,6 +121,29 @@ func lookupOpenPRForWorktree(ctx context.Context, worktreePath string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// lookupPRByBranch finds an open PR whose head branch matches the given name.
+// Used as a last-resort fallback when worktree-based lookup isn't possible
+// (e.g. worktree already cleaned up). Resolves the repo from pipeline config.
+func lookupPRByBranch(ctx context.Context, branchName string) string {
+	if strings.TrimSpace(branchName) == "" {
+		return ""
+	}
+	repoRoot, _ := config.RepoForProject(projectName)
+	pCfg, _ := config.LoadConfig(repoRoot)
+	repo := ""
+	if pCfg != nil {
+		repo = strings.TrimSpace(pCfg.GitHub.OwnerRepo)
+	}
+	if repo == "" {
+		return ""
+	}
+	out, err := execCommandOutput(ctx, "gh", "pr", "list", "--repo", repo, "--head", branchName, "--state", "open", "--json", "url", "--jq", ".[0].url")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func branchHasAheadCommits(ctx context.Context, worktreePath string) (bool, error) {
 	if strings.TrimSpace(worktreePath) == "" {
 		return false, nil
