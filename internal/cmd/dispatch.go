@@ -18,6 +18,7 @@ import (
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
 	"github.com/otherjamesbrown/cobuild/internal/config"
 	"github.com/otherjamesbrown/cobuild/internal/connector"
+	"github.com/otherjamesbrown/cobuild/internal/contextaudit"
 	"github.com/otherjamesbrown/cobuild/internal/domain"
 	pipelinestate "github.com/otherjamesbrown/cobuild/internal/pipeline/state"
 	cobuildruntime "github.com/otherjamesbrown/cobuild/internal/runtime"
@@ -29,10 +30,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// dispatchContextWarnBytes is the assembled-context size above which dispatch
-// emits a warning pointing the user at `cobuild context audit`. Large contexts
-// correlate with degraded agent output and wasted tokens; see cb-4cd9c6.
-const dispatchContextWarnBytes = 30 * 1024
+// Context size thresholds (bytes). Aligned with contextaudit package constants.
+// cb-685f0c: tiered warning with impact framing so operators act on it.
+const (
+	dispatchContextWarnBytes = 30 * 1024  // warn tier: "pre-dispatch warning fires"
+	dispatchContextHighBytes = 100 * 1024 // high tier: "strong correlation with degraded output"
+)
 
 var dispatchCmd = &cobra.Command{
 	Use:   "dispatch <shard-id>",
@@ -350,10 +353,7 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 		// in dry-run and MkdirAll would create a directory literally named "~".
 		assembledContext, _ := config.AssembleContext(pCfg, repoRoot, "dispatch", currentPhase, extras, workItemFetcher)
 		if len(assembledContext) > dispatchContextWarnBytes {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"Warning: dispatch context is %d KB (threshold %d KB). Run `cobuild context audit` for per-layer breakdown. See docs/guides/context-optimization.md for trimming guidance.\n",
-				len(assembledContext)/1024, dispatchContextWarnBytes/1024,
-			)
+			printContextSizeWarning(cmd.ErrOrStderr(), len(assembledContext), repoRoot)
 		}
 		if !dryRun && assembledContext != "" {
 			contextDir := filepath.Join(worktreePath, ".cobuild")
@@ -1554,6 +1554,69 @@ func hasInvestigationContent(content string) bool {
 		}
 	}
 	return false
+}
+
+// printContextSizeWarning emits a tiered warning with impact framing and
+// top contributors from the context audit. cb-685f0c: the old one-line
+// warning was empirically ignored — operators (human and AI) treated it
+// as noise. The enhanced version names concrete failure modes at the HIGH
+// tier and surfaces the top 3 files so trimming doesn't require a second
+// command.
+func printContextSizeWarning(w io.Writer, sizeBytes int, repoRoot string) {
+	sizeKB := sizeBytes / 1024
+	warnKB := dispatchContextWarnBytes / 1024
+	highKB := dispatchContextHighBytes / 1024
+
+	if sizeBytes >= dispatchContextHighBytes {
+		fmt.Fprintf(w, "\nHIGH context size: %d KB (warn %d KB, high %d KB).\n", sizeKB, warnKB, highKB)
+		fmt.Fprintf(w, "   Agents dispatched at this size reliably show degraded output:\n")
+		fmt.Fprintf(w, "   pushing to main, skipping tests, writing stub PR bodies, looping.\n\n")
+	} else {
+		fmt.Fprintf(w, "\nContext size %d KB — over warn threshold (%d KB).\n", sizeKB, warnKB)
+		fmt.Fprintf(w, "   Agent output quality may be reduced. Consider trimming before dispatch.\n\n")
+	}
+
+	// Inline top 3 contributors from context audit (best-effort).
+	topContributors := contextAuditTopContributors(repoRoot, 3)
+	if len(topContributors) > 0 {
+		fmt.Fprintf(w, "   Top contributors:\n")
+		for _, c := range topContributors {
+			fmt.Fprintf(w, "     %s  %s\n", c.size, c.path)
+		}
+		fmt.Fprintln(w)
+	}
+
+	fmt.Fprintf(w, "   Trim: edit .cobuild/scan.yaml to skip non-source paths, then re-dispatch.\n")
+	fmt.Fprintf(w, "   Full breakdown: cobuild context audit\n\n")
+}
+
+type contextContributor struct {
+	path string
+	size string
+}
+
+func contextAuditTopContributors(repoRoot string, n int) []contextContributor {
+	report, err := contextaudit.Inspect(repoRoot)
+	if err != nil || report == nil || len(report.Entries) == 0 {
+		return nil
+	}
+	// Sort by size descending
+	entries := make([]contextaudit.LayerEntry, len(report.Entries))
+	copy(entries, report.Entries)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Bytes > entries[j].Bytes
+	})
+	if n > len(entries) {
+		n = len(entries)
+	}
+	out := make([]contextContributor, n)
+	for i := 0; i < n; i++ {
+		out[i] = contextContributor{
+			path: entries[i].RelPath,
+			size: contextaudit.FormatKB(entries[i].Bytes),
+		}
+	}
+	return out
 }
 
 func init() {
