@@ -905,3 +905,35 @@ func TestDetermineReviewVerdict_CIFailuresAlwaysRequestChanges(t *testing.T) {
 		t.Fatalf("verdict = %q, want request-changes", got)
 	}
 }
+
+// cb-7e1fc6: ciBlocksMerge should block on any CI failure when wait_for_ci=true,
+// not just new failures. Pre-existing failures on main should still block merge.
+func TestCIBlocksMerge_WaitForCI(t *testing.T) {
+	waitTrue := true
+	waitFalse := false
+
+	cases := []struct {
+		name      string
+		ci        ciCheckResult
+		waitForCI *bool
+		wantBlock bool
+	}{
+		{"all green, wait=true", ciCheckResult{summary: "3 checks passed"}, &waitTrue, false},
+		{"pending, wait=true", ciCheckResult{summary: "pending"}, &waitTrue, true},
+		{"new failures, wait=true", ciCheckResult{summary: "1 new", newFailures: []string{"test"}, allFailures: []string{"test"}}, &waitTrue, true},
+		{"pre-existing only, wait=true", ciCheckResult{summary: "pre-existing", allFailures: []string{"lint"}}, &waitTrue, true},
+		{"pre-existing only, wait=false", ciCheckResult{summary: "pre-existing", allFailures: []string{"lint"}}, &waitFalse, false},
+		{"new failures, wait=false", ciCheckResult{summary: "new", newFailures: []string{"test"}, allFailures: []string{"test"}}, &waitFalse, true},
+		{"no checks, wait=true", ciCheckResult{summary: "no CI checks configured"}, &waitTrue, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pCfg := &config.Config{Review: config.ReviewCfg{WaitForCI: tc.waitForCI}}
+			reason := ciBlocksMerge(tc.ci, pCfg)
+			blocked := reason != ""
+			if blocked != tc.wantBlock {
+				t.Fatalf("ciBlocksMerge() blocked=%v (reason=%q), want blocked=%v", blocked, reason, tc.wantBlock)
+			}
+		})
+	}
+}
