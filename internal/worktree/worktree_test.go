@@ -163,3 +163,54 @@ func TestCreateRejectsNonGitRepo(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestInstallPrePushHookRejectsMainPush verifies that the pre-push hook
+// installed by InstallPrePushHook rejects pushes to refs/heads/main.
+// cb-fb94f9: a dispatched agent pushed directly to main, bypassing review.
+func TestInstallPrePushHookRejectsMainPush(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := newTestRepo(t)
+
+	worktreePath, err := Create(ctx, "cb-hooktest", repo, "cobuild")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := InstallPrePushHook(ctx, worktreePath, "cb-hooktest"); err != nil {
+		t.Fatalf("InstallPrePushHook: %v", err)
+	}
+
+	// Verify hook file exists and is executable
+	gitDir := gitOutput(t, worktreePath, "rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+	hookPath := filepath.Join(gitDir, "hooks", "pre-push")
+	info, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatalf("hook not found: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Fatalf("hook is not executable: %v", info.Mode())
+	}
+
+	// Simulate the hook receiving a push to refs/heads/main
+	cmd := exec.CommandContext(ctx, hookPath)
+	cmd.Stdin = strings.NewReader("refs/heads/cb-hooktest abc123 refs/heads/main def456\n")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("pre-push hook should reject push to main, but exited 0")
+	}
+	if !strings.Contains(string(out), "BLOCKED") {
+		t.Fatalf("hook output should mention BLOCKED, got: %s", string(out))
+	}
+
+	// Verify push to the task branch is allowed
+	cmd2 := exec.CommandContext(ctx, hookPath)
+	cmd2.Stdin = strings.NewReader("refs/heads/cb-hooktest abc123 refs/heads/cb-hooktest def456\n")
+	if out2, err := cmd2.CombinedOutput(); err != nil {
+		t.Fatalf("pre-push hook should allow push to task branch, got error: %v\n%s", err, string(out2))
+	}
+}

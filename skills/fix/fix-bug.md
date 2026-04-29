@@ -135,6 +135,27 @@ If you reach this point mid-session and realize the cause is unclear, the blast 
 
 Do not guess at a fix when you're uncertain. A clean escalation is better than a wrong fix.
 
+## Boundaries (cb-fb94f9, cb-ed6419)
+
+You are working in an isolated git worktree. Your scope is strictly limited to:
+
+- Reading and editing files in the worktree
+- Running build/test commands locally
+- Committing to the current feature branch
+- Running `cobuild wi` commands to read/update the work item
+
+You must NEVER:
+
+- **Push to main, master, or develop.** Push only to the current feature branch. The PR is created by `cobuild complete` after you exit.
+- **Force-push to any branch.**
+- **Run `gh pr create` yourself.** `cobuild complete` handles PR creation.
+- **Apply database migrations against shared infrastructure** (dev01, dev02, production). Write the migration file, test it locally if possible, but do not run it against any shared database.
+- **Run deploy commands** (`penf deploy`, `gcloud`, `kubectl apply`, `docker exec` against shared hosts).
+- **SSH to other machines** or mutate state outside your worktree.
+- **Modify CI/CD pipelines** or GitHub repository settings.
+
+If the fix requires a migration or infrastructure change, describe what needs to happen in the PR body. The deploy phase (after merge) handles execution.
+
 ## Gotchas
 
 <!-- Populated over time as patterns emerge -->

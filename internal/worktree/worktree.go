@@ -155,6 +155,56 @@ func Remove(ctx context.Context, repoRoot, worktreePath, branch string) error {
 	return nil
 }
 
+// InstallPrePushHook writes a git pre-push hook into the worktree that
+// rejects pushes to protected branches (main, master, develop). Dispatched
+// agents should only push to their dedicated task branch. Without this,
+// an agent can fast-forward main directly if branch protection is not
+// configured on the remote (cb-fb94f9).
+func InstallPrePushHook(ctx context.Context, worktreePath, taskBranch string) error {
+	if worktreePath == "" || taskBranch == "" {
+		return fmt.Errorf("worktreePath and taskBranch are required")
+	}
+
+	// Find the worktree's git dir (e.g. /repo/.git/worktrees/<name>)
+	out, err := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "--git-dir").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("resolve git dir: %w\n%s", err, string(out))
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		return fmt.Errorf("create hooks dir: %w", err)
+	}
+
+	// The pre-push hook receives lines on stdin: <local ref> <local sha> <remote ref> <remote sha>
+	// We reject any push whose remote ref targets a protected branch.
+	hook := fmt.Sprintf(`#!/bin/sh
+# CoBuild pre-push hook (cb-fb94f9): reject pushes to protected branches.
+# Dispatched agents must only push to their task branch (%s).
+PROTECTED="refs/heads/main refs/heads/master refs/heads/develop"
+while read local_ref local_sha remote_ref remote_sha; do
+    for p in $PROTECTED; do
+        if [ "$remote_ref" = "$p" ]; then
+            echo "BLOCKED: CoBuild agents must not push to $(echo $p | sed 's|refs/heads/||')." >&2
+            echo "Push to your task branch (%s) instead." >&2
+            exit 1
+        fi
+    done
+done
+exit 0
+`, taskBranch, taskBranch)
+
+	hookPath := filepath.Join(hooksDir, "pre-push")
+	if err := os.WriteFile(hookPath, []byte(hook), 0755); err != nil {
+		return fmt.Errorf("write pre-push hook: %w", err)
+	}
+	return nil
+}
+
 // cleanupStale removes pre-existing worktree state from failed attempts.
 func cleanupStale(ctx context.Context, repoRoot, worktreePath, branch string) error {
 	// Check if directory exists (could be from a failed previous attempt)
