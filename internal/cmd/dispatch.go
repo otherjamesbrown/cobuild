@@ -218,6 +218,12 @@ dispatch. Pass --mono to opt into implementing the whole design in one PR.`,
 					return fmt.Errorf("failed to create worktree: %w", wtErr)
 				}
 				fmt.Printf("Worktree created: %s\n", worktreePath)
+				// cb-fb94f9: install pre-push hook that rejects pushes to
+				// main/master/develop. Without this, an agent can fast-forward
+				// main directly if branch protection isn't configured.
+				if hookErr := worktree.InstallPrePushHook(ctx, worktreePath, taskID); hookErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to install pre-push hook: %v\n", hookErr)
+				}
 				if err := conn.SetMetadata(ctx, taskID, domain.MetaWorktreePath, worktreePath); err != nil {
 					fmt.Printf("Warning: worktree created but failed to record path: %v\n", err)
 				}

@@ -83,6 +83,18 @@ Tasks can target a specific repo by setting `repo` metadata during decomposition
 
 If no `repo` metadata is set, the worktree is created from the current project's registered repo.
 
+## Agent boundaries (cb-fb94f9, cb-ed6419)
+
+Dispatched agents work in isolated worktrees with a pre-push hook that rejects pushes to main/master/develop. Agents must NEVER:
+
+- Push to main, master, or develop (push to task branch only; `cobuild complete` creates the PR)
+- Force-push to any branch
+- Apply database migrations against shared infrastructure
+- Run deploy commands or SSH to other machines
+- Mutate state outside their worktree
+
+If the task requires a migration or infrastructure change, the agent should write the migration file and describe the deployment steps in the PR body. The deploy phase handles execution after merge.
+
 ## Gotchas
 
 - Dispatched agents run in interactive mode (not `-p` mode) so they can iterate on edits and tests
