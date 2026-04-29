@@ -67,6 +67,16 @@ The agent receives a prompt containing:
 
 `cobuild complete` handles: commit remaining changes, push branch, create PR, append evidence to the task, mark `needs-review`.
 
+## Test coverage requirement (cb-3197cc)
+
+Dispatched agents **must write tests for new behaviour**. An implementation-only PR (new code with zero test coverage) will be rejected at the review gate. The minimum standard:
+
+- New functions or methods: at least one unit test exercising the happy path
+- Bug fixes: a regression test that fails without the fix and passes with it
+- New workflows/pipelines: a test verifying the new workflow is registered and callable
+
+Bumping an existing assertion count (e.g. "17 workflows" → "18 workflows") is NOT test coverage — it proves the new code exists, not that it works. The review agent will flag this.
+
 ## Multi-repo tasks
 
 Tasks can target a specific repo by setting `repo` metadata during decomposition. The dispatch command reads this metadata and creates the worktree from the correct repo root.

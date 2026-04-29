@@ -88,9 +88,11 @@ Make the change. Keep it minimal — fix the bug, don't refactor the surrounding
 
 If you find related issues while implementing, note them in the bug body. Don't fix them in this session unless they're the direct cause.
 
-### 6. Run tests and build
+### 6. Write tests, then run the suite
 
-Run the full test suite and build. Fix any failures introduced by your change.
+**Write a regression test first** (cb-3197cc). The test must fail without your fix and pass with it. This is not optional — PRs without test coverage for the fixed behaviour will be rejected at the review gate.
+
+Then run the full test suite and build. Fix any failures introduced by your change.
 
 ```bash
 # Use whatever is in pipeline.yaml build/test sections

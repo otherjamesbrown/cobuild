@@ -68,6 +68,16 @@ You are a dispatched CoBuild review agent. Review the task's pull request agains
 - Prefer concrete findings over general commentary.
 - Do not edit code in this session unless the dispatch prompt explicitly tells you this is a combined review-and-fix flow.
 
+### Test coverage (cb-3197cc)
+
+**Fail the review** if the PR introduces new behaviour (new functions, bug fixes, new workflows) without corresponding tests. Specifically:
+
+- New functions/methods with no unit test: **fail** — "missing test coverage for <function>"
+- Bug fix with no regression test: **fail** — "no regression test proving the fix works"
+- Assertion-count bump as the only test change (e.g. "17 → 18 workflows"): **fail** — "assertion bump is not test coverage; need a test that exercises the new behaviour"
+
+This is a blocking finding. The implement agent will be re-dispatched with your feedback.
+
 ## Final step
 
 After writing `.cobuild/gate-verdict.json`, stop and exit the session with `/exit`. Do not run `cobuild complete`.

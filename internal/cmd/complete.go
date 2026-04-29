@@ -195,7 +195,10 @@ Steps:
 			}
 
 			if repo != "" {
-				prBody := fmt.Sprintf("## Task\n[%s] %s\n\n---\nPipeline task: %s", taskID, task.Title, taskID)
+				// cb-f8d7ad: generate a meaningful PR body from the diff,
+				// not just the task ID stub. Includes file-level summary
+				// and commit messages so reviewers have context.
+				prBody := buildPRBody(ctx, taskID, task.Title, worktreePath)
 				ghArgs := []string{"pr", "create",
 					"--repo", repo,
 					"--head", branch,
@@ -317,7 +320,7 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 				branch, _ := exec.Command("git", "-C", wtPath, "branch", "--show-current").Output()
 				branchName := strings.TrimSpace(string(branch))
 				exec.Command("git", "-C", wtPath, "push", "-u", "origin", branchName).Run()
-				prBody := fmt.Sprintf("## Task\n[%s] %s\n\n---\nPipeline task: %s", taskID, task.Title, taskID)
+				prBody := buildPRBody(ctx, taskID, task.Title, wtPath)
 				prOut, err := exec.Command("gh", "pr", "create",
 					"--repo", repo, "--head", branchName, "--base", "main",
 					"--title", fmt.Sprintf("%s (%s)", task.Title, taskID),
@@ -337,6 +340,37 @@ func validateCompletionViaConnector(ctx context.Context, taskID string, task *co
 		fmt.Printf("Task %s validation passed (needs-review with PR)\n", taskID)
 	}
 	return nil
+}
+
+// buildPRBody generates a PR description from the worktree's diff and commit
+// log. cb-f8d7ad: the old stub body contained only the task ID. Reviewers
+// (human and automated) need to see what changed and why.
+func buildPRBody(ctx context.Context, taskID, taskTitle, worktreePath string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "## Summary\n\n")
+	fmt.Fprintf(&b, "**Task:** %s — %s\n\n", taskID, taskTitle)
+
+	// Commit messages (last 10)
+	commitOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath,
+		"log", "--oneline", "--no-decorate", "-10", "main..HEAD").Output()
+	if err == nil && len(strings.TrimSpace(string(commitOut))) > 0 {
+		fmt.Fprintf(&b, "### Commits\n\n")
+		for _, line := range strings.Split(strings.TrimSpace(string(commitOut)), "\n") {
+			fmt.Fprintf(&b, "- %s\n", line)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	// File-level diff stat
+	diffOut, err := exec.CommandContext(ctx, "git", "-C", worktreePath,
+		"diff", "--stat", "main..HEAD").Output()
+	if err == nil && len(strings.TrimSpace(string(diffOut))) > 0 {
+		fmt.Fprintf(&b, "### Files changed\n\n```\n%s\n```\n\n", strings.TrimSpace(string(diffOut)))
+	}
+
+	fmt.Fprintf(&b, "---\n*Pipeline task: %s*\n", taskID)
+	return b.String()
 }
 
 func init() {
