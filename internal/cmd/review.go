@@ -169,6 +169,16 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		// gate. Any ambiguous state from dispatchReviewAgent resolves to
 		// "waiting, retry next poll" — never to "try the builtin path".
 		if pCfg.Review.EffectiveMode() == "dispatched" {
+			// cb-4a6799: --dry-run must be side-effect free. The dispatched
+			// branch previously ignored the flag entirely — dispatching agents,
+			// creating sessions, and mutating shard status.
+			if dryRun {
+				fmt.Printf("[dry-run] Would dispatch review agent for %s (mode=dispatched)\n", taskID)
+				fmt.Printf("[dry-run] PR: %s\n", prURL)
+				fmt.Printf("[dry-run] No agents spawned, no status changes.\n")
+				return nil
+			}
+
 			// Fallback verdict reader for cb-3b091b. If a prior dispatched
 			// agent already wrote .cobuild/gate-verdict.json but the runner
 			// script's review arm didn't run (or ran pre-fix), consume the
@@ -310,6 +320,15 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		if verdict == "approve" {
+			// cb-7e1fc6: block merge on failing CI unless --allow-red-ci.
+			allowRedCI, _ := cmd.Flags().GetBool("allow-red-ci")
+			if !allowRedCI {
+				if reason := ciBlocksMerge(ciResult, pCfg); reason != "" {
+					fmt.Printf("Merge blocked: %s. Use --allow-red-ci to override.\n", reason)
+					printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
+					return nil
+				}
+			}
 			if err := doMerge(ctx, taskID, prURL); err != nil {
 				return err
 			}
@@ -345,6 +364,7 @@ type reviewFinding struct {
 type ciCheckResult struct {
 	summary     string
 	newFailures []string
+	allFailures []string // cb-7e1fc6: all failing check names, including pre-existing
 }
 
 func getGeminiReviews(ctx context.Context, repo string, prNumber int) ([]ghReview, error) {
@@ -497,13 +517,37 @@ func checkCI(ctx context.Context, repo string, prNumber int) ciCheckResult {
 	preExisting := len(prFailures) - len(newFailures)
 	if len(newFailures) == 0 {
 		return ciCheckResult{
-			summary: fmt.Sprintf("%d checks passed, %d pre-existing failures", len(checks)-len(prFailures), preExisting),
+			summary:     fmt.Sprintf("%d checks passed, %d pre-existing failures", len(checks)-len(prFailures), preExisting),
+			allFailures: prFailures,
 		}
 	}
 	return ciCheckResult{
 		summary:     fmt.Sprintf("%d new failure(s): %s", len(newFailures), strings.Join(newFailures, ", ")),
 		newFailures: newFailures,
+		allFailures: prFailures,
 	}
+}
+
+// ciBlocksMerge checks whether CI failures should prevent merging.
+// Returns a non-empty reason string when the merge should be blocked.
+// When wait_for_ci is true (default), ANY failing check blocks —
+// including pre-existing failures that also fail on main (cb-7e1fc6).
+func ciBlocksMerge(ci ciCheckResult, pCfg *config.Config) string {
+	waitForCI := pCfg != nil && pCfg.Review.WaitForCI != nil && *pCfg.Review.WaitForCI
+
+	if ci.summary == "pending" && waitForCI {
+		return "CI checks still pending"
+	}
+
+	if waitForCI && len(ci.allFailures) > 0 {
+		return fmt.Sprintf("CI failing: %s", strings.Join(ci.allFailures, ", "))
+	}
+
+	// Even without wait_for_ci, new failures always block.
+	if len(ci.newFailures) > 0 {
+		return fmt.Sprintf("new CI failures: %s", strings.Join(ci.newFailures, ", "))
+	}
+	return ""
 }
 
 func buildVerdictBody(verdict, reviewSource string, reviewResult *llmreview.ReviewResult, findings []reviewFinding, ci ciCheckResult, warning string) string {
@@ -1304,6 +1348,20 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	}
 
 	if verdict == "pass" {
+		// cb-7e1fc6: check CI before merging via dispatched verdict path.
+		// The dispatched review agent can't run tests itself; CI is the
+		// only signal for runtime correctness.
+		repo, prNumber, parseErr := parsePRURL(prURL)
+		if parseErr == nil {
+			ci := checkCI(ctx, repo, prNumber)
+			if reason := ciBlocksMerge(ci, pCfg); reason != "" {
+				fmt.Printf("Merge blocked after PASS verdict: %s\n", reason)
+				fmt.Println("CI must be green before merging. Re-run process-review after CI passes, or use --allow-red-ci.")
+				printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
+				return true, nil
+			}
+		}
+
 		if err := doMerge(ctx, taskID, prURL); err != nil {
 			return true, err
 		}
@@ -1384,5 +1442,6 @@ func dispatchReviewAgent(ctx context.Context, cmd *cobra.Command, taskID string)
 func init() {
 	processReviewCmd.Flags().Bool("dry-run", false, "Show verdict without merging or re-dispatching")
 	processReviewCmd.Flags().Int("review-timeout", 0, "Minutes to wait for external review before falling back (0 = skip external review entirely)")
+	processReviewCmd.Flags().Bool("allow-red-ci", false, "Merge even when CI checks are failing (cb-7e1fc6)")
 	rootCmd.AddCommand(processReviewCmd)
 }
