@@ -301,6 +301,24 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		if verdict == "approve" {
 			gateVerdict = "pass"
 		}
+
+		// cb-ff01fe: check CI BEFORE recording the gate verdict. RecordGateVerdict
+		// advances phase on pass — if we record pass then block the merge, the
+		// pipeline ends up in phase=done with the PR still open (observed on
+		// pf-021ed9). By checking CI first, we skip the gate record and return
+		// waiting so the pipeline stays in review phase and the poller retries.
+		if verdict == "approve" {
+			allowRedCI, _ := cmd.Flags().GetBool("allow-red-ci")
+			if !allowRedCI {
+				if reason := ciBlocksMerge(ciResult, pCfg); reason != "" {
+					fmt.Printf("Merge blocked: %s. Use --allow-red-ci to override.\n", reason)
+					fmt.Println("Review verdict was PASS but merge is held until CI is green. Pipeline stays in review phase.")
+					printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
+					return nil
+				}
+			}
+		}
+
 		if cbStore != nil {
 			body := buildVerdictBody(verdict, reviewSource, reviewResult, findings, ciResult, reviewWarning)
 			gateResult, gateErr := RecordGateVerdict(ctx, conn, cbStore, taskID, domain.GateReview, gateVerdict, body, 0, pCfg)
@@ -320,15 +338,6 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 		}
 
 		if verdict == "approve" {
-			// cb-7e1fc6: block merge on failing CI unless --allow-red-ci.
-			allowRedCI, _ := cmd.Flags().GetBool("allow-red-ci")
-			if !allowRedCI {
-				if reason := ciBlocksMerge(ciResult, pCfg); reason != "" {
-					fmt.Printf("Merge blocked: %s. Use --allow-red-ci to override.\n", reason)
-					printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
-					return nil
-				}
-			}
 			if err := doMerge(ctx, taskID, prURL); err != nil {
 				return err
 			}
@@ -1307,8 +1316,28 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		return false, fmt.Errorf("invalid verdict %q in %s", v.Verdict, verdictFile)
 	}
 
-	// Rename first so a crash between here and the merge/redispatch doesn't
-	// cause the same verdict to be consumed twice on the next poll.
+	// cb-ff01fe: for pass verdicts, check CI BEFORE consuming the verdict
+	// file or recording the gate. RecordGateVerdict advances phase on pass —
+	// if we advance then block the merge, the pipeline ends up in phase=done
+	// with the PR still open (observed on pf-021ed9). By checking CI first
+	// and leaving the verdict file in place, the poller retries on the next
+	// cycle and merges once CI is green.
+	if verdict == "pass" {
+		repo, prNumber, parseErr := parsePRURL(prURL)
+		if parseErr == nil {
+			ci := checkCI(ctx, repo, prNumber)
+			if reason := ciBlocksMerge(ci, pCfg); reason != "" {
+				fmt.Printf("Merge blocked after PASS verdict: %s\n", reason)
+				fmt.Println("Review verdict was PASS but merge is held until CI is green. Pipeline stays in review phase.")
+				fmt.Println("Verdict file kept for next poll. Re-run process-review after CI passes, or use --allow-red-ci.")
+				printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
+				return true, nil
+			}
+		}
+	}
+
+	// CI is green (or verdict is fail) — safe to consume the verdict file
+	// and advance the pipeline.
 	processedFile := verdictFile + ".processed"
 	if err := os.Rename(verdictFile, processedFile); err != nil {
 		return false, fmt.Errorf("rename gate-verdict.json: %w", err)
@@ -1348,20 +1377,6 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	}
 
 	if verdict == "pass" {
-		// cb-7e1fc6: check CI before merging via dispatched verdict path.
-		// The dispatched review agent can't run tests itself; CI is the
-		// only signal for runtime correctness.
-		repo, prNumber, parseErr := parsePRURL(prURL)
-		if parseErr == nil {
-			ci := checkCI(ctx, repo, prNumber)
-			if reason := ciBlocksMerge(ci, pCfg); reason != "" {
-				fmt.Printf("Merge blocked after PASS verdict: %s\n", reason)
-				fmt.Println("CI must be green before merging. Re-run process-review after CI passes, or use --allow-red-ci.")
-				printNextStep(taskID, domain.OutcomeWaiting, domain.ActionProcessReview)
-				return true, nil
-			}
-		}
-
 		if err := doMerge(ctx, taskID, prURL); err != nil {
 			return true, err
 		}
