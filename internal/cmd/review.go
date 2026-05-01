@@ -75,6 +75,16 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			return fmt.Errorf("get task: %w", err)
 		}
 
+		// cb-d95bcd: skip already-blocked pipelines. Without this,
+		// the poller re-runs process-review every cycle, recording
+		// another gate round each time.
+		if cbStore != nil {
+			if run, runErr := cbStore.GetRun(ctx, taskID); runErr == nil && run.Status == domain.StatusBlocked {
+				fmt.Printf("Pipeline %s is blocked — skipping review. Run `cobuild reset %s` to unblock.\n", taskID, taskID)
+				return nil
+			}
+		}
+
 		// Get PR URL — try metadata first, then fall back to looking up
 		// the PR by branch name. cb-bb760c: cobuild complete writes pr_url
 		// metadata, but when the agent dies before complete runs (or
@@ -331,6 +341,8 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			if gateResult != nil && gateVerdict == "fail" {
 				if reason := shouldEscalateReview(ctx, cbStore, gateResult); reason != "" {
 					fmt.Printf("Review loop blocked: %s. Escalating to orchestrator.\n", reason)
+					markPipelineBlocked(ctx, cbStore, taskID, reason)
+					notifyReviewBlocked(ctx, taskID, gateResult, reason)
 					printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
 					return nil
 				}
@@ -1389,6 +1401,8 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	if gateResult != nil && cbStore != nil {
 		if reason := shouldEscalateReview(ctx, cbStore, gateResult); reason != "" {
 			fmt.Printf("Review loop blocked: %s. Escalating to orchestrator.\n", reason)
+			markPipelineBlocked(ctx, cbStore, taskID, reason)
+			notifyReviewBlocked(ctx, taskID, gateResult, reason)
 			printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
 			return true, nil
 		}

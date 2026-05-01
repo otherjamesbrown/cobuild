@@ -8,15 +8,23 @@ import (
 )
 
 // escalationStore is a minimal store stub for shouldEscalateReview tests.
-// Only GetPreviousGateHash is used; everything else panics.
+// Only GetPreviousGateHash and UpdateRunStatus are used; everything else panics.
 type escalationStore struct {
 	store.Store // embed to satisfy interface; unused methods panic
 	hash        *string
 	err         error
+	blockedID   string // set by UpdateRunStatus
+	blockedStatus string
 }
 
 func (s *escalationStore) GetPreviousGateHash(_ context.Context, _, _ string, _ int) (*string, error) {
 	return s.hash, s.err
+}
+
+func (s *escalationStore) UpdateRunStatus(_ context.Context, designID, status string) error {
+	s.blockedID = designID
+	s.blockedStatus = status
+	return nil
 }
 
 func hashStrPtr(s string) *string { return &s }
@@ -176,4 +184,27 @@ func TestComputeFindingsHash_LongBodyTruncated(t *testing.T) {
 	if h == "" || len(h) != 16 {
 		t.Fatalf("long body should be truncated and hashed, got %q", h)
 	}
+}
+
+// --- markPipelineBlocked tests ---
+
+func TestMarkPipelineBlocked_SetsStatus(t *testing.T) {
+	st := &escalationStore{}
+	markPipelineBlocked(context.Background(), st, "pf-abc123", "round cap")
+	if st.blockedID != "pf-abc123" {
+		t.Fatalf("expected designID pf-abc123, got %q", st.blockedID)
+	}
+	if st.blockedStatus != "blocked" {
+		t.Fatalf("expected status blocked, got %q", st.blockedStatus)
+	}
+}
+
+func TestMarkPipelineBlocked_NilStore(t *testing.T) {
+	// Should not panic with nil store.
+	markPipelineBlocked(context.Background(), nil, "pf-abc123", "round cap")
+}
+
+func TestNotifyReviewBlocked_NilResult(t *testing.T) {
+	// Should not panic with nil result.
+	notifyReviewBlocked(context.Background(), "pf-abc123", nil, "test")
 }

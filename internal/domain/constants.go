@@ -100,6 +100,9 @@ const (
 
 // CoBuild-owned task, run, and session statuses.
 const (
+	// StatusBlocked marks a pipeline blocked by review circuit-break
+	// (cb-d95bcd). Requires operator action to unblock.
+	StatusBlocked = "blocked"
 	// StatusCancelled marks a cancelled CoBuild session.
 	StatusCancelled = "cancelled"
 	// StatusCompleted marks completed CoBuild work.

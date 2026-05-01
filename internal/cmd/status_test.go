@@ -68,6 +68,22 @@ func TestStatusActivityFor(t *testing.T) {
 	}
 }
 
+func TestStatusSortBlockedToTop(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	runs := []store.PipelineRunStatus{
+		{DesignID: "pf-active", Status: "active", Activity: "dispatched", LastProgress: now.Add(-1 * time.Minute)},
+		{DesignID: "pf-blocked", Status: "blocked", Activity: "blocked", LastProgress: now.Add(-3 * time.Hour)},
+		{DesignID: "pf-recent", Status: "active", Activity: "awaiting-transition", LastProgress: now.Add(-5 * time.Minute)},
+	}
+	got := statusFilterAndSortRuns(runs, false, 24*time.Hour, now)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 runs, got %d", len(got))
+	}
+	if got[0].DesignID != "pf-blocked" {
+		t.Fatalf("blocked pipeline should sort first, got %q", got[0].DesignID)
+	}
+}
+
 func TestStatusActiveFilterIncludesBlockedRuns(t *testing.T) {
 	now := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
 	runs := []store.PipelineRunStatus{

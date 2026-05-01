@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/otherjamesbrown/cobuild/internal/domain"
 	"github.com/otherjamesbrown/cobuild/internal/store"
 )
 
@@ -96,4 +98,43 @@ func extractFindingsLines(body string) []string {
 func collapseWhitespace(s string) string {
 	fields := strings.Fields(s)
 	return strings.Join(fields, " ")
+}
+
+// markPipelineBlocked sets the pipeline run status to "blocked" so the
+// poller and process-review skip it on subsequent cycles (cb-d95bcd).
+func markPipelineBlocked(ctx context.Context, st store.Store, taskID, reason string) {
+	if st == nil {
+		return
+	}
+	if err := st.UpdateRunStatus(ctx, taskID, domain.StatusBlocked); err != nil {
+		fmt.Printf("Warning: failed to mark pipeline blocked: %v\n", err)
+	}
+}
+
+// notifyReviewBlocked sends a CXP message to the project's agent so the
+// operator learns about the blocked pipeline without polling (cb-d95bcd).
+// Best-effort — a failed notification doesn't block the circuit-break.
+func notifyReviewBlocked(ctx context.Context, taskID string, result *GateVerdictResult, reason string) {
+	if result == nil {
+		return
+	}
+
+	// Derive recipient from the pipeline's project. Convention: agent-<project>.
+	project := projectName
+	if project == "" {
+		return
+	}
+	recipient := "agent-" + project
+
+	subject := fmt.Sprintf("Pipeline blocked: %s (round %d)", taskID, result.Round)
+	body := fmt.Sprintf("Review-fix loop circuit-break fired.\n\nTask: %s\nRound: %d\nReason: %s\n\nAction required:\n  cobuild audit %s\n  cobuild reset %s",
+		taskID, result.Round, reason, taskID, taskID)
+
+	// Shell out to cxp — best-effort, don't fail the command.
+	cmd := exec.CommandContext(ctx, "cxp", "message", "send", recipient, subject, "--body", body, "--kind", "circuit-break")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("Warning: failed to send circuit-break notification: %v (%s)\n", err, strings.TrimSpace(string(out)))
+	} else {
+		fmt.Printf("Notification sent to %s.\n", recipient)
+	}
 }

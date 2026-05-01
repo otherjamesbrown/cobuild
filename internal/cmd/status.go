@@ -57,6 +57,17 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
+		// cb-d95bcd: surface blocked pipelines prominently.
+		blockedCount := 0
+		for _, r := range runs {
+			if r.Status == "blocked" || r.Activity == "blocked" {
+				blockedCount++
+			}
+		}
+		if blockedCount > 0 {
+			fmt.Printf("BLOCKED: %d pipeline(s) require operator action — run `cobuild audit <id>` then `cobuild reset <id>`\n\n", blockedCount)
+		}
+
 		fmt.Printf("%-12s %-14s %-10s %-20s %-8s %-8s %-6s %s\n", "ID", "PHASE", "STATUS", "ACTIVITY", "HEALTH", "REBASE", "TASKS", "LAST ACTIVITY")
 		fmt.Printf("%-12s %-14s %-10s %-20s %-8s %-8s %-6s %s\n", "----", "-----", "------", "--------", "------", "------", "-----", "-------------")
 		for _, r := range runs {
@@ -94,6 +105,12 @@ func statusFilterAndSortRuns(runs []store.PipelineRunStatus, activeOnly bool, re
 		filtered = append(filtered, run)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
+		// cb-d95bcd: blocked pipelines sort to top so operators see them first.
+		iBlocked := filtered[i].Status == "blocked" || filtered[i].Activity == "blocked"
+		jBlocked := filtered[j].Status == "blocked" || filtered[j].Activity == "blocked"
+		if iBlocked != jBlocked {
+			return iBlocked
+		}
 		left := statusLatestActivity(filtered[i])
 		right := statusLatestActivity(filtered[j])
 		if !left.Equal(right) {
