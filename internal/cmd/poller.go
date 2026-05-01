@@ -382,16 +382,8 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 			continue
 		}
 
-		// Only process autonomous pipelines
-		// Check mode from the full run record
 		fullRun, err := cbStore.GetRun(ctx, run.DesignID)
-		if err != nil || fullRun.Mode != "autonomous" {
-			continue
-		}
-
-		// Check if there's already an agent session running for this pipeline
-		if hasActiveSession(ctx, run.DesignID) {
-			internalLogger().Debug("agent running", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
+		if err != nil {
 			continue
 		}
 
@@ -402,10 +394,17 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 			runCfg = pCfg // fall back to global config
 		}
 
-		// Check phase — some phases need task-level dispatch, not design-level
-		switch run.Phase {
-		case domain.PhaseImplement:
-			// Check for child tasks that need dispatch
+		// cb-34038a: implement-phase wave-dispatch for designs is pure
+		// bookkeeping (iterate children, dispatch ready ones). It does NOT
+		// need an LLM agent, so it runs for ALL pipelines regardless of
+		// mode. This eliminates the "orchestrator dies, children stay
+		// undispatched" failure mode — the poller picks up the slack.
+		if run.Phase == domain.PhaseImplement {
+			// Skip if an agent is already running for this design
+			if hasActiveSession(ctx, run.DesignID) {
+				internalLogger().Debug("agent running", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
+				continue
+			}
 			edges, _ := conn.GetEdges(ctx, run.DesignID, "incoming", []string{"child-of"})
 			if len(edges) > 0 {
 				dispatchReadyTasks(ctx, runRepoRoot, runCfg, run.DesignID, dryRun)
@@ -418,9 +417,22 @@ func pollActivePipelines(ctx context.Context, repoRoot string, pCfg *config.Conf
 					dispatchForPhase(ctx, run.DesignID)
 				}
 			}
+			continue
+		}
 
+		// Gate phases (design, decompose, review, etc.) dispatch LLM agents —
+		// only process autonomous pipelines for these.
+		if fullRun.Mode != "autonomous" {
+			continue
+		}
+
+		if hasActiveSession(ctx, run.DesignID) {
+			internalLogger().Debug("agent running", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
+			continue
+		}
+
+		switch run.Phase {
 		case domain.PhaseDesign, domain.PhaseDecompose, domain.PhaseInvestigate, domain.PhaseReview, domain.PhaseDone:
-			// Design-level dispatch — spawn agent for this phase
 			if dryRun {
 				internalLogger().Info("would dispatch (dry run)", "component", "poller", "phase", run.Phase, "id", run.DesignID, "project", run.Project)
 			} else {
