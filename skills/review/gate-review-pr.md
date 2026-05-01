@@ -29,6 +29,21 @@ cobuild wi links <task-id> outgoing child-of
 cobuild show <parent-design-id>
 ```
 
+## Evidence Requirement
+
+Before issuing any demand based on a factual claim about the codebase, verify it:
+
+- **"X exists in production"** → `grep -rn 'X' <relevant dirs>` and cite file:line where X is defined (not just referenced)
+- **"X is missing"** → `grep -rn 'X'` confirming zero results, cite the command
+- **"X was removed/added in commit Y"** → `git log --oneline --all -- <file>` or `git log --grep='X'` and cite the commit hash
+- **"This test covers production code path Z"** → trace the call chain and cite the production file:line
+
+Include a brief summary of your verification in the verdict body (e.g. "Verified: `BuildContext` is defined at `activities.go:42`").
+
+If a claim **cannot be verified** (grep returns nothing, git log is ambiguous), soften the demand to a question: "Please confirm whether X is still in use — I could not find it at the expected location" rather than issuing a hard block.
+
+**Never issue a hard block based on an unverified assumption about what exists or doesn't exist in the codebase.**
+
 ## Three Review Questions
 
 ### 1. Does it match the task spec?

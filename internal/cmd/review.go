@@ -326,11 +326,11 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 				fmt.Printf("Warning: failed to record gate verdict: %v\n", gateErr)
 			}
 
-			// cb-f55aa0: if the same review finding repeats N times
-			// consecutively, block instead of burning retry budget.
+			// cb-f55aa0 + cb-e20e84/cb-4c9241: block the loop when
+			// findings repeat or the round cap is exceeded.
 			if gateResult != nil && gateVerdict == "fail" {
-				if shouldEscalateReview(ctx, cbStore, gateResult) {
-					fmt.Printf("Review rejected %dx with same finding — escalating to orchestrator.\n", reviewEscalationThreshold)
+				if reason := shouldEscalateReview(ctx, cbStore, gateResult); reason != "" {
+					fmt.Printf("Review loop blocked: %s. Escalating to orchestrator.\n", reason)
 					printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
 					return nil
 				}
@@ -1384,10 +1384,11 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		return true, nil
 	}
 
-	// cb-f55aa0: check for repeated identical findings before re-dispatching.
+	// cb-f55aa0 + cb-e20e84/cb-4c9241: block the loop when
+	// findings repeat or the round cap is exceeded.
 	if gateResult != nil && cbStore != nil {
-		if shouldEscalateReview(ctx, cbStore, gateResult) {
-			fmt.Printf("Review rejected %dx with same finding — escalating to orchestrator.\n", reviewEscalationThreshold)
+		if reason := shouldEscalateReview(ctx, cbStore, gateResult); reason != "" {
+			fmt.Printf("Review loop blocked: %s. Escalating to orchestrator.\n", reason)
 			printNextStep(taskID, domain.OutcomeBlocked, domain.ActionProcessReview)
 			return true, nil
 		}

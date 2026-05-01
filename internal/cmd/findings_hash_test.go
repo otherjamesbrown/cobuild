@@ -1,6 +1,126 @@
 package cmd
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/otherjamesbrown/cobuild/internal/store"
+)
+
+// escalationStore is a minimal store stub for shouldEscalateReview tests.
+// Only GetPreviousGateHash is used; everything else panics.
+type escalationStore struct {
+	store.Store // embed to satisfy interface; unused methods panic
+	hash        *string
+	err         error
+}
+
+func (s *escalationStore) GetPreviousGateHash(_ context.Context, _, _ string, _ int) (*string, error) {
+	return s.hash, s.err
+}
+
+func hashStrPtr(s string) *string { return &s }
+
+// --- shouldEscalateReview tests ---
+
+func TestShouldEscalateReview_NilResult(t *testing.T) {
+	if reason := shouldEscalateReview(context.Background(), &escalationStore{}, nil); reason != "" {
+		t.Fatalf("nil result should not escalate, got %q", reason)
+	}
+}
+
+func TestShouldEscalateReview_SameHashAtThreshold(t *testing.T) {
+	st := &escalationStore{hash: hashStrPtr("abcdef0123456789")}
+	result := &GateVerdictResult{
+		PipelineID:   "p1",
+		GateName:     "review",
+		Round:        2,
+		FindingsHash: "abcdef0123456789",
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason == "" {
+		t.Fatal("same hash at threshold should escalate")
+	}
+	if reason == "" || len(reason) < 10 {
+		t.Fatalf("reason should be descriptive, got %q", reason)
+	}
+}
+
+func TestShouldEscalateReview_DifferentHashBelowCap(t *testing.T) {
+	st := &escalationStore{hash: hashStrPtr("different_hash__")}
+	result := &GateVerdictResult{
+		PipelineID:   "p1",
+		GateName:     "review",
+		Round:        3,
+		FindingsHash: "abcdef0123456789",
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason != "" {
+		t.Fatalf("different hash below cap should not escalate, got %q", reason)
+	}
+}
+
+func TestShouldEscalateReview_RoundCapTriggersRegardlessOfHash(t *testing.T) {
+	// Different hash each round — hash-based check won't fire.
+	// But round >= reviewMaxRounds should still block.
+	st := &escalationStore{hash: hashStrPtr("different_hash__")}
+	result := &GateVerdictResult{
+		PipelineID:   "p1",
+		GateName:     "review",
+		Round:        reviewMaxRounds,
+		FindingsHash: "abcdef0123456789",
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason == "" {
+		t.Fatalf("round cap (%d) should trigger escalation regardless of hash", reviewMaxRounds)
+	}
+}
+
+func TestShouldEscalateReview_RoundCapTriggersWithoutHash(t *testing.T) {
+	// No findings hash at all — hash-based check can't fire.
+	// Round cap should still block.
+	st := &escalationStore{}
+	result := &GateVerdictResult{
+		PipelineID: "p1",
+		GateName:   "review",
+		Round:      reviewMaxRounds,
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason == "" {
+		t.Fatalf("round cap should trigger even without findings hash")
+	}
+}
+
+func TestShouldEscalateReview_BelowCapNoPrevHash(t *testing.T) {
+	// Round 2 with no previous hash record — shouldn't escalate.
+	st := &escalationStore{hash: nil}
+	result := &GateVerdictResult{
+		PipelineID:   "p1",
+		GateName:     "review",
+		Round:        2,
+		FindingsHash: "abcdef0123456789",
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason != "" {
+		t.Fatalf("no previous hash should not escalate, got %q", reason)
+	}
+}
+
+func TestShouldEscalateReview_Round1NeverEscalates(t *testing.T) {
+	st := &escalationStore{hash: hashStrPtr("abcdef0123456789")}
+	result := &GateVerdictResult{
+		PipelineID:   "p1",
+		GateName:     "review",
+		Round:        1,
+		FindingsHash: "abcdef0123456789",
+	}
+	reason := shouldEscalateReview(context.Background(), st, result)
+	if reason != "" {
+		t.Fatalf("round 1 should never escalate, got %q", reason)
+	}
+}
+
+// --- computeFindingsHash tests ---
 
 func TestComputeFindingsHash_StructuredBody(t *testing.T) {
 	body := `## Review Findings
