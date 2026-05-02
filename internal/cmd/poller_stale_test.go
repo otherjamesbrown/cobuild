@@ -43,6 +43,15 @@ func TestCheckStaleSessionsKillsOldRunningSession(t *testing.T) {
 		TmuxSession:  ptr(sessionName),
 		TmuxWindow:   ptr(windowName),
 	}}
+	// cb-a08acd: pipeline run for the task so markPipelineBlocked can
+	// set its status to "blocked" after a stale kill.
+	fs.runs["cb-task"] = &store.PipelineRun{
+		ID:           "run-task",
+		DesignID:     "cb-task",
+		Project:      "test-project",
+		CurrentPhase: "implement",
+		Status:       "active",
+	}
 
 	restore := installTestGlobals(t, newFakeConnector(), fs, "test-project")
 	defer restore()
@@ -80,6 +89,10 @@ func TestCheckStaleSessionsKillsOldRunningSession(t *testing.T) {
 	}
 	if result.CompletionNote == "" || !strings.Contains(result.CompletionNote, "stall_timeout") {
 		t.Fatalf("completion note = %q, want stale note", result.CompletionNote)
+	}
+	// cb-a08acd: verify pipeline is marked blocked after stale kill.
+	if fs.runs["cb-task"].Status != "blocked" {
+		t.Fatalf("pipeline status = %q, want blocked", fs.runs["cb-task"].Status)
 	}
 }
 
@@ -190,6 +203,131 @@ func TestCheckStaleSessionsMarksMissingLogOrWorktreeOrphaned(t *testing.T) {
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func TestInspectSessionHealth_StaleHeartbeatKills(t *testing.T) {
+	worktree := t.TempDir()
+	cobuildDir := filepath.Join(worktree, ".cobuild")
+	if err := os.MkdirAll(cobuildDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+
+	// session.log is fresh (5 min old)
+	logPath := filepath.Join(cobuildDir, "session.log")
+	if err := os.WriteFile(logPath, []byte("active\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(logPath, now.Add(-5*time.Minute), now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	// heartbeat is stale (5 min old, > 2m threshold)
+	hbPath := filepath.Join(cobuildDir, "heartbeat")
+	if err := os.WriteFile(hbPath, []byte("1746186000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(hbPath, now.Add(-5*time.Minute), now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	session := store.SessionRecord{
+		ID:           "ps-hb-stale",
+		TaskID:       "cb-hb-test",
+		WorktreePath: ptr(worktree),
+	}
+
+	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome != "stale-killed" {
+		t.Fatalf("outcome = %q, want stale-killed", outcome)
+	}
+	if !strings.Contains(note, "heartbeat stale") {
+		t.Fatalf("note = %q, want heartbeat stale mention", note)
+	}
+}
+
+func TestInspectSessionHealth_FreshHeartbeatPreventsKill(t *testing.T) {
+	worktree := t.TempDir()
+	cobuildDir := filepath.Join(worktree, ".cobuild")
+	if err := os.MkdirAll(cobuildDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+
+	// session.log is stale (45 min old, > 30m stall_timeout)
+	logPath := filepath.Join(cobuildDir, "session.log")
+	if err := os.WriteFile(logPath, []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(logPath, now.Add(-45*time.Minute), now.Add(-45*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	// heartbeat is fresh (30s old, < 2m threshold)
+	hbPath := filepath.Join(cobuildDir, "heartbeat")
+	if err := os.WriteFile(hbPath, []byte("1746186000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(hbPath, now.Add(-30*time.Second), now.Add(-30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	session := store.SessionRecord{
+		ID:           "ps-hb-fresh",
+		TaskID:       "cb-hb-test",
+		WorktreePath: ptr(worktree),
+	}
+
+	outcome, _, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome != "" {
+		t.Fatalf("fresh heartbeat should prevent kill, got outcome %q", outcome)
+	}
+}
+
+func TestInspectSessionHealth_NoHeartbeatFallsBackToSessionLog(t *testing.T) {
+	worktree := t.TempDir()
+	cobuildDir := filepath.Join(worktree, ".cobuild")
+	if err := os.MkdirAll(cobuildDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+
+	// session.log is stale (45 min old)
+	logPath := filepath.Join(cobuildDir, "session.log")
+	if err := os.WriteFile(logPath, []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(logPath, now.Add(-45*time.Minute), now.Add(-45*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	// No heartbeat file — older dispatch without heartbeat support.
+
+	session := store.SessionRecord{
+		ID:           "ps-no-hb",
+		TaskID:       "cb-no-hb",
+		WorktreePath: ptr(worktree),
+	}
+
+	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome != "stale-killed" {
+		t.Fatalf("outcome = %q, want stale-killed (session.log fallback)", outcome)
+	}
+	if !strings.Contains(note, "session.log mtime") {
+		t.Fatalf("note = %q, want session.log mtime mention", note)
+	}
 }
 
 func TestReconcileStaleStateAppliesSharedRecoveries(t *testing.T) {

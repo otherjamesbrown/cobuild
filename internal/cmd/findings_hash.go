@@ -131,9 +131,31 @@ func notifyReviewBlocked(ctx context.Context, taskID string, result *GateVerdict
 		taskID, result.Round, reason, taskID, taskID)
 
 	// Shell out to cxp — best-effort, don't fail the command.
-	cmd := exec.CommandContext(ctx, "cxp", "message", "send", recipient, subject, "--body", body, "--kind", "circuit-break")
+	sendCXPNotification(ctx, recipient, subject, body, "circuit-break")
+}
+
+// notifySessionStall sends a CXP message when the poller kills a stalled
+// session (cb-a08acd / cb-0e0482). Same pattern as notifyReviewBlocked.
+func notifySessionStall(ctx context.Context, taskID, sessionID, reason string) {
+	project := projectName
+	if project == "" {
+		return
+	}
+	recipient := "agent-" + project
+
+	subject := fmt.Sprintf("Session stalled: %s", taskID)
+	body := fmt.Sprintf("Poller killed a stalled session.\n\nTask: %s\nSession: %s\nReason: %s\n\nAction required:\n  cobuild audit %s\n  cobuild redispatch --reset-context %s",
+		taskID, sessionID, reason, taskID, taskID)
+
+	sendCXPNotification(ctx, recipient, subject, body, "session-stall")
+}
+
+// sendCXPNotification shells out to cxp message send. Best-effort —
+// a failed notification is logged but doesn't fail the caller.
+func sendCXPNotification(ctx context.Context, recipient, subject, body, kind string) {
+	cmd := exec.CommandContext(ctx, "cxp", "message", "send", recipient, subject, "--body", body, "--kind", kind)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Printf("Warning: failed to send circuit-break notification: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		fmt.Printf("Warning: failed to send %s notification: %v (%s)\n", kind, err, strings.TrimSpace(string(out)))
 	} else {
 		fmt.Printf("Notification sent to %s.\n", recipient)
 	}

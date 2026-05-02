@@ -184,6 +184,21 @@ PROMPT=$(cat "$PROMPT_FILE")
 echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
 rm -f "$PROMPT_FILE"
 
+# Heartbeat loop (cb-a08acd / cb-0e0482). Writes a timestamp to
+# .cobuild/heartbeat every 30s while this script is alive. The poller's
+# inspectSessionHealth reads this file's mtime as a liveness signal —
+# a stale heartbeat means the process is dead or hung, distinct from
+# "agent is in a long LLM call" (which still updates session.log).
+(
+    while true; do
+        date +%%s > .cobuild/heartbeat
+        sleep 30
+    done
+) &
+HEARTBEAT_PID=$!
+# Ensure heartbeat stops when the main script exits.
+trap "kill $HEARTBEAT_PID 2>/dev/null" EXIT
+
 # Post-completion watchdog (cb-e619cb). The interactive Claude Code agent
 # occasionally types /exit as its last message — claude-code renders it as
 # agent text rather than intercepting it as a REPL command, and the process

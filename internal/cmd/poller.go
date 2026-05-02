@@ -306,8 +306,19 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 			continue
 		}
 		internalLogger().Info("killed stale session", "component", "monitor", "task", session.TaskID, "idle", idle.Round(time.Second))
+
+		// cb-a08acd / cb-0e0482: block the pipeline and notify the operator
+		// so stalled sessions don't sit silently for hours.
+		stallReason := fmt.Sprintf("session %s stalled (%s idle, killed by poller)", session.ID, idle.Round(time.Second))
+		markPipelineBlocked(ctx, cbStore, session.TaskID, stallReason)
+		notifySessionStall(ctx, session.TaskID, session.ID, stallReason)
 	}
 }
+
+// defaultHeartbeatTimeout is how stale .cobuild/heartbeat can be before
+// the process is considered dead. Shorter than stall_timeout because the
+// heartbeat loop writes every 30s regardless of what the agent is doing.
+const defaultHeartbeatTimeout = 2 * time.Minute
 
 func resolveStallTimeout(pCfg *config.Config) time.Duration {
 	timeout := strings.TrimSpace(pCfg.Monitoring.StallTimeout)
@@ -317,6 +328,18 @@ func resolveStallTimeout(pCfg *config.Config) time.Duration {
 	d, err := time.ParseDuration(timeout)
 	if err != nil || d <= 0 {
 		return 30 * time.Minute
+	}
+	return d
+}
+
+func resolveHeartbeatTimeout(pCfg *config.Config) time.Duration {
+	timeout := strings.TrimSpace(pCfg.Monitoring.HeartbeatTimeout)
+	if timeout == "" {
+		return defaultHeartbeatTimeout
+	}
+	d, err := time.ParseDuration(timeout)
+	if err != nil || d <= 0 {
+		return defaultHeartbeatTimeout
 	}
 	return d
 }
@@ -343,6 +366,26 @@ func inspectSessionHealth(session store.SessionRecord, stallTimeout time.Duratio
 		return "", "", 0, err
 	}
 
+	// cb-a08acd: check heartbeat file as a liveness signal. The runner
+	// script writes .cobuild/heartbeat every 30s. A stale heartbeat means
+	// the process is dead or hung — even if session.log mtime is fresh
+	// (e.g. agent wrote output then hung). A missing heartbeat file is
+	// not an error — older dispatches and non-heartbeat runtimes won't
+	// have one, so we fall through to the session.log check.
+	heartbeat := filepath.Join(worktreePath, ".cobuild", "heartbeat")
+	if hbInfo, hbErr := pollerStat(heartbeat); hbErr == nil {
+		hbAge := now.Sub(hbInfo.ModTime())
+		if hbAge > defaultHeartbeatTimeout {
+			idle = hbAge.Round(time.Second)
+			note = fmt.Sprintf("Killed by poller: heartbeat stale (%s, threshold %s)", idle, defaultHeartbeatTimeout)
+			return "stale-killed", note, idle, nil
+		}
+		// Heartbeat is fresh — process is alive. Don't kill even if
+		// session.log is stale (agent may be in a long LLM call).
+		return "", "", now.Sub(info.ModTime()), nil
+	}
+
+	// No heartbeat file — fall back to session.log mtime only.
 	idle = now.Sub(info.ModTime())
 	if idle <= stallTimeout {
 		return "", "", idle, nil

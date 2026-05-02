@@ -123,6 +123,18 @@ PROMPT=$(cat "$PROMPT_FILE")
 echo "[$(date)] Prompt loaded (${#PROMPT} chars)" >> "$LOGFILE"
 rm -f "$PROMPT_FILE"
 
+# Heartbeat loop (cb-a08acd / cb-0e0482). Writes a timestamp to
+# .cobuild/heartbeat every 30s while this script is alive. The poller's
+# inspectSessionHealth reads this file's mtime as a liveness signal.
+(
+    while true; do
+        date +%%s > .cobuild/heartbeat
+        sleep 30
+    done
+) &
+HEARTBEAT_PID=$!
+trap "kill $HEARTBEAT_PID 2>/dev/null" EXIT
+
 # Run codex exec non-interactively. JSONL events stream to session.log,
 # final agent message to last-message.md. codex exec exits cleanly on
 # completion — no Stop hook / completion-signal workaround needed.

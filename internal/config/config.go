@@ -367,12 +367,13 @@ type ReviewCfg struct {
 
 // MonitoringCfg controls health monitoring for dispatched agents.
 type MonitoringCfg struct {
-	StallTimeout string            `yaml:"stall_timeout,omitempty"`
-	CrashCheck   bool              `yaml:"crash_check,omitempty"`
-	MaxRetries   int               `yaml:"max_retries,omitempty"`
-	Cooldown     string            `yaml:"cooldown,omitempty"`
-	Model        string            `yaml:"model,omitempty"`
-	Actions      MonitoringActions `yaml:"actions,omitempty"`
+	StallTimeout     string            `yaml:"stall_timeout,omitempty"`
+	HeartbeatTimeout string            `yaml:"heartbeat_timeout,omitempty"` // cb-a08acd: max age of .cobuild/heartbeat before liveness warning (default 2m)
+	CrashCheck       bool              `yaml:"crash_check,omitempty"`
+	MaxRetries       int               `yaml:"max_retries,omitempty"`
+	Cooldown         string            `yaml:"cooldown,omitempty"`
+	Model            string            `yaml:"model,omitempty"`
+	Actions          MonitoringActions `yaml:"actions,omitempty"`
 }
 
 // MonitoringActions defines what to do for each health event.
