@@ -254,6 +254,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 	}
 
 	stallTimeout := resolveStallTimeout(pCfg)
+	heartbeatTimeout := resolveHeartbeatTimeout(pCfg)
 	sessions, err := cbStore.ListRunningSessions(ctx, "")
 	if err != nil {
 		internalLogger().Error("list running sessions failed", "component", "monitor", "err", err)
@@ -262,7 +263,7 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 
 	now := pollerNow()
 	for _, session := range sessions {
-		outcome, note, idle, err := inspectSessionHealth(session, stallTimeout, now)
+		outcome, note, idle, err := inspectSessionHealth(session, stallTimeout, heartbeatTimeout, now)
 		if err != nil {
 			internalLogger().Warn("inspect failed", "component", "monitor", "task", session.TaskID, "err", err)
 			continue
@@ -344,7 +345,7 @@ func resolveHeartbeatTimeout(pCfg *config.Config) time.Duration {
 	return d
 }
 
-func inspectSessionHealth(session store.SessionRecord, stallTimeout time.Duration, now time.Time) (outcome string, note string, idle time.Duration, err error) {
+func inspectSessionHealth(session store.SessionRecord, stallTimeout, heartbeatTimeout time.Duration, now time.Time) (outcome string, note string, idle time.Duration, err error) {
 	if session.WorktreePath == nil || strings.TrimSpace(*session.WorktreePath) == "" {
 		return "orphaned", "Marked orphaned by poller: missing worktree path for running session", 0, nil
 	}
@@ -375,9 +376,9 @@ func inspectSessionHealth(session store.SessionRecord, stallTimeout time.Duratio
 	heartbeat := filepath.Join(worktreePath, ".cobuild", "heartbeat")
 	if hbInfo, hbErr := pollerStat(heartbeat); hbErr == nil {
 		hbAge := now.Sub(hbInfo.ModTime())
-		if hbAge > defaultHeartbeatTimeout {
+		if hbAge > heartbeatTimeout {
 			idle = hbAge.Round(time.Second)
-			note = fmt.Sprintf("Killed by poller: heartbeat stale (%s, threshold %s)", idle, defaultHeartbeatTimeout)
+			note = fmt.Sprintf("Killed by poller: heartbeat stale (%s, threshold %s)", idle, heartbeatTimeout)
 			return "stale-killed", note, idle, nil
 		}
 		// Heartbeat is fresh — process is alive. Don't kill even if

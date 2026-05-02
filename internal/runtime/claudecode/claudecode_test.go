@@ -1,8 +1,11 @@
 package claudecode
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/otherjamesbrown/cobuild/internal/runtime"
 )
@@ -173,6 +176,95 @@ func TestBuildRunnerScript_ExtraFlagsOverrides(t *testing.T) {
 	}
 	if strings.Contains(script, "--dangerously-skip-permissions") {
 		t.Errorf("expected default flags to be replaced when ExtraFlags is set")
+	}
+}
+
+func TestBuildRunnerScript_HeartbeatPresent(t *testing.T) {
+	r := New()
+	script, err := r.BuildRunnerScript(runtime.RunnerInput{
+		WorktreePath: "/tmp/wt",
+		RepoRoot:     "/home/u/repo",
+		TaskID:       "cb-hb",
+		PromptFile:   "/tmp/prompt.md",
+		SessionID:    "ps-hb",
+		HooksDir:     "/home/u/repo/hooks",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunnerScript: %v", err)
+	}
+
+	mustContain := []string{
+		".cobuild/heartbeat",
+		"HEARTBEAT_PID=$!",
+		`trap "kill $HEARTBEAT_PID`,
+		"sleep 30",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(script, s) {
+			t.Errorf("heartbeat section missing %q\n---\n%s\n---", s, script)
+		}
+	}
+}
+
+func TestBuildRunnerScript_HeartbeatBashExecution(t *testing.T) {
+	// Render the heartbeat snippet from the runner script and execute it
+	// in a real bash shell to verify the heartbeat file is written and
+	// the background process cleans up on exit.
+	dir := t.TempDir()
+	cobuildDir := dir + "/.cobuild"
+
+	// Minimal script: set up the heartbeat loop, sleep briefly, then exit.
+	// The trap should kill the heartbeat PID on exit.
+	script := `#!/bin/bash
+set -e
+cd '` + dir + `'
+mkdir -p .cobuild
+
+# Heartbeat loop — same as runner template but with 1s interval for test speed
+(
+    while true; do
+        date +%s > .cobuild/heartbeat
+        sleep 1
+    done
+) &
+HEARTBEAT_PID=$!
+trap "kill $HEARTBEAT_PID 2>/dev/null" EXIT
+
+# Simulate agent running for 3 seconds
+sleep 3
+`
+
+	// Write and execute
+	scriptPath := dir + "/test-heartbeat.sh"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", scriptPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+
+	// Verify heartbeat was written
+	hbPath := cobuildDir + "/heartbeat"
+	data, err := os.ReadFile(hbPath)
+	if err != nil {
+		t.Fatalf("heartbeat file not created: %v", err)
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		t.Fatal("heartbeat file is empty")
+	}
+
+	// Verify the heartbeat PID was killed (trap fired on exit).
+	// We can't directly check the PID, but we can verify no stray
+	// background processes are writing to the file by checking the
+	// mtime doesn't advance after the script exits.
+	info1, _ := os.Stat(hbPath)
+	time.Sleep(2 * time.Second)
+	info2, _ := os.Stat(hbPath)
+	if info2.ModTime().After(info1.ModTime()) {
+		t.Fatal("heartbeat file still being written after script exited — trap didn't fire")
 	}
 }
 

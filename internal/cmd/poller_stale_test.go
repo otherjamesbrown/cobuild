@@ -238,7 +238,7 @@ func TestInspectSessionHealth_StaleHeartbeatKills(t *testing.T) {
 		WorktreePath: ptr(worktree),
 	}
 
-	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, 2*time.Minute, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestInspectSessionHealth_FreshHeartbeatPreventsKill(t *testing.T) {
 		WorktreePath: ptr(worktree),
 	}
 
-	outcome, _, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	outcome, _, _, err := inspectSessionHealth(session, 30*time.Minute, 2*time.Minute, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestInspectSessionHealth_NoHeartbeatFallsBackToSessionLog(t *testing.T) {
 		WorktreePath: ptr(worktree),
 	}
 
-	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, now)
+	outcome, note, _, err := inspectSessionHealth(session, 30*time.Minute, 2*time.Minute, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

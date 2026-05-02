@@ -122,6 +122,33 @@ func TestBuildRunnerScript_ReviewGateRoutesToProcessReview(t *testing.T) {
 	}
 }
 
+func TestBuildRunnerScript_HeartbeatPresent(t *testing.T) {
+	r := New()
+	script, err := r.BuildRunnerScript(runtime.RunnerInput{
+		WorktreePath: "/tmp/wt",
+		RepoRoot:     "/home/u/repo",
+		TaskID:       "cb-hb",
+		PromptFile:   "/tmp/prompt.md",
+		SessionID:    "ps-hb",
+		HooksDir:     "/home/u/repo/hooks",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunnerScript: %v", err)
+	}
+
+	mustContain := []string{
+		".cobuild/heartbeat",
+		"HEARTBEAT_PID=$!",
+		`trap "kill $HEARTBEAT_PID`,
+		"sleep 30",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(script, s) {
+			t.Errorf("heartbeat section missing %q\n---\n%s\n---", s, script)
+		}
+	}
+}
+
 func TestBuildRunnerScript_ExtraFlagsOverrides(t *testing.T) {
 	r := New()
 	script, err := r.BuildRunnerScript(runtime.RunnerInput{
