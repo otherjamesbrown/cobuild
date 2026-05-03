@@ -1328,6 +1328,29 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 		return false, fmt.Errorf("invalid verdict %q in %s", v.Verdict, verdictFile)
 	}
 
+	// cb-0e0482 root cause: end running review sessions as soon as a verdict
+	// file is found — the agent has exited regardless of what happens next
+	// (CI pending, merge blocked, etc.). Previously this block lived AFTER
+	// the CI-pending early return, so a PASS-but-CI-red verdict left the
+	// session as "running" forever. dispatchReviewAgent's "already running"
+	// guard then blocked all future dispatches, making the pipeline appear
+	// stalled for hours/days.
+	if cbStore != nil {
+		if sessions, lerr := cbStore.ListSessions(ctx, taskID); lerr == nil {
+			for _, s := range sessions {
+				if s.Status == "running" && s.Phase == domain.PhaseReview {
+					if err := cbStore.EndSession(ctx, s.ID, store.SessionResult{
+						ExitCode:       0,
+						Status:         domain.StatusCompleted,
+						CompletionNote: "dispatched review verdict consumed by process-review",
+					}); err != nil {
+						reviewWarnf("Warning: failed to close review session %s for %s: %v\n", s.ID, taskID, err)
+					}
+				}
+			}
+		}
+	}
+
 	// cb-ff01fe: for pass verdicts, check CI BEFORE consuming the verdict
 	// file or recording the gate. RecordGateVerdict advances phase on pass —
 	// if we advance then block the merge, the pipeline ends up in phase=done
@@ -1353,25 +1376,6 @@ func consumeDispatchedReviewVerdict(ctx context.Context, taskID, prURL string, p
 	processedFile := verdictFile + ".processed"
 	if err := os.Rename(verdictFile, processedFile); err != nil {
 		return false, fmt.Errorf("rename gate-verdict.json: %w", err)
-	}
-
-	// Mark any still-running review sessions complete. Without this, the
-	// next dispatchReviewAgent call would hit the "already running" guard
-	// even though the agent has exited.
-	if cbStore != nil {
-		if sessions, lerr := cbStore.ListSessions(ctx, taskID); lerr == nil {
-			for _, s := range sessions {
-				if s.Status == "running" && s.Phase == domain.PhaseReview {
-					if err := cbStore.EndSession(ctx, s.ID, store.SessionResult{
-						ExitCode:       0,
-						Status:         domain.StatusCompleted,
-						CompletionNote: "dispatched review verdict consumed by process-review",
-					}); err != nil {
-						reviewWarnf("Warning: failed to close review session %s for %s: %v\n", s.ID, taskID, err)
-					}
-				}
-			}
-		}
 	}
 
 	// Record the gate unless the pipeline has already advanced past review
