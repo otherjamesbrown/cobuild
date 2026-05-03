@@ -269,6 +269,28 @@ func checkStaleSessions(ctx context.Context, pCfg *config.Config, dryRun bool) {
 			continue
 		}
 		if outcome == "" {
+			// cb-0e0482: even if heartbeat/session.log look healthy, check
+			// whether the tmux window still exists. If the agent exited cleanly
+			// (e.g. CI-pending return) but nobody ended the session, the
+			// session stays "running" forever and blocks future dispatches.
+			// This is the exact pattern that caused the 14h "stall" on pf-f5a141.
+			sn, wn := sessionTarget(session)
+			target := fmt.Sprintf("%s:%s", sn, wn)
+			if !tmuxWindowExists(ctx, pCfg, target) {
+				if dryRun {
+					internalLogger().Info("would end session with missing tmux window (dry run)", "component", "monitor", "task", session.TaskID, "session", session.ID)
+					continue
+				}
+				if err := cbStore.EndSession(ctx, session.ID, store.SessionResult{
+					ExitCode:       0,
+					Status:         domain.StatusCompleted,
+					CompletionNote: "ended by poller: tmux window gone but session still marked running",
+				}); err != nil {
+					internalLogger().Warn("end missing-window session failed", "component", "monitor", "task", session.TaskID, "err", err)
+				} else {
+					internalLogger().Info("ended session with missing tmux window", "component", "monitor", "task", session.TaskID, "session", session.ID)
+				}
+			}
 			continue
 		}
 

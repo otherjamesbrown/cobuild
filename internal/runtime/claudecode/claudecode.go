@@ -196,8 +196,11 @@ rm -f "$PROMPT_FILE"
     done
 ) &
 HEARTBEAT_PID=$!
-# Ensure heartbeat stops when the main script exits.
-trap "kill $HEARTBEAT_PID 2>/dev/null" EXIT
+# Ensure heartbeat stops and session ends when the main script exits.
+# The session-end call is a backstop — the normal code path (cobuild
+# complete, process-review, etc.) should end the session first. If it
+# missed an edge case (e.g. cb-0e0482 CI-pending leak), this catches it.
+trap "kill $HEARTBEAT_PID 2>/dev/null; cobuild session-end $COBUILD_SESSION_ID 2>/dev/null" EXIT
 
 # Post-completion watchdog (cb-e619cb). The interactive Claude Code agent
 # occasionally types /exit as its last message — claude-code renders it as

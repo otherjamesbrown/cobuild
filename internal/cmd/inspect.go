@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/otherjamesbrown/cobuild/internal/cliutil"
@@ -41,11 +43,12 @@ func runInspect(cmd *cobra.Command, args []string) error {
 // inspectData holds everything the inspect command collects, used for both
 // text and JSON output.
 type inspectData struct {
-	Shard    *inspectShard    `json:"shard"`
-	Pipeline *inspectPipeline `json:"pipeline,omitempty"`
-	Sessions []inspectSession `json:"sessions,omitempty"`
-	PR       *inspectPR       `json:"pr,omitempty"`
-	Gates    []inspectGate    `json:"gates,omitempty"`
+	Shard       *inspectShard    `json:"shard"`
+	Pipeline    *inspectPipeline `json:"pipeline,omitempty"`
+	Sessions    []inspectSession `json:"sessions,omitempty"`
+	PR          *inspectPR       `json:"pr,omitempty"`
+	Gates       []inspectGate    `json:"gates,omitempty"`
+	DispatchLog string           `json:"dispatch_log,omitempty"` // cb-0e0482: last 20 lines of dispatch.log
 }
 
 type inspectShard struct {
@@ -226,7 +229,29 @@ func gatherInspectData(ctx context.Context, shardID string) (*inspectData, error
 		}
 	}
 
+	// cb-0e0482: read dispatch.log from the worktree so the operator can
+	// see what the last dispatch actually did. This would have immediately
+	// revealed the CI-pending session leak that sat undiagnosed for 3 weeks.
+	if cbStore != nil {
+		wtPath, wtErr := conn.GetMetadata(ctx, shardID, domain.MetaWorktreePath)
+		if wtErr == nil && wtPath != "" {
+			logPath := filepath.Join(wtPath, ".cobuild", "dispatch.log")
+			if raw, readErr := os.ReadFile(logPath); readErr == nil {
+				data.DispatchLog = tailLines(string(raw), 20)
+			}
+		}
+	}
+
 	return data, nil
+}
+
+// tailLines returns the last n lines of s.
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 func printInspectText(data *inspectData) {
@@ -332,6 +357,15 @@ func printInspectText(data *inspectData) {
 			}
 			fmt.Printf("  %s  %-8s  Round %d  %-4s%s\n",
 				g.Time, g.GateName, g.Round, g.Verdict, extra)
+		}
+	}
+
+	// DISPATCH LOG
+	if data.DispatchLog != "" {
+		fmt.Println()
+		fmt.Println("DISPATCH LOG (last 20 lines)")
+		for _, line := range strings.Split(data.DispatchLog, "\n") {
+			fmt.Printf("  %s\n", line)
 		}
 	}
 }

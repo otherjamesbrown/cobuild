@@ -133,7 +133,9 @@ rm -f "$PROMPT_FILE"
     done
 ) &
 HEARTBEAT_PID=$!
-trap "kill $HEARTBEAT_PID 2>/dev/null" EXIT
+# Ensure heartbeat stops and session ends when the main script exits.
+# Session-end is a backstop for cb-0e0482-class bugs.
+trap "kill $HEARTBEAT_PID 2>/dev/null; cobuild session-end $COBUILD_SESSION_ID 2>/dev/null" EXIT
 
 # Run codex exec non-interactively. JSONL events stream to session.log,
 # final agent message to last-message.md. codex exec exits cleanly on
