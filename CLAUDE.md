@@ -106,6 +106,17 @@ If the working tree is already dirty with unrelated work when you start, commit 
 
 When closing a batch of already-fixed shards retroactively, reference the commit that shipped the fix so `git log <sha>` remains the record of what changed.
 
+### Update CHANGELOG.md on every shipped batch
+
+After committing and pushing a batch of work, append an entry to `CHANGELOG.md` (at the top, under the current date heading). The changelog is **consumer-facing** — it's read by other agents (penfold, mycroft, etc.) who use CoBuild but don't develop it. Each entry should answer:
+
+- What changed (one sentence)
+- What the consumer should do differently (if anything)
+- New commands or config options (with usage example)
+- Shard reference
+
+Keep it short. One entry per logical batch, not per commit. If multiple commits form one change, one entry covers them all.
+
 ## Terminology
 
 Two roles show up throughout CoBuild's docs, skills, and commit messages. Use these terms consistently:
