@@ -17,6 +17,31 @@ The user runs 8-9 projects through CoBuild. They cannot track what is running, w
 
 **Stale context detection.** `cobuild inspect <id>` warns when a shard was updated after dispatch — the running agent may have stale scope. Use `cobuild redispatch <id>` to kill the session and re-dispatch with fresh context.
 
+### Before designing in a subsystem, read what the subsystem already does
+
+When the user asks for a review, design, or proposal that touches an existing subsystem (review, dispatch, escalation, gates, hooks, …), the first action is **read the evidence, not reason in the abstract**. Designing-from-intent is how we end up proposing features that already exist.
+
+The required sequence:
+
+1. **Read the relevant subsystem doc.** `docs/subsystems/<subsystem>.md` describes what the platform actually does today — entry points, behaviour, output shape, known gaps. Quoted file:line refs let you jump straight into the code where needed.
+2. **Read the evidence in any shard you're reviewing.** Review feedback, gate verdicts, session logs, PR diffs — these often state plainly what the existing system did. The cb-f1d6b1 design proposed cross-repo claim/diff detection; pf-9c18b2 had five review rounds *already detecting it*. The data was in the shard.
+3. **Grep before proposing.** `rg "<concept>"` across `internal/`, `skills/`, and `docs/` takes thirty seconds and prevents redundant designs.
+4. **Only then write the design.** State explicitly which existing behaviour you are extending, replacing, or leaving alone — not "we need X" without referencing whether X partly exists.
+
+This rule is structural. Skipping it produces designs that look thoughtful but reproduce shipped behaviour. The doc layer (`docs/subsystems/`) exists so this read is cheap; the discipline is to actually do it.
+
+### Subsystem references
+
+Behavioural references for the major subsystems. Use these before designing in or around them:
+
+- [`docs/subsystems/review.md`](docs/subsystems/review.md) — review skill, providers, cross-model, what review does and does not check
+- [`docs/subsystems/dispatch.md`](docs/subsystems/dispatch.md) — `cobuild dispatch` lifecycle, worktree + tmux + context assembly, runtime selection
+- [`docs/subsystems/escalation.md`](docs/subsystems/escalation.md) — review-fail escalation, findings hash, 5-round cap, `blocked` state, recovery
+- [`docs/subsystems/gates.md`](docs/subsystems/gates.md) — gate verdict shape, `RecordGateVerdict`, phase advance, pass/fail action table
+- [`docs/subsystems/hooks.md`](docs/subsystems/hooks.md) — Claude Code session hooks, repeated-read detection, `pipeline_session_events`
+
+These describe **production behaviour today**, not architectural intent. For intent see `docs/cobuild.md`. For in-flight changes see "Current State" below.
+
 ### Response style: specific, not verbose
 
 - When the user asks "what do I tell agent X" → give them the paste. Nothing else unless they ask.

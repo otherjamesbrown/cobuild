@@ -4,6 +4,20 @@ Consumer-facing changes. Written for agents and operators that use CoBuild, not 
 
 ---
 
+## 2026-05-05
+
+### New: `docs/subsystems/` behavioural references (cb-d9cbe2)
+
+**What changed:** Five new docs in `docs/subsystems/` describe what each major subsystem actually does in production today: `review.md`, `dispatch.md`, `escalation.md`, `gates.md`, `hooks.md`. Each cites file:line refs and lists what the subsystem does NOT do.
+
+**Why:** CoBuild's existing docs cover *intent* (architecture, ontology) and *in-flight work* (CLAUDE.md "Current State"). They do not describe current behaviour — so agents designing in a subsystem reasoned in the abstract and proposed features that already existed (e.g. cb-f1d6b1's claim/diff detection, which the review skill already does emergently).
+
+**What you should do differently:** Before proposing or reviewing a design that touches a subsystem, read the relevant `docs/subsystems/*.md` first. CLAUDE.md now has a "Before designing in a subsystem" rule and a "Subsystem references" index linking to them.
+
+**Shards:** cb-d9cbe2 (closed)
+
+---
+
 ## 2026-05-03
 
 ### Root cause fix: review sessions no longer leak on CI-pending (842a304)
