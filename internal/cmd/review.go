@@ -144,6 +144,16 @@ On request-changes: records verdict, appends feedback to task, re-dispatches age
 			state := strings.TrimSpace(string(stateOut))
 			switch state {
 			case "MERGED":
+				// cb-c59e2d: --dry-run must be side-effect free. The MERGED
+				// fast-path was added before --dry-run existed (cb-4a6799 only
+				// covered the dispatched branch below), so it called
+				// reconcileReviewedTask unconditionally — closing the task
+				// and advancing the pipeline on a flag that's documented as
+				// observation-only.
+				if dryRun {
+					fmt.Printf("[dry-run] PR already merged for %s. Would close task and advance pipeline.\n", taskID)
+					return nil
+				}
 				fmt.Printf("PR already merged for %s. Reconciling local state.\n", taskID)
 				if _, err := reconcileReviewedTask(ctx, taskID); err != nil {
 					return err

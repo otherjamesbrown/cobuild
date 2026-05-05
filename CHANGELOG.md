@@ -6,6 +6,14 @@ Consumer-facing changes. Written for agents and operators that use CoBuild, not 
 
 ## 2026-05-05
 
+### Fix: `process-review --dry-run` no longer closes tasks with merged PRs (cb-c59e2d)
+
+**What changed:** `cobuild process-review <task-id> --dry-run` now respects --dry-run when the PR is already merged. Previously the MERGED fast-path called `reconcileReviewedTask` unconditionally, closing the task and advancing the pipeline.
+
+**Impact:** If you've used `--dry-run` to check what process-review would do on a task with a merged PR and found the task closed afterwards — that was this bug. It won't recur.
+
+**Shards:** cb-c59e2d (closed)
+
 ### New: `docs/subsystems/` behavioural references (cb-d9cbe2)
 
 **What changed:** Five new docs in `docs/subsystems/` describe what each major subsystem actually does in production today: `review.md`, `dispatch.md`, `escalation.md`, `gates.md`, `hooks.md`. Each cites file:line refs and lists what the subsystem does NOT do.

@@ -907,6 +907,50 @@ func TestDetermineReviewVerdict_CIFailuresAlwaysRequestChanges(t *testing.T) {
 }
 
 // cb-7e1fc6: ciBlocksMerge should block on any CI failure when wait_for_ci=true,
+// cb-c59e2d: --dry-run on a task whose PR is already MERGED must not mutate
+// state. The MERGED fast-path was added before --dry-run handling existed
+// and called reconcileReviewedTask unconditionally, closing the task.
+func TestProcessReviewMergedPRRespectsDryRun(t *testing.T) {
+	fc, fs := newPRReviewFixture()
+	installReviewCommandTestGlobals(t, fc, fs)
+
+	execCommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		key := name + " " + strings.Join(args, " ")
+		switch key {
+		case "gh pr view https://github.com/acme/cobuild/pull/42 --json state --jq .state":
+			return []byte("MERGED\n"), nil
+		default:
+			t.Fatalf("unexpected Output command on dry-run: %s", key)
+			return nil, nil
+		}
+	}
+	execCommandCombinedOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("dry-run must not invoke side-effecting commands; got %s %v", name, args)
+		return nil, nil
+	}
+
+	processReviewCmd.Flags().Set("dry-run", "true")
+	processReviewCmd.Flags().Set("review-timeout", "10")
+	defer processReviewCmd.Flags().Set("dry-run", "false")
+
+	if err := processReviewCmd.RunE(processReviewCmd, []string{"cb-task"}); err != nil {
+		t.Fatalf("process-review --dry-run returned error: %v", err)
+	}
+
+	if got := fc.items["cb-task"].Status; got != "needs-review" {
+		t.Fatalf("dry-run mutated task status: got %q, want unchanged needs-review", got)
+	}
+	if len(fc.statusUpdates) != 0 {
+		t.Fatalf("dry-run made status updates: %+v", fc.statusUpdates)
+	}
+	if len(fs.gates) != 0 {
+		t.Fatalf("dry-run recorded %d gates, want 0", len(fs.gates))
+	}
+	if len(fs.updatePhases) != 0 {
+		t.Fatalf("dry-run advanced phases: %+v", fs.updatePhases)
+	}
+}
+
 // not just new failures. Pre-existing failures on main should still block merge.
 func TestCIBlocksMerge_WaitForCI(t *testing.T) {
 	waitTrue := true
